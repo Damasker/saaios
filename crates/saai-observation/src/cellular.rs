@@ -23,6 +23,7 @@ pub const KEY_VOICE_OPERATION: &str = "cellular.voice_operation";
 pub const KEY_ALLOW_DATA: &str = "cellular.allow_data";
 pub const KEY_INITIAL_ATTACH: &str = "cellular.initial_attach";
 pub const KEY_DNS: &str = "cellular.dns";
+pub const KEY_DNS6: &str = "cellular.dns6";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -187,6 +188,15 @@ pub fn observations_from_cellular(
             KEY_DNS,
             token,
             "camp.owner.dns",
+            observed_at,
+            sequence,
+        ));
+    }
+    if let Some(token) = log.and_then(last_dns6) {
+        out.push(text_observation(
+            KEY_DNS6,
+            token,
+            "camp.owner.dns6",
             observed_at,
             sequence,
         ));
@@ -363,6 +373,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut allow_data = None;
     let mut initial_attach = None;
     let mut dns = None;
+    let mut dns6 = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -383,6 +394,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             allow_data = Some(line);
         } else if line.contains("set=initial_attach_apn ") {
             initial_attach = Some(line);
+        } else if line.contains("camp_setup dns6=") {
+            dns6 = Some(line);
         } else if line.contains("camp_setup dns=") {
             dns = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
@@ -401,6 +414,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         allow_data,
         initial_attach,
         dns,
+        dns6,
         sim,
     ]
         .into_iter()
@@ -457,6 +471,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last IPv6 resolver fact. The owner names `yes` or `no`. Addresses stay out.
+pub fn last_dns6(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some(rest) = line.split_once("camp_setup dns6=") {
+            let word: String = rest.1.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+            return match word.as_str() {
+                "yes" => Some("yes"),
+                "no" => Some("no"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last IPv4 resolver fact. The owner names `yes` or `no`. Addresses stay out.
@@ -673,7 +702,8 @@ mod tests {
                  camp_opx get=voice_operation mode_raw=3\n\
                  camp_reg set=allow_data response=yes error_raw=0\n\
                  camp_reg set=initial_attach_apn response=yes error_raw=0\n\
-                 camp_setup dns=yes count=2\n"
+                 camp_setup dns=yes count=2\n\
+                 camp_setup dns6=yes count=2\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -689,7 +719,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 14);
+        assert_eq!(rows.len(), 15);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -724,6 +754,9 @@ mod tests {
         let dns = rows.iter().find(|row| row.key == KEY_DNS).unwrap();
         assert_eq!(dns.value, json!("yes"));
         assert_eq!(dns.source.source_id, "camp.owner.dns");
+        let dns6 = rows.iter().find(|row| row.key == KEY_DNS6).unwrap();
+        assert_eq!(dns6.value, json!("yes"));
+        assert_eq!(dns6.source.source_id, "camp.owner.dns6");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -1045,6 +1078,13 @@ mod tests {
         assert_eq!(last_dns("camp_setup dns6=yes count=2\n"), None);
         assert_eq!(
             last_dns("camp_setup dns=yes count=2\ncamp_setup dns=no\n"),
+            Some("no")
+        );
+        assert_eq!(last_dns6("camp_setup dns6=yes count=2\n"), Some("yes"));
+        assert_eq!(last_dns6("camp_setup dns6=no\n"), Some("no"));
+        assert_eq!(last_dns6("camp_setup dns=yes count=2\n"), None);
+        assert_eq!(
+            last_dns6("camp_setup dns6=yes count=2\ncamp_setup dns6=no\n"),
             Some("no")
         );
         assert_eq!(

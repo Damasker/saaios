@@ -211,6 +211,7 @@ fn run() -> Result<()> {
             let allow_data = camp_allow_data(&state, owner_running, owner_log.as_deref());
             let initial_attach = camp_initial_attach(&state, owner_running, owner_log.as_deref());
             let dns = camp_dns(&state, owner_running, owner_log.as_deref());
+            let dns6 = camp_dns6(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -226,6 +227,7 @@ fn run() -> Result<()> {
                 allow_data,
                 initial_attach,
                 dns,
+                dns6,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -822,6 +824,7 @@ fn status_lines(
     allow_data: Option<&str>,
     initial_attach: Option<&str>,
     dns: Option<&str>,
+    dns6: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -867,6 +870,9 @@ fn status_lines(
     }
     if let Some(token) = dns_word(dns) {
         lines.push(format!("dns={token}"));
+    }
+    if let Some(token) = dns_word(dns6) {
+        lines.push(format!("dns6={token}"));
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -963,6 +969,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_dns6(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_dns6(&facts)
 }
 
 fn camp_dns(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1201,6 +1215,7 @@ mod tests {
             Some("accepted"),
             Some("accepted"),
             Some("yes"),
+            Some("yes"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1224,6 +1239,7 @@ mod tests {
                 "allow_data=accepted".to_string(),
                 "initial_attach=accepted".to_string(),
                 "dns=yes".to_string(),
+                "dns6=yes".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1240,6 +1256,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1280,6 +1297,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("allow_data=")));
         assert!(!absent.iter().any(|line| line.starts_with("initial_attach=")));
         assert!(!absent.iter().any(|line| line.starts_with("dns=")));
+        assert!(!absent.iter().any(|line| line.starts_with("dns6=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1435,6 +1453,16 @@ mod tests {
         assert_eq!(camp_dns("ONLINE", true, Some("camp_setup dns6=yes count=2\n")), None);
         assert_eq!(
             camp_dns("OFFLINE", true, Some("camp_setup dns=yes count=2\n")),
+            None
+        );
+        assert_eq!(
+            camp_dns6("ONLINE", true, Some("camp_setup dns6=yes count=2\n")),
+            Some("yes")
+        );
+        assert_eq!(camp_dns6("ONLINE", true, Some("camp_setup dns6=no\n")), Some("no"));
+        assert_eq!(camp_dns6("ONLINE", true, Some("camp_setup dns=yes count=2\n")), None);
+        assert_eq!(
+            camp_dns6("OFFLINE", true, Some("camp_setup dns6=yes count=2\n")),
             None
         );
         assert_eq!(camp_voice("ONLINE", false, Some(log)), None);
