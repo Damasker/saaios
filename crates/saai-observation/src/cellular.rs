@@ -37,6 +37,7 @@ pub const KEY_FASTDORM: &str = "cellular.fastdorm";
 pub const KEY_ENDC: &str = "cellular.endc";
 pub const KEY_THROTTLE: &str = "cellular.throttle";
 pub const KEY_UNSOLFF: &str = "cellular.unsolff";
+pub const KEY_UNSOL: &str = "cellular.unsol";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -331,6 +332,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_unsol) {
+        out.push(text_observation(
+            KEY_UNSOL,
+            token,
+            "camp.owner.unsol",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -517,6 +527,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut endc = None;
     let mut throttle = None;
     let mut unsolff = None;
+    let mut unsol = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -567,6 +578,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             throttle = Some(line);
         } else if line.contains("camp_unsolff response=yes ") {
             unsolff = Some(line);
+        } else if line.contains("camp_unsol response=yes ") {
+            unsol = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -597,6 +610,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         endc,
         throttle,
         unsolff,
+        unsol,
         sim,
     ]
         .into_iter()
@@ -653,6 +667,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last settled indication-filter acknowledgement. Stock error `0` is accepted.
+/// The filter word stays out. The wide filter and screen state are different facts.
+pub fn last_unsol(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_unsol response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last wide indication-filter acknowledgement. Stock error `0` is accepted.
@@ -1107,7 +1136,8 @@ mod tests {
                  camp_fastdorm response=yes error_raw=0 len=12\n\
                  camp_endc response=yes error_raw=0 len=16\n\
                  camp_throttle response=yes error_raw=0 len=16\n\
-                 camp_unsolff response=yes error_raw=0 len=16\n"
+                 camp_unsolff response=yes error_raw=0 len=16\n\
+                 camp_unsol response=yes error_raw=0 len=16\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -1123,7 +1153,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 28);
+        assert_eq!(rows.len(), 29);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -1200,6 +1230,9 @@ mod tests {
         let unsolff = rows.iter().find(|row| row.key == KEY_UNSOLFF).unwrap();
         assert_eq!(unsolff.value, json!("accepted"));
         assert_eq!(unsolff.source.source_id, "camp.owner.unsolff");
+        let unsol = rows.iter().find(|row| row.key == KEY_UNSOL).unwrap();
+        assert_eq!(unsol.value, json!("accepted"));
+        assert_eq!(unsol.source.source_id, "camp.owner.unsol");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -1852,6 +1885,33 @@ mod tests {
             last_unsolff(
                 "camp_unsolff response=yes error_raw=0 len=16\n\
                  camp_unsolff response=yes error_raw=2 len=16\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_unsol("camp_unsol response=yes error_raw=0 len=16\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_unsol("camp_unsol response=yes error_raw=2 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_unsol("camp_unsolff response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_unsol("camp_screen response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_unsol("camp_throttle response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_unsol(
+                "camp_unsol response=yes error_raw=0 len=16\n\
+                 camp_unsol response=yes error_raw=2 len=16\n"
             ),
             None
         );
