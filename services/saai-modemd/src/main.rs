@@ -222,6 +222,7 @@ fn run() -> Result<()> {
             let profile = camp_data_profile(&state, owner_running, owner_log.as_deref());
             let activity = camp_activity(&state, owner_running, owner_log.as_deref());
             let fastdorm = camp_fastdorm(&state, owner_running, owner_log.as_deref());
+            let endc = camp_endc(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -248,6 +249,7 @@ fn run() -> Result<()> {
                 profile,
                 activity,
                 fastdorm,
+                endc,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -855,6 +857,7 @@ fn status_lines(
     profile: Option<&str>,
     activity: Option<&str>,
     fastdorm: Option<&str>,
+    endc: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -933,6 +936,9 @@ fn status_lines(
     }
     if fastdorm == Some("accepted") {
         lines.push("fastdorm=accepted".to_string());
+    }
+    if endc == Some("accepted") {
+        lines.push("endc=accepted".to_string());
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -1029,6 +1035,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_endc(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_endc(&facts)
 }
 
 fn camp_fastdorm(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1378,6 +1392,7 @@ mod tests {
             Some("accepted"),
             Some("accepted"),
             Some("accepted"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1412,6 +1427,7 @@ mod tests {
                 "profile=accepted".to_string(),
                 "activity=accepted".to_string(),
                 "fastdorm=accepted".to_string(),
+                "endc=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1428,6 +1444,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1490,6 +1507,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("profile=")));
         assert!(!absent.iter().any(|line| line.starts_with("activity=")));
         assert!(!absent.iter().any(|line| line.starts_with("fastdorm=")));
+        assert!(!absent.iter().any(|line| line.starts_with("endc=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1966,6 +1984,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_fastdorm response=yes error_raw=0 len=12\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_endc(
+                "ONLINE",
+                true,
+                Some("camp_endc response=yes error_raw=0 len=16\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_endc(
+                "ONLINE",
+                true,
+                Some("camp_endc response=yes error_raw=2 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_endc(
+                "ONLINE",
+                true,
+                Some("camp_vonrcapa response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_endc(
+                "OFFLINE",
+                true,
+                Some("camp_endc response=yes error_raw=0 len=16\n")
             ),
             None
         );
