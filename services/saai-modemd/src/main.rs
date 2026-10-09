@@ -218,6 +218,7 @@ fn run() -> Result<()> {
             let voice_set = camp_voice_set(&state, owner_running, owner_log.as_deref());
             let ipv4 = camp_ipv4(&state, owner_running, owner_log.as_deref());
             let ipv6 = camp_ipv6(&state, owner_running, owner_log.as_deref());
+            let setup = camp_data_setup(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -240,6 +241,7 @@ fn run() -> Result<()> {
                 voice_set,
                 ipv4,
                 ipv6,
+                setup,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -843,6 +845,7 @@ fn status_lines(
     voice_set: Option<&str>,
     ipv4: Option<&str>,
     ipv6: Option<&str>,
+    setup: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -909,6 +912,9 @@ fn status_lines(
     }
     if let Some(token) = dns_word(ipv6) {
         lines.push(format!("ipv6={token}"));
+    }
+    if setup == Some("accepted") {
+        lines.push("setup=accepted".to_string());
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -1005,6 +1011,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_data_setup(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_data_setup(&facts)
 }
 
 fn camp_ipv6(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1318,6 +1332,7 @@ mod tests {
             Some("accepted"),
             Some("yes"),
             Some("yes"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1348,6 +1363,7 @@ mod tests {
                 "voice_set=accepted".to_string(),
                 "ipv4=yes".to_string(),
                 "ipv6=yes".to_string(),
+                "setup=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1364,6 +1380,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1418,6 +1435,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("voice_set=")));
         assert!(!absent.iter().any(|line| line.starts_with("ipv4=")));
         assert!(!absent.iter().any(|line| line.starts_with("ipv6=")));
+        assert!(!absent.iter().any(|line| line.starts_with("setup=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1766,6 +1784,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_data_setup(
+                "ONLINE",
+                true,
+                Some("camp_setup response=yes error_raw=0 len=100\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_data_setup(
+                "ONLINE",
+                true,
+                Some("camp_setup response=yes error_raw=2 len=100\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_data_setup(
+                "ONLINE",
+                true,
+                Some("camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_data_setup(
+                "OFFLINE",
+                true,
+                Some("camp_setup response=yes error_raw=0 len=100\n")
             ),
             None
         );

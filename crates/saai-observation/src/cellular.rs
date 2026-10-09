@@ -30,6 +30,7 @@ pub const KEY_POWER: &str = "cellular.power";
 pub const KEY_VOICE_SET: &str = "cellular.voice_set";
 pub const KEY_IPV4: &str = "cellular.ipv4";
 pub const KEY_IPV6: &str = "cellular.ipv6";
+pub const KEY_SETUP: &str = "cellular.setup";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -261,6 +262,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_data_setup) {
+        out.push(text_observation(
+            KEY_SETUP,
+            token,
+            "camp.owner.setup",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -440,6 +450,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut voice_set = None;
     let mut ipv4 = None;
     let mut ipv6 = None;
+    let mut setup = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -476,6 +487,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             ipv6 = Some(line);
         } else if line.contains("ipv4=yes prefix=32 ") {
             ipv4 = Some(line);
+        } else if line.contains("camp_setup response=yes ") {
+            setup = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -499,6 +512,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         voice_set,
         ipv4,
         ipv6,
+        setup,
         sim,
     ]
         .into_iter()
@@ -555,6 +569,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last SetupDataCall acknowledgement. Stock error `0` is accepted.
+/// The address stays out. The IPv4 and IPv6 apply lines are different facts.
+pub fn last_data_setup(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_setup response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last IPv6 apply. `yes` only when link, address, and route all succeeded.
@@ -897,7 +926,8 @@ mod tests {
                  camp_ack cmd=0x0800 response=yes error_raw=0\n\
                  camp_opx set=set_voice_operation response=yes error_raw=0\n\
                  camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n\
-                 camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n"
+                 camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n\
+                 camp_setup response=yes error_raw=0 len=100\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -913,7 +943,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 21);
+        assert_eq!(rows.len(), 22);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -969,6 +999,9 @@ mod tests {
         let ipv6 = rows.iter().find(|row| row.key == KEY_IPV6).unwrap();
         assert_eq!(ipv6.value, json!("yes"));
         assert_eq!(ipv6.source.source_id, "camp.owner.ipv6");
+        let setup = rows.iter().find(|row| row.key == KEY_SETUP).unwrap();
+        assert_eq!(setup.value, json!("accepted"));
+        assert_eq!(setup.source.source_id, "camp.owner.setup");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -1438,6 +1471,37 @@ mod tests {
                  camp_setup if=rmnet1 ipv6=yes prefix=64 up=0 add=1 route=1\n"
             ),
             Some("no")
+        );
+        assert_eq!(
+            last_data_setup("camp_setup response=yes error_raw=0 len=100\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_data_setup("camp_setup response=yes error_raw=2 len=100\n"),
+            None
+        );
+        assert_eq!(
+            last_data_setup("camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n"),
+            None
+        );
+        assert_eq!(
+            last_data_setup("camp_setup dns=yes count=2\n"),
+            None
+        );
+        assert_eq!(
+            last_data_setup("camp_profile response=yes error_raw=0 len=40\n"),
+            None
+        );
+        assert_eq!(
+            last_data_setup("camp_ims response=yes error_raw=0 len=40\n"),
+            None
+        );
+        assert_eq!(
+            last_data_setup(
+                "camp_setup response=yes error_raw=0 len=100\n\
+                 camp_setup response=yes error_raw=2 len=100\n"
+            ),
+            None
         );
         assert_eq!(
             last_device_service(
