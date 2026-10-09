@@ -200,6 +200,34 @@ pub fn report_line(query: RuntimeQuery, observation: &RuntimeObservation) -> Str
     format!("token={token} {rest}")
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum QueryChunk {
+    Pending,
+    Answer(String),
+    FrameCap,
+}
+
+/// One read from the endpoint. Unrelated frames stay out of the answer.
+/// The first matching frame wins. After 128 frames the read stops.
+pub fn accept_query_chunk(
+    query: RuntimeQuery,
+    reader: &mut RuntimeFrameReader,
+    chunk: &[u8],
+    frames: &mut u32,
+) -> Result<QueryChunk> {
+    let parsed = reader.push(chunk)?;
+    for frame in parsed {
+        *frames += 1;
+        if let Some(observation) = parse_matching_response(query, &frame) {
+            return Ok(QueryChunk::Answer(report_line(query, &observation)));
+        }
+        if *frames >= 128 {
+            return Ok(QueryChunk::FrameCap);
+        }
+    }
+    Ok(QueryChunk::Pending)
+}
+
 pub fn first_matching_observation(
     bytes: &[u8],
     query: RuntimeQuery,
@@ -510,6 +538,38 @@ mod tests {
         assert_eq!(frames[0].message_id, 0x0801);
         assert_eq!(frames[1].message_id, 0x0701);
         assert_eq!(reader.pending_len(), 0);
+    }
+
+    #[test]
+    fn query_read_skips_an_unrelated_frame_and_stops_at_the_match() {
+        let indication = [2, 0, 0x10, 0x02, 8, 0, 0, 0];
+        let radio = radio_response_frame(10);
+        let mut bytes = indication.to_vec();
+        bytes.extend_from_slice(&radio);
+        let mut reader = RuntimeFrameReader::default();
+        let mut frames = 0;
+        let chunk = accept_query_chunk(RuntimeQuery::RadioState, &mut reader, &bytes, &mut frames)
+            .unwrap();
+        assert_eq!(
+            chunk,
+            QueryChunk::Answer("token=2 error_raw=0 radio=on".to_string())
+        );
+        assert_eq!(frames, 2);
+    }
+
+    #[test]
+    fn query_read_stops_after_128_unrelated_frames() {
+        let indication = [2, 0, 0x10, 0x02, 8, 0, 0, 0];
+        let mut blob = Vec::new();
+        for _ in 0..128 {
+            blob.extend_from_slice(&indication);
+        }
+        let mut reader = RuntimeFrameReader::default();
+        let mut frames = 0;
+        let chunk =
+            accept_query_chunk(RuntimeQuery::SimStatus, &mut reader, &blob, &mut frames).unwrap();
+        assert_eq!(chunk, QueryChunk::FrameCap);
+        assert_eq!(frames, 128);
     }
 
     #[test]

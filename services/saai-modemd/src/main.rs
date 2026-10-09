@@ -108,6 +108,14 @@ enum Cmd {
         #[arg(long)]
         ipv4: Option<String>,
     },
+    /// Print the controlled-exit plan. Does not signal, power the CP off,
+    /// unmount, or open a modem device.
+    ExitPlan {
+        #[arg(long, default_value = "/proc")]
+        proc: PathBuf,
+        #[arg(long, default_value = "/proc/self/mountinfo")]
+        mountinfo: PathBuf,
+    },
     /// Say whether this boot may start a camp or open the modem endpoint.
     /// Opens nothing and does not start a second camp.
     Lifecycle {
@@ -440,6 +448,13 @@ fn run() -> Result<()> {
             println!("doc=docs/os/targets/panther/MODEM-BLOCKER.md");
             println!("hardware_actions=none");
         }
+        Cmd::ExitPlan { proc, mountinfo } => {
+            let owner_running = owner_is_running(&proc).unwrap_or(false);
+            let mounts = fs::read_to_string(&mountinfo).unwrap_or_default();
+            for line in supervise::exit_plan_lines(owner_running, &mounts) {
+                println!("{line}");
+            }
+        }
         Cmd::Lifecycle { modem_state, proc } => {
             let state = read_trimmed_optional(&modem_state).unwrap_or_else(|| "missing".into());
             let owner_running = owner_is_running(&proc).unwrap_or(false);
@@ -664,15 +679,14 @@ fn exchange_one_query(query: runtime_model::RuntimeQuery) -> Result<QueryExchang
             }
             Err(err) => return Err(err).context("SIT read"),
         };
-        let parsed = reader.push(&tmp[..n]).context("runtime frame")?;
-        for frame in parsed {
-            frames += 1;
-            if let Some(observation) = runtime_model::parse_matching_response(query, &frame) {
-                return Ok(QueryExchange::Answer(runtime_model::report_line(
-                    query,
-                    &observation,
-                )));
+        match runtime_model::accept_query_chunk(query, &mut reader, &tmp[..n], &mut frames)
+            .context("runtime frame")?
+        {
+            runtime_model::QueryChunk::Pending => {}
+            runtime_model::QueryChunk::Answer(line) => {
+                return Ok(QueryExchange::Answer(line));
             }
+            runtime_model::QueryChunk::FrameCap => break,
         }
     }
     Ok(QueryExchange::Timeout { frames })

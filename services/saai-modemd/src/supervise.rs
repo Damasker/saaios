@@ -64,6 +64,52 @@ impl HoldWatch {
     }
 }
 
+/// Controlled exit never powers the CP off. While the owner is running the
+/// plan names one future `SIGTERM` and does not send it. Mount words are only
+/// `persist` and `efs`.
+pub fn exit_plan_lines(owner_running: bool, mountinfo: &str) -> Vec<String> {
+    let mounts = sensitive_mounts(mountinfo);
+    let (exit, signal) = if owner_running {
+        ("planned", "term-once")
+    } else {
+        ("idle", "none")
+    };
+    let mount_word = if mounts.is_empty() {
+        "clear".to_string()
+    } else {
+        mounts.join(",")
+    };
+    vec![
+        format!("exit={exit}"),
+        format!("signal={signal}"),
+        "power_off=no".to_string(),
+        "performed=no".to_string(),
+        format!("mounts={mount_word}"),
+        "hardware_actions=none".to_string(),
+    ]
+}
+
+fn sensitive_mounts(mountinfo: &str) -> Vec<&'static str> {
+    let mut persist = false;
+    let mut efs = false;
+    for line in mountinfo.lines() {
+        let point = line.split(' ').nth(4);
+        match point {
+            Some("/mnt/vendor/persist") => persist = true,
+            Some("/mnt/vendor/efs") => efs = true,
+            _ => {}
+        }
+    }
+    let mut names = Vec::new();
+    if persist {
+        names.push("persist");
+    }
+    if efs {
+        names.push("efs");
+    }
+    names
+}
+
 pub fn owner_in_cmdline(bytes: &[u8]) -> bool {
     let argv0 = bytes.split(|byte| *byte == 0).next().unwrap_or(b"");
     let text = String::from_utf8_lossy(argv0);
@@ -140,6 +186,38 @@ mod tests {
 
         assert_eq!(watch.poll(Some("OFFLINE"), true), vec![HoldNote::CpLeft]);
         assert!(watch.poll(None, false).is_empty());
+    }
+
+    #[test]
+    fn controlled_exit_names_one_signal_and_never_powers_off() {
+        let running = exit_plan_lines(true, "1 2 8:1 / /mnt/vendor/persist rw - ext4\n");
+        assert_eq!(
+            running,
+            vec![
+                "exit=planned".to_string(),
+                "signal=term-once".to_string(),
+                "power_off=no".to_string(),
+                "performed=no".to_string(),
+                "mounts=persist".to_string(),
+                "hardware_actions=none".to_string(),
+            ]
+        );
+        let idle = exit_plan_lines(
+            false,
+            "1 2 8:5 / /mnt/vendor/efs ro - ext4\n9 1 0:0 / /data rw - ext4\n",
+        );
+        assert_eq!(idle[0], "exit=idle");
+        assert_eq!(idle[1], "signal=none");
+        assert_eq!(idle[2], "power_off=no");
+        assert_eq!(idle[3], "performed=no");
+        assert_eq!(idle[4], "mounts=efs");
+        let clear = exit_plan_lines(false, "1 2 0:0 / /data rw - ext4\n");
+        assert_eq!(clear[4], "mounts=clear");
+        let both = exit_plan_lines(
+            true,
+            "1 1 8:1 / /mnt/vendor/persist rw\n2 1 8:5 / /mnt/vendor/efs ro\n",
+        );
+        assert_eq!(both[4], "mounts=persist,efs");
     }
 
     #[test]
