@@ -16,7 +16,7 @@ pub use cellular::{
     last_device_service, last_voice_operation, last_allow_data, last_initial_attach,
     last_dns, last_dns6, last_modem_config, last_sgc, last_radio_power, last_voice_set,
     last_ipv4, last_ipv6, last_data_setup, last_data_profile, last_activity, last_fastdorm,
-    last_endc, last_throttle, last_unsolff, last_unsol,
+    last_endc, last_throttle, last_unsolff, last_unsol, last_screen,
     last_sim_presence, last_supervisor_token,
     latest_numeric_epoch,
     link_is_modem_endpoint, observations_from_cellular, owner_fact_lines, endpoint_holder,
