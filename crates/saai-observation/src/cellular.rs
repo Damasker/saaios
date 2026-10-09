@@ -39,6 +39,7 @@ pub const KEY_THROTTLE: &str = "cellular.throttle";
 pub const KEY_UNSOLFF: &str = "cellular.unsolff";
 pub const KEY_UNSOL: &str = "cellular.unsol";
 pub const KEY_SCREEN: &str = "cellular.screen";
+pub const KEY_CELLINFO: &str = "cellular.cellinfo";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -351,6 +352,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_cellinfo) {
+        out.push(text_observation(
+            KEY_CELLINFO,
+            token,
+            "camp.owner.cellinfo",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -539,6 +549,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut unsolff = None;
     let mut unsol = None;
     let mut screen = None;
+    let mut cellinfo = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -593,6 +604,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             unsol = Some(line);
         } else if line.contains("camp_screen response=yes ") {
             screen = Some(line);
+        } else if line.contains("camp_cellinfo response=yes ") {
+            cellinfo = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -625,6 +638,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         unsolff,
         unsol,
         screen,
+        cellinfo,
         sim,
     ]
         .into_iter()
@@ -681,6 +695,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last cell-info list acknowledgement. Stock error `0` is accepted.
+/// The list stays out. The SMSC read and the screen state are different facts.
+pub fn last_cellinfo(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_cellinfo response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last screen-state acknowledgement. Stock error `0` is accepted.
@@ -1167,7 +1196,8 @@ mod tests {
                  camp_throttle response=yes error_raw=0 len=16\n\
                  camp_unsolff response=yes error_raw=0 len=16\n\
                  camp_unsol response=yes error_raw=0 len=16\n\
-                 camp_screen response=yes error_raw=0 len=16\n"
+                 camp_screen response=yes error_raw=0 len=16\n\
+                 camp_cellinfo response=yes error_raw=0 len=16\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -1183,7 +1213,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 30);
+        assert_eq!(rows.len(), 31);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -1266,6 +1296,9 @@ mod tests {
         let screen = rows.iter().find(|row| row.key == KEY_SCREEN).unwrap();
         assert_eq!(screen.value, json!("accepted"));
         assert_eq!(screen.source.source_id, "camp.owner.screen");
+        let cellinfo = rows.iter().find(|row| row.key == KEY_CELLINFO).unwrap();
+        assert_eq!(cellinfo.value, json!("accepted"));
+        assert_eq!(cellinfo.source.source_id, "camp.owner.cellinfo");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -1972,6 +2005,33 @@ mod tests {
             last_screen(
                 "camp_screen response=yes error_raw=0 len=16\n\
                  camp_screen response=yes error_raw=2 len=16\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_cellinfo("camp_cellinfo response=yes error_raw=0 len=16\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_cellinfo("camp_cellinfo response=yes error_raw=2 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_cellinfo("camp_smsc response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_cellinfo("camp_screen response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_cellinfo("camp_vonrget response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_cellinfo(
+                "camp_cellinfo response=yes error_raw=0 len=16\n\
+                 camp_cellinfo response=yes error_raw=2 len=16\n"
             ),
             None
         );
