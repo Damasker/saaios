@@ -206,6 +206,7 @@ fn run() -> Result<()> {
             let radio = camp_radio(&state, owner_running, owner_log.as_deref());
             let selection = camp_selection(&state, owner_running, owner_log.as_deref());
             let stack = camp_stack(&state, owner_running, owner_log.as_deref());
+            let device_service = camp_device_service(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -216,6 +217,7 @@ fn run() -> Result<()> {
                 radio,
                 selection,
                 stack,
+                device_service,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -807,6 +809,7 @@ fn status_lines(
     radio: Option<&str>,
     selection: Option<&str>,
     stack: Option<&str>,
+    device_service: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -837,6 +840,9 @@ fn status_lines(
     }
     if let Some(token) = stack_word(stack) {
         lines.push(format!("stack={token}"));
+    }
+    if let Some(token) = device_service_word(device_service) {
+        lines.push(format!("device_service={token}"));
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -926,6 +932,25 @@ fn camp_registration(state: &str, owner_running: bool, log: Option<&str>) -> Opt
     }
     let facts = saai_observation::owner_fact_lines(log?);
     saai_observation::last_data_registration_raw(&facts)
+}
+
+fn device_service_word(token: Option<&str>) -> Option<&str> {
+    match token {
+        Some("voice-centric" | "data-centric") => token,
+        _ => None,
+    }
+}
+
+fn camp_device_service(
+    state: &str,
+    owner_running: bool,
+    log: Option<&str>,
+) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_device_service(&facts)
 }
 
 fn stack_word(token: Option<&str>) -> Option<&str> {
@@ -1096,6 +1121,7 @@ mod tests {
             Some("on"),
             Some("automatic"),
             Some("enabled"),
+            Some("voice-centric"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1114,6 +1140,7 @@ mod tests {
                 "radio=on".to_string(),
                 "selection=automatic".to_string(),
                 "stack=enabled".to_string(),
+                "device_service=voice-centric".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1130,6 +1157,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1160,6 +1188,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("radio=")));
         assert!(!absent.iter().any(|line| line.starts_with("selection=")));
         assert!(!absent.iter().any(|line| line.starts_with("stack=")));
+        assert!(!absent.iter().any(|line| line.starts_with("device_service=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1221,6 +1250,22 @@ mod tests {
         );
         assert_eq!(
             camp_stack("OFFLINE", true, Some("camp_opx get=stack_status mode_raw=1\n")),
+            None
+        );
+        assert_eq!(
+            camp_device_service(
+                "ONLINE",
+                true,
+                Some("camp_opx get=device_service mode_raw=1\n")
+            ),
+            Some("voice-centric")
+        );
+        assert_eq!(
+            camp_device_service(
+                "ONLINE",
+                false,
+                Some("camp_opx get=device_service mode_raw=2\n")
+            ),
             None
         );
         assert_eq!(camp_voice("OFFLINE", true, Some(log)), None);
