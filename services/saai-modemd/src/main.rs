@@ -213,6 +213,7 @@ fn run() -> Result<()> {
             let dns = camp_dns(&state, owner_running, owner_log.as_deref());
             let dns6 = camp_dns6(&state, owner_running, owner_log.as_deref());
             let config = camp_modem_config(&state, owner_running, owner_log.as_deref());
+            let sgc = camp_sgc(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -230,6 +231,7 @@ fn run() -> Result<()> {
                 dns,
                 dns6,
                 config,
+                sgc,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -828,6 +830,7 @@ fn status_lines(
     dns: Option<&str>,
     dns6: Option<&str>,
     config: Option<&str>,
+    sgc: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -879,6 +882,9 @@ fn status_lines(
     }
     if config == Some("accepted") {
         lines.push("config=accepted".to_string());
+    }
+    if sgc == Some("accepted") {
+        lines.push("sgc=accepted".to_string());
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -975,6 +981,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_sgc(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_sgc(&facts)
 }
 
 fn camp_modem_config(
@@ -1235,6 +1249,7 @@ mod tests {
             Some("yes"),
             Some("yes"),
             Some("accepted"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1260,6 +1275,7 @@ mod tests {
                 "dns=yes".to_string(),
                 "dns6=yes".to_string(),
                 "config=accepted".to_string(),
+                "sgc=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1276,6 +1292,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1320,6 +1337,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("dns=")));
         assert!(!absent.iter().any(|line| line.starts_with("dns6=")));
         assert!(!absent.iter().any(|line| line.starts_with("config=")));
+        assert!(!absent.iter().any(|line| line.starts_with("sgc=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1508,6 +1526,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_ack cmd=0x093f response=yes error_raw=0\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_sgc(
+                "ONLINE",
+                true,
+                Some("camp_ack cmd=0x0404 response=yes error_raw=0\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_sgc(
+                "ONLINE",
+                true,
+                Some("camp_ack cmd=0x0404 response=yes error_raw=2\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_sgc(
+                "ONLINE",
+                true,
+                Some("camp_ack cmd=0x093f response=yes error_raw=0\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_sgc(
+                "OFFLINE",
+                true,
+                Some("camp_ack cmd=0x0404 response=yes error_raw=0\n")
             ),
             None
         );

@@ -14,7 +14,7 @@ pub use cellular::{
     bearer_is_live, camp_action, camp_open, is_cellular_iface, last_data_registration_raw,
     last_voice_registration_raw, last_radio_token, last_selection_mode, last_stack_mode,
     last_device_service, last_voice_operation, last_allow_data, last_initial_attach,
-    last_dns, last_dns6, last_modem_config,
+    last_dns, last_dns6, last_modem_config, last_sgc,
     last_sim_presence, last_supervisor_token,
     latest_numeric_epoch,
     link_is_modem_endpoint, observations_from_cellular, owner_fact_lines, endpoint_holder,
