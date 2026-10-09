@@ -29,6 +29,7 @@ pub const KEY_SGC: &str = "cellular.sgc";
 pub const KEY_POWER: &str = "cellular.power";
 pub const KEY_VOICE_SET: &str = "cellular.voice_set";
 pub const KEY_IPV4: &str = "cellular.ipv4";
+pub const KEY_IPV6: &str = "cellular.ipv6";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -251,6 +252,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_ipv6) {
+        out.push(text_observation(
+            KEY_IPV6,
+            token,
+            "camp.owner.ipv6",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -429,6 +439,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut power = None;
     let mut voice_set = None;
     let mut ipv4 = None;
+    let mut ipv6 = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -461,6 +472,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             power = Some(line);
         } else if line.contains("set=set_voice_operation ") {
             voice_set = Some(line);
+        } else if line.contains("ipv6=yes prefix=64 ") {
+            ipv6 = Some(line);
         } else if line.contains("ipv4=yes prefix=32 ") {
             ipv4 = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
@@ -485,6 +498,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         power,
         voice_set,
         ipv4,
+        ipv6,
         sim,
     ]
         .into_iter()
@@ -541,6 +555,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last IPv6 apply. `yes` only when link, address, and route all succeeded.
+/// The address stays out. The IPv4 line is a different fact.
+pub fn last_ipv6(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("ipv6=yes prefix=64 up=") {
+            return match apply_steps(rest) {
+                Some(true) => Some("yes"),
+                Some(false) => Some("no"),
+                None => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last IPv4 apply. `yes` only when link, address, and route all succeeded.
@@ -867,7 +896,8 @@ mod tests {
                  camp_ack cmd=0x0404 response=yes error_raw=0\n\
                  camp_ack cmd=0x0800 response=yes error_raw=0\n\
                  camp_opx set=set_voice_operation response=yes error_raw=0\n\
-                 camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n"
+                 camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n\
+                 camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -883,7 +913,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 20);
+        assert_eq!(rows.len(), 21);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -936,6 +966,9 @@ mod tests {
         let ipv4 = rows.iter().find(|row| row.key == KEY_IPV4).unwrap();
         assert_eq!(ipv4.value, json!("yes"));
         assert_eq!(ipv4.source.source_id, "camp.owner.ipv4");
+        let ipv6 = rows.iter().find(|row| row.key == KEY_IPV6).unwrap();
+        assert_eq!(ipv6.value, json!("yes"));
+        assert_eq!(ipv6.source.source_id, "camp.owner.ipv6");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -1384,6 +1417,25 @@ mod tests {
             last_ipv4(
                 "camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n\
                  camp_setup if=rmnet1 ipv4=yes prefix=32 up=0 add=1 route=1\n"
+            ),
+            Some("no")
+        );
+        assert_eq!(
+            last_ipv6("camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n"),
+            Some("yes")
+        );
+        assert_eq!(
+            last_ipv6("camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=0 route=1\n"),
+            Some("no")
+        );
+        assert_eq!(
+            last_ipv6("camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n"),
+            None
+        );
+        assert_eq!(
+            last_ipv6(
+                "camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n\
+                 camp_setup if=rmnet1 ipv6=yes prefix=64 up=0 add=1 route=1\n"
             ),
             Some("no")
         );
