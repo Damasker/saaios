@@ -27,6 +27,7 @@ pub const KEY_DNS6: &str = "cellular.dns6";
 pub const KEY_CONFIG: &str = "cellular.config";
 pub const KEY_SGC: &str = "cellular.sgc";
 pub const KEY_POWER: &str = "cellular.power";
+pub const KEY_VOICE_SET: &str = "cellular.voice_set";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -231,6 +232,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_voice_set) {
+        out.push(text_observation(
+            KEY_VOICE_SET,
+            token,
+            "camp.owner.voice_set",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -407,6 +417,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut config = None;
     let mut sgc = None;
     let mut power = None;
+    let mut voice_set = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -437,6 +448,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             sgc = Some(line);
         } else if line.contains("cmd=0x0800 ") {
             power = Some(line);
+        } else if line.contains("set=set_voice_operation ") {
+            voice_set = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -457,6 +470,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         config,
         sgc,
         power,
+        voice_set,
         sim,
     ]
         .into_iter()
@@ -513,6 +527,23 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last voice-operation SET acknowledgement. Stock error `0` is accepted.
+/// The GET mode stays on its own fact.
+pub fn last_voice_set(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some(rest) =
+            line.split_once("camp_opx set=set_voice_operation response=yes error_raw=")
+        {
+            let digits: String = rest.1.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last radio-power acknowledgement. Stock `BuildRadioPower` error `0`
@@ -792,7 +823,8 @@ mod tests {
                  camp_setup dns6=yes count=2\n\
                  camp_ack cmd=0x093f response=yes error_raw=0\n\
                  camp_ack cmd=0x0404 response=yes error_raw=0\n\
-                 camp_ack cmd=0x0800 response=yes error_raw=0\n"
+                 camp_ack cmd=0x0800 response=yes error_raw=0\n\
+                 camp_opx set=set_voice_operation response=yes error_raw=0\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -808,7 +840,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 18);
+        assert_eq!(rows.len(), 19);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -855,6 +887,9 @@ mod tests {
         let power = rows.iter().find(|row| row.key == KEY_POWER).unwrap();
         assert_eq!(power.value, json!("accepted"));
         assert_eq!(power.source.source_id, "camp.owner.power");
+        let voice_set = rows.iter().find(|row| row.key == KEY_VOICE_SET).unwrap();
+        assert_eq!(voice_set.value, json!("accepted"));
+        assert_eq!(voice_set.source.source_id, "camp.owner.voice_set");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -1251,6 +1286,39 @@ mod tests {
             last_radio_power(
                 "camp_ack cmd=0x0800 response=yes error_raw=0\n\
                  camp_ack cmd=0x0800 response=yes error_raw=1\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_voice_set(
+                "camp_opx set=set_voice_operation response=yes error_raw=0\n"
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_voice_set(
+                "camp_opx set=set_voice_operation response=yes error_raw=2\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_voice_set("camp_opx get=voice_operation mode_raw=3\n"),
+            None
+        );
+        assert_eq!(
+            last_voice_set(
+                "camp_reg set=preferred_lte_wcdma response=yes error_raw=0\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_voice_set("camp_reg set=allow_data response=yes error_raw=0\n"),
+            None
+        );
+        assert_eq!(
+            last_voice_set(
+                "camp_opx set=set_voice_operation response=yes error_raw=0\n\
+                 camp_opx set=set_voice_operation response=yes error_raw=1\n"
             ),
             None
         );
