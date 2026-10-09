@@ -288,9 +288,9 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (a held endpoint refuses the GET even without the camp argv) | **yes** |
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **Done** (home registration and a live bearer; the registration=0 wall is withdrawn) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Done** (quarantine and carrier-config policy; not a boot service) | **yes** |
-| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (this boot attends the live camp and refuses to open the endpoint) | **yes** |
+| MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (this boot's camp is `saai-modemd`; the controlled exit was not performed) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Done** (this boot’s row and cache name only live facts) | **yes** |
-| MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
+| MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Done** (this boot's `saai-modemd` holds the descriptors; `rmnet1` has ipv4) | **yes** |
 
 ## MODEM-00
 

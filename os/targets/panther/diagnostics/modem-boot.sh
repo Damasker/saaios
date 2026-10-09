@@ -21,7 +21,13 @@ if [ "$ready" -ne 1 ]; then
     echo 'modem prerequisites missing' >&2
     exit 1
 fi
-ARCH=/data/saaios/var/boot-archive/$(/saaios/busybox date +%s)
+base=$(/saaios/busybox date +%s)
+ARCH=/data/saaios/var/boot-archive/$base
+n=0
+while [ -e "$ARCH" ]; do
+    n=$((n + 1))
+    ARCH=/data/saaios/var/boot-archive/${base}-$n
+done
 /saaios/busybox mkdir -p "$ARCH"
 for name in owner-handoff-rfs-camp.log \
             modem-rfs-camp-combined-owner.log \

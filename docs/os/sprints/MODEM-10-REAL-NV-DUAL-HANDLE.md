@@ -2,9 +2,10 @@
 
 ## Паспорт
 
-- Состояние: **Started**. Загрузка `1791379663` держит живой
-  `rmnet1` у диагностического camp; `saai-modemd` дескрипторы не
-  берёт. Запись 2026-10-05 остаётся: Change 1 и Change 2 выполнены на
+- Состояние: **Done**. Загрузка `1791380016`: `saai-modemd` pid 695
+  держит `--ipc-fd`, status даёт `endpoint=modemd`, `owner=running`,
+  `bearer=rmnet1`, `ipv4=yes`, `registration_raw=1`, `sim=ready`.
+  Запись 2026-10-05 остаётся: Change 1 и Change 2 выполнены на
   устройстве: ни runtime-serve handle-1, ни стоковая
   стадия REPLAY не дали camp; CRC NV-стадий у стока нет. UDL теперь
   совпадает со стоком по стадиям; отличие ищется после UDL. Разворот относительно всего MODEM-06:
@@ -30,9 +31,20 @@
 регистрацию данных, радио, SIM и живой `rmnet1`. `saai-modemd
 lifecycle` на этой загрузке печатает `action=attend` и
 `open=refuse reason=owner`. Второй camp не стартует, устройства не
-открываются. Пункт остаётся Started: канал держит диагностический
-owner, не поддерживаемый жизненный цикл `saai-modemd`. Записи ниже
-про прогоны 2026-10-05, где camp не получился, остаются как история.
+открываются. Записи ниже про прогоны 2026-10-05, где camp не получился, остаются как история.
+
+## Вердикт загрузки 1791380016
+
+Probe этой загрузки — тот же набор флагов, что уже стоял на телефоне
+(`REPLAY`, ранний handover), и он запускает `saai-modemd` с
+`--ipc-fd` / `--rfs-fd` / `--ready-fd`. Процесс 695 — этот camp.
+Процесс 566 — `supervise`, без этих дескрипторов.
+`probe_rc=0`, затем `supervise=hold`. Старый бинарь owner не запущен.
+`query sim-status` печатает `query=refuse name=sim-status reason=owner
+token=1 epoch=1791380016 endpoint=modemd` и `hardware_actions=none`.
+`/mnt/vendor/persist` и `/mnt/vendor/efs` не смонтированы. Повторная
+проверка NV-копий завершилась 0. Голос, IMS, SMS и экстренный вызов
+этим не заявлены.
 
 ## Goal
 
