@@ -1649,6 +1649,10 @@ fn read_tty() -> Option<String> {
     saai_observation::last_tty(&read_camp_owner_log()?).map(str::to_string)
 }
 
+fn read_pssvc() -> Option<String> {
+    saai_observation::last_pssvc(&read_camp_owner_log()?).map(str::to_string)
+}
+
 fn selection_phrase(token: &str) -> Option<&'static str> {
     match token {
         "automatic" => Some("авто"),
@@ -1793,6 +1797,7 @@ fn cellular_row_status(
     aptime: Option<&str>,
     dbgtrace: Option<&str>,
     tty: Option<&str>,
+    pssvc: Option<&str>,
     live: &[String],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -1894,6 +1899,9 @@ fn cellular_row_status(
     }
     if let Some(phrase) = tty.and_then(config_phrase) {
         parts.push(format!("tty {phrase}"));
+    }
+    if let Some(phrase) = pssvc.and_then(config_phrase) {
+        parts.push(format!("ps {phrase}"));
     }
     if let Some(phrase) = sim.and_then(sim_presence_phrase) {
         parts.push(phrase.to_string());
@@ -6938,6 +6946,7 @@ fn observation_row_label(key: &str) -> String {
         "cellular.aptime" => "Время".into(),
         "cellular.dbgtrace" => "Трасса".into(),
         "cellular.tty" => "TTY".into(),
+        "cellular.pssvc" => "PS".into(),
         "cellular.sim_app" => "SIM".into(),
         other => other.to_string(),
     }
@@ -6998,7 +7007,7 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.dns" || key == "cellular.dns6" || key == "cellular.ipv4" || key == "cellular.ipv6" {
         return dns_phrase(value.as_str()?.trim()).map(str::to_string);
     }
-    if key == "cellular.config" || key == "cellular.sgc" || key == "cellular.power" || key == "cellular.voice_set" || key == "cellular.setup" || key == "cellular.profile" || key == "cellular.activity" || key == "cellular.fastdorm" || key == "cellular.endc" || key == "cellular.throttle" || key == "cellular.unsolff" || key == "cellular.unsol" || key == "cellular.screen" || key == "cellular.cellinfo" || key == "cellular.smsc" || key == "cellular.vonrget" || key == "cellular.aptime" || key == "cellular.dbgtrace" || key == "cellular.tty" {
+    if key == "cellular.config" || key == "cellular.sgc" || key == "cellular.power" || key == "cellular.voice_set" || key == "cellular.setup" || key == "cellular.profile" || key == "cellular.activity" || key == "cellular.fastdorm" || key == "cellular.endc" || key == "cellular.throttle" || key == "cellular.unsolff" || key == "cellular.unsol" || key == "cellular.screen" || key == "cellular.cellinfo" || key == "cellular.smsc" || key == "cellular.vonrget" || key == "cellular.aptime" || key == "cellular.dbgtrace" || key == "cellular.tty" || key == "cellular.pssvc" {
         return config_phrase(value.as_str()?.trim()).map(str::to_string);
     }
     if key == "cellular.sim_app" {
@@ -7340,6 +7349,7 @@ struct MeFacts {
     cellular_aptime: Option<String>,
     cellular_dbgtrace: Option<String>,
     cellular_tty: Option<String>,
+    cellular_pssvc: Option<String>,
     cellular_sim: Option<String>,
     cellular_owner: Option<String>,
     cellular_endpoint: Option<String>,
@@ -7563,6 +7573,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                         facts.cellular_aptime.as_deref(),
                         facts.cellular_dbgtrace.as_deref(),
                         facts.cellular_tty.as_deref(),
+                        facts.cellular_pssvc.as_deref(),
                         &facts.cellular_ifaces,
                     ),
                 )
@@ -7905,6 +7916,7 @@ fn me_fixture_facts() -> MeFacts {
         cellular_aptime: None,
         cellular_dbgtrace: None,
         cellular_tty: None,
+        cellular_pssvc: None,
         cellular_sim: None,
         cellular_owner: None,
         cellular_endpoint: None,
@@ -11991,6 +12003,7 @@ impl Shell {
             cellular_aptime: camp_log_is_current().then(read_aptime).flatten(),
             cellular_dbgtrace: camp_log_is_current().then(read_dbgtrace).flatten(),
             cellular_tty: camp_log_is_current().then(read_tty).flatten(),
+            cellular_pssvc: camp_log_is_current().then(read_pssvc).flatten(),
             cellular_sim: camp_log_is_current().then(read_sim_presence).flatten(),
             cellular_owner: Some(
                 if camp_owner_running() {
@@ -15412,162 +15425,166 @@ mod tests {
     #[test]
     fn cellular_row_shows_cp_registration_and_live_bearer_only() {
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("gone"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, Some("gone"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("running"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, Some("running"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "процесс"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "camp"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, Some("hold"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, Some("hold"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "удержание"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, Some("attend"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, Some("attend"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "уже запущен"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "отказ процесса"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, Some(1), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, Some(1), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "голос домашняя"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, Some("automatic"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, Some("automatic"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "авто"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "стек"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, Some("voice-centric"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, Some("voice-centric"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "служба голосовая"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "операция включена"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "разрешение дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "присоединение дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "dns есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "dns6 есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "конфиг дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "sgc дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "питание дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "задание дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "ipv4 есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "ipv6 есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "сессия дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "профиль дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "активность дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "дремота дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, &[]),
             "endc дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, &[]),
             "троттлинг дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, &[]),
             "фильтр дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, &[]),
             "отбор дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, &[]),
             "экран дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, &[]),
             "соты дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, &[]),
             "smsc дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, &[]),
             "vonr дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, &[]),
             "время дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, &[]),
             "трасса дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, &[]),
             "tty дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, Some("handoff-exit"), Some("pin"), Some("pin"), Some(9), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), &[]),
+            "ps дано"
+        );
+        assert_eq!(
+            cellular_row_status(None, None, None, None, None, None, Some("handoff-exit"), Some("pin"), Some("pin"), Some(9), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
             "ONLINE · нет регистрации"
         );
-        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]);
+        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]);
         assert!(!online.contains("LTE"));
         assert!(!online.contains("Kyivstar"));
         assert_eq!(
@@ -15585,7 +15602,7 @@ mod tests {
                 None,
                 None,
                 None,
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
                 &["rmnet1".into()]
             ),
             "ONLINE · домашняя · rmnet1"
@@ -15631,9 +15648,10 @@ mod tests {
                 Some("accepted"),
                 Some("accepted"),
                 Some("accepted"),
+                Some("accepted"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · sgc дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · фильтр дано · отбор дано · экран дано · соты дано · smsc дано · vonr дано · время дано · трасса дано · tty дано · есть · процесс · camp · удержание · уже запущен · отказ процесса · rmnet1"
+            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · sgc дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · фильтр дано · отбор дано · экран дано · соты дано · smsc дано · vonr дано · время дано · трасса дано · tty дано · ps дано · есть · процесс · camp · удержание · уже запущен · отказ процесса · rmnet1"
         );
         assert_eq!(
             cellular_row_status(
@@ -15655,7 +15673,7 @@ mod tests {
                 Some("pin"),
                 Some("pin"),
                 Some("pin"),
-                Some("pin"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some("pin"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
                 &[]
             ),
             "ONLINE · домашняя · без процесса"
@@ -18699,6 +18717,16 @@ mod tests {
                         "source": "camp.owner.tty"
                     },
                     {
+                        "key": "cellular.pssvc",
+                        "value": "accepted",
+                        "source": "camp.owner.pssvc"
+                    },
+                    {
+                        "key": "cellular.pssvc",
+                        "value": "pin",
+                        "source": "camp.owner.pssvc"
+                    },
+                    {
                         "key": "cellular.ipv4",
                         "value": "pin",
                         "source": "camp.owner.ipv4"
@@ -18806,7 +18834,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 41);
+        assert_eq!(rows.len(), 42);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -18888,6 +18916,8 @@ mod tests {
         assert_eq!(rows[39].value, "дано");
         assert_eq!(rows[40].label, "TTY");
         assert_eq!(rows[40].value, "дано");
+        assert_eq!(rows[41].label, "PS");
+        assert_eq!(rows[41].value, "дано");
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }
