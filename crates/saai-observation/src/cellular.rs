@@ -42,6 +42,7 @@ pub const KEY_SCREEN: &str = "cellular.screen";
 pub const KEY_CELLINFO: &str = "cellular.cellinfo";
 pub const KEY_SMSC: &str = "cellular.smsc";
 pub const KEY_VONRGET: &str = "cellular.vonrget";
+pub const KEY_APTIME: &str = "cellular.aptime";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -381,6 +382,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_aptime) {
+        out.push(text_observation(
+            KEY_APTIME,
+            token,
+            "camp.owner.aptime",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -572,6 +582,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut cellinfo = None;
     let mut smsc = None;
     let mut vonrget = None;
+    let mut aptime = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -632,6 +643,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             smsc = Some(line);
         } else if line.contains("camp_vonrget response=yes ") {
             vonrget = Some(line);
+        } else if line.contains("camp_aptime response=yes ") {
+            aptime = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -667,6 +680,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         cellinfo,
         smsc,
         vonrget,
+        aptime,
         sim,
     ]
         .into_iter()
@@ -723,6 +737,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last AP-time acknowledgement. Stock error `0` is accepted.
+/// The clock and any duration stay out. The VoNR read is a different fact.
+pub fn last_aptime(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_aptime response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last VoNR-capability read acknowledgement. Stock error `0` is accepted.
@@ -1257,7 +1286,8 @@ mod tests {
                  camp_screen response=yes error_raw=0 len=16\n\
                  camp_cellinfo response=yes error_raw=0 len=16\n\
                  camp_smsc response=yes error_raw=0 len=16\n\
-                 camp_vonrget response=yes error_raw=0 len=16\n"
+                 camp_vonrget response=yes error_raw=0 len=16\n\
+                 camp_aptime response=yes error_raw=0 len=16\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -1273,7 +1303,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 33);
+        assert_eq!(rows.len(), 34);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -1365,6 +1395,9 @@ mod tests {
         let vonrget = rows.iter().find(|row| row.key == KEY_VONRGET).unwrap();
         assert_eq!(vonrget.value, json!("accepted"));
         assert_eq!(vonrget.source.source_id, "camp.owner.vonrget");
+        let aptime = rows.iter().find(|row| row.key == KEY_APTIME).unwrap();
+        assert_eq!(aptime.value, json!("accepted"));
+        assert_eq!(aptime.source.source_id, "camp.owner.aptime");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -2152,6 +2185,33 @@ mod tests {
             last_vonrget(
                 "camp_vonrget response=yes error_raw=0 len=16\n\
                  camp_vonrget response=yes error_raw=2 len=16\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_aptime("camp_aptime response=yes error_raw=0 len=16\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_aptime("camp_aptime response=yes error_raw=2 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_aptime("camp_aptime=sent elapsed_ms=12\n"),
+            None
+        );
+        assert_eq!(
+            last_aptime("camp_vonrget response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_aptime("camp_dbgtrace response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_aptime(
+                "camp_aptime response=yes error_raw=0 len=16\n\
+                 camp_aptime response=yes error_raw=2 len=16\n"
             ),
             None
         );
