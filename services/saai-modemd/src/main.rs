@@ -216,6 +216,7 @@ fn run() -> Result<()> {
             let sgc = camp_sgc(&state, owner_running, owner_log.as_deref());
             let power = camp_radio_power(&state, owner_running, owner_log.as_deref());
             let voice_set = camp_voice_set(&state, owner_running, owner_log.as_deref());
+            let ipv4 = camp_ipv4(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -236,6 +237,7 @@ fn run() -> Result<()> {
                 sgc,
                 power,
                 voice_set,
+                ipv4,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -837,6 +839,7 @@ fn status_lines(
     sgc: Option<&str>,
     power: Option<&str>,
     voice_set: Option<&str>,
+    ipv4: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -897,6 +900,9 @@ fn status_lines(
     }
     if voice_set == Some("accepted") {
         lines.push("voice_set=accepted".to_string());
+    }
+    if let Some(token) = dns_word(ipv4) {
+        lines.push(format!("ipv4={token}"));
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -993,6 +999,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_ipv4(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_ipv4(&facts)
 }
 
 fn camp_voice_set(
@@ -1288,6 +1302,7 @@ mod tests {
             Some("accepted"),
             Some("accepted"),
             Some("accepted"),
+            Some("yes"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1316,6 +1331,7 @@ mod tests {
                 "sgc=accepted".to_string(),
                 "power=accepted".to_string(),
                 "voice_set=accepted".to_string(),
+                "ipv4=yes".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1332,6 +1348,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1382,6 +1399,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("sgc=")));
         assert!(!absent.iter().any(|line| line.starts_with("power=")));
         assert!(!absent.iter().any(|line| line.starts_with("voice_set=")));
+        assert!(!absent.iter().any(|line| line.starts_with("ipv4=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1666,6 +1684,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_opx set=set_voice_operation response=yes error_raw=0\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_ipv4(
+                "ONLINE",
+                true,
+                Some("camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n")
+            ),
+            Some("yes")
+        );
+        assert_eq!(
+            camp_ipv4(
+                "ONLINE",
+                true,
+                Some("camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=0 route=1\n")
+            ),
+            Some("no")
+        );
+        assert_eq!(
+            camp_ipv4(
+                "ONLINE",
+                true,
+                Some("camp_setup if=rmnet1 ipv6=yes prefix=64 up=1 add=1 route=1\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_ipv4(
+                "OFFLINE",
+                true,
+                Some("camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n")
             ),
             None
         );
