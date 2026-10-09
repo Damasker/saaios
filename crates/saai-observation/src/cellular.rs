@@ -19,6 +19,7 @@ pub const KEY_RADIO: &str = "cellular.radio";
 pub const KEY_SELECTION: &str = "cellular.selection";
 pub const KEY_STACK: &str = "cellular.stack";
 pub const KEY_DEVICE_SERVICE: &str = "cellular.device_service";
+pub const KEY_VOICE_OPERATION: &str = "cellular.voice_operation";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -147,6 +148,15 @@ pub fn observations_from_cellular(
             KEY_DEVICE_SERVICE,
             token,
             "camp.owner.device_service",
+            observed_at,
+            sequence,
+        ));
+    }
+    if let Some(token) = log.and_then(last_voice_operation) {
+        out.push(text_observation(
+            KEY_VOICE_OPERATION,
+            token,
+            "camp.owner.voice_operation",
             observed_at,
             sequence,
         ));
@@ -319,6 +329,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut selection = None;
     let mut stack = None;
     let mut device_service = None;
+    let mut voice_operation = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -333,12 +344,14 @@ pub fn owner_fact_lines(log: &str) -> String {
             stack = Some(line);
         } else if line.contains("get=device_service ") {
             device_service = Some(line);
+        } else if line.contains("get=voice_operation ") {
+            voice_operation = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
     }
     let mut out = String::new();
-    for line in [data, voice, radio, selection, stack, device_service, sim]
+    for line in [data, voice, radio, selection, stack, device_service, voice_operation, sim]
         .into_iter()
         .flatten()
     {
@@ -393,6 +406,23 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last voice-operation mode. Stock names `3` enabled. Anything else stays out.
+pub fn last_voice_operation(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some(rest) = line.split_once("get=voice_operation mode_raw=") {
+            let digits: String = rest.1.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(3) => Some("enabled"),
+                _ => None,
+            };
+        }
+        if line.contains("get=voice_operation status=unknown_short") {
+            return None;
+        }
+    }
+    None
 }
 
 /// Last device-service mode. Stock names `1` voice-centric and `2` data-centric.
@@ -544,7 +574,8 @@ mod tests {
                  camp_reg field=data registration_raw=1 reject_raw=0 lac=0\n\
                  camp_reg field=selection mode_raw=0\n\
                  camp_opx get=stack_status mode_raw=1\n\
-                 camp_opx get=device_service mode_raw=1\n"
+                 camp_opx get=device_service mode_raw=1\n\
+                 camp_opx get=voice_operation mode_raw=3\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -560,7 +591,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 10);
+        assert_eq!(rows.len(), 11);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -583,6 +614,9 @@ mod tests {
         let service = rows.iter().find(|row| row.key == KEY_DEVICE_SERVICE).unwrap();
         assert_eq!(service.value, json!("voice-centric"));
         assert_eq!(service.source.source_id, "camp.owner.device_service");
+        let operation = rows.iter().find(|row| row.key == KEY_VOICE_OPERATION).unwrap();
+        assert_eq!(operation.value, json!("enabled"));
+        assert_eq!(operation.source.source_id, "camp.owner.voice_operation");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -854,6 +888,17 @@ mod tests {
             Some("data-centric")
         );
         assert_eq!(last_device_service("camp_opx get=device_service mode_raw=0\n"), None);
+        assert_eq!(
+            last_voice_operation("camp_opx get=voice_operation mode_raw=3\n"),
+            Some("enabled")
+        );
+        assert_eq!(last_voice_operation("camp_opx get=voice_operation mode_raw=1\n"), None);
+        assert_eq!(
+            last_voice_operation(
+                "camp_opx get=voice_operation mode_raw=3\nget=voice_operation status=unknown_short\n"
+            ),
+            None
+        );
         assert_eq!(
             last_device_service(
                 "camp_opx get=device_service mode_raw=1\nget=device_service status=unknown_short\n"

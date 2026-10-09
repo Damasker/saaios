@@ -207,6 +207,7 @@ fn run() -> Result<()> {
             let selection = camp_selection(&state, owner_running, owner_log.as_deref());
             let stack = camp_stack(&state, owner_running, owner_log.as_deref());
             let device_service = camp_device_service(&state, owner_running, owner_log.as_deref());
+            let voice_operation = camp_voice_operation(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -218,6 +219,7 @@ fn run() -> Result<()> {
                 selection,
                 stack,
                 device_service,
+                voice_operation,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -810,6 +812,7 @@ fn status_lines(
     selection: Option<&str>,
     stack: Option<&str>,
     device_service: Option<&str>,
+    voice_operation: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -843,6 +846,9 @@ fn status_lines(
     }
     if let Some(token) = device_service_word(device_service) {
         lines.push(format!("device_service={token}"));
+    }
+    if voice_operation == Some("enabled") {
+        lines.push("voice_operation=enabled".to_string());
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -932,6 +938,18 @@ fn camp_registration(state: &str, owner_running: bool, log: Option<&str>) -> Opt
     }
     let facts = saai_observation::owner_fact_lines(log?);
     saai_observation::last_data_registration_raw(&facts)
+}
+
+fn camp_voice_operation(
+    state: &str,
+    owner_running: bool,
+    log: Option<&str>,
+) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_voice_operation(&facts)
 }
 
 fn device_service_word(token: Option<&str>) -> Option<&str> {
@@ -1122,6 +1140,7 @@ mod tests {
             Some("automatic"),
             Some("enabled"),
             Some("voice-centric"),
+            Some("enabled"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1141,6 +1160,7 @@ mod tests {
                 "selection=automatic".to_string(),
                 "stack=enabled".to_string(),
                 "device_service=voice-centric".to_string(),
+                "voice_operation=enabled".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1157,6 +1177,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1189,6 +1210,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("selection=")));
         assert!(!absent.iter().any(|line| line.starts_with("stack=")));
         assert!(!absent.iter().any(|line| line.starts_with("device_service=")));
+        assert!(!absent.iter().any(|line| line.starts_with("voice_operation=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -1266,6 +1288,26 @@ mod tests {
                 false,
                 Some("camp_opx get=device_service mode_raw=2\n")
             ),
+            None
+        );
+        assert_eq!(
+            camp_voice_operation(
+                "ONLINE",
+                true,
+                Some("camp_opx get=voice_operation mode_raw=3\n")
+            ),
+            Some("enabled")
+        );
+        assert_eq!(
+            camp_voice_operation(
+                "ONLINE",
+                true,
+                Some("camp_opx get=voice_operation mode_raw=1\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_voice_operation("OFFLINE", true, Some("camp_opx get=voice_operation mode_raw=3\n")),
             None
         );
         assert_eq!(camp_voice("OFFLINE", true, Some(log)), None);
