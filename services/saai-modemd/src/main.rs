@@ -224,6 +224,7 @@ fn run() -> Result<()> {
             let fastdorm = camp_fastdorm(&state, owner_running, owner_log.as_deref());
             let endc = camp_endc(&state, owner_running, owner_log.as_deref());
             let throttle = camp_throttle(&state, owner_running, owner_log.as_deref());
+            let unsolff = camp_unsolff(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -252,6 +253,7 @@ fn run() -> Result<()> {
                 fastdorm,
                 endc,
                 throttle,
+                unsolff,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -861,6 +863,7 @@ fn status_lines(
     fastdorm: Option<&str>,
     endc: Option<&str>,
     throttle: Option<&str>,
+    unsolff: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -945,6 +948,9 @@ fn status_lines(
     }
     if throttle == Some("accepted") {
         lines.push("throttle=accepted".to_string());
+    }
+    if unsolff == Some("accepted") {
+        lines.push("unsolff=accepted".to_string());
     }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
@@ -1041,6 +1047,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_unsolff(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_unsolff(&facts)
 }
 
 fn camp_throttle(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1408,6 +1422,7 @@ mod tests {
             Some("accepted"),
             Some("accepted"),
             Some("accepted"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1444,6 +1459,7 @@ mod tests {
                 "fastdorm=accepted".to_string(),
                 "endc=accepted".to_string(),
                 "throttle=accepted".to_string(),
+                "unsolff=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1460,6 +1476,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1526,6 +1543,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("fastdorm=")));
         assert!(!absent.iter().any(|line| line.starts_with("endc=")));
         assert!(!absent.iter().any(|line| line.starts_with("throttle=")));
+        assert!(!absent.iter().any(|line| line.starts_with("unsolff=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -2066,6 +2084,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_throttle response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_unsolff(
+                "ONLINE",
+                true,
+                Some("camp_unsolff response=yes error_raw=0 len=16\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_unsolff(
+                "ONLINE",
+                true,
+                Some("camp_unsolff response=yes error_raw=2 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_unsolff(
+                "ONLINE",
+                true,
+                Some("camp_unsol response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_unsolff(
+                "OFFLINE",
+                true,
+                Some("camp_unsolff response=yes error_raw=0 len=16\n")
             ),
             None
         );
