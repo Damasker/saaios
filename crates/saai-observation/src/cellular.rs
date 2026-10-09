@@ -22,6 +22,7 @@ pub const KEY_DEVICE_SERVICE: &str = "cellular.device_service";
 pub const KEY_VOICE_OPERATION: &str = "cellular.voice_operation";
 pub const KEY_ALLOW_DATA: &str = "cellular.allow_data";
 pub const KEY_INITIAL_ATTACH: &str = "cellular.initial_attach";
+pub const KEY_DNS: &str = "cellular.dns";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -177,6 +178,15 @@ pub fn observations_from_cellular(
             KEY_INITIAL_ATTACH,
             token,
             "camp.owner.initial_attach",
+            observed_at,
+            sequence,
+        ));
+    }
+    if let Some(token) = log.and_then(last_dns) {
+        out.push(text_observation(
+            KEY_DNS,
+            token,
+            "camp.owner.dns",
             observed_at,
             sequence,
         ));
@@ -352,6 +362,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut voice_operation = None;
     let mut allow_data = None;
     let mut initial_attach = None;
+    let mut dns = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -372,6 +383,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             allow_data = Some(line);
         } else if line.contains("set=initial_attach_apn ") {
             initial_attach = Some(line);
+        } else if line.contains("camp_setup dns=") {
+            dns = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -387,6 +400,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         voice_operation,
         allow_data,
         initial_attach,
+        dns,
         sim,
     ]
         .into_iter()
@@ -443,6 +457,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last IPv4 resolver fact. The owner names `yes` or `no`. Addresses stay out.
+pub fn last_dns(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some(rest) = line.split_once("camp_setup dns=") {
+            let word: String = rest.1.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+            return match word.as_str() {
+                "yes" => Some("yes"),
+                "no" => Some("no"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last initial-attach result. Stock error `0` is accepted. Any other code stays out.
@@ -643,7 +672,8 @@ mod tests {
                  camp_opx get=device_service mode_raw=1\n\
                  camp_opx get=voice_operation mode_raw=3\n\
                  camp_reg set=allow_data response=yes error_raw=0\n\
-                 camp_reg set=initial_attach_apn response=yes error_raw=0\n"
+                 camp_reg set=initial_attach_apn response=yes error_raw=0\n\
+                 camp_setup dns=yes count=2\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -659,7 +689,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 13);
+        assert_eq!(rows.len(), 14);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -691,6 +721,9 @@ mod tests {
         let attach = rows.iter().find(|row| row.key == KEY_INITIAL_ATTACH).unwrap();
         assert_eq!(attach.value, json!("accepted"));
         assert_eq!(attach.source.source_id, "camp.owner.initial_attach");
+        let dns = rows.iter().find(|row| row.key == KEY_DNS).unwrap();
+        assert_eq!(dns.value, json!("yes"));
+        assert_eq!(dns.source.source_id, "camp.owner.dns");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -1006,6 +1039,13 @@ mod tests {
                  camp_reg set=initial_attach_apn response=yes error_raw=1\n"
             ),
             None
+        );
+        assert_eq!(last_dns("camp_setup dns=yes count=2\n"), Some("yes"));
+        assert_eq!(last_dns("camp_setup dns=no\n"), Some("no"));
+        assert_eq!(last_dns("camp_setup dns6=yes count=2\n"), None);
+        assert_eq!(
+            last_dns("camp_setup dns=yes count=2\ncamp_setup dns=no\n"),
+            Some("no")
         );
         assert_eq!(
             last_device_service(
