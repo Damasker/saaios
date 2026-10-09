@@ -286,8 +286,8 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-03 | RAM-only handover unlocks first SIT runtime responses | **Done** (diagnostic) | **yes** |
 | MODEM-04 | Maintained boot model library, no hardware actions | **Done** (host plan and executor actions; phone boot stays the diagnostic owner) | no |
 | MODEM-05 | Controlled runtime query mode in `saai-modemd` | **Started** (a held endpoint refuses the GET even without the camp argv) | **yes** |
-| MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
-| MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
+| MODEM-06 | Factory post-SIM init / registration prerequisites | **Done** (home registration and a live bearer; the registration=0 wall is withdrawn) | **yes** |
+| MODEM-07 | RFS design and refusal policy | **Done** (quarantine and carrier-config policy; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (this boot attends the live camp and refuses to open the endpoint) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Done** (this boot’s row and cache name only live facts) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
@@ -1014,6 +1014,11 @@ bearer**. Inject tools still on device; **no frames sent**. `saai-modemd
 soft-lock` / `post-edge` + chase `SOFT_LOCK_STATUS` report
 `cpif_caps_exercised=yes` + waiting `0x2f50` blocker. Soft-lock
 **terminal** until capture-only / external frame.
+Загрузка `1791379663` снимает эту стену. Домашняя регистрация
+`registration_raw=1` и живой `rmnet1` с `ipv4=yes` уже наблюдались;
+гипотезы PIN soft-lock, Present и пустого CDMA больше не следующий
+шаг. Исполнитель по-прежнему диагностический camp, не жизненный цикл
+`saai-modemd`.
 
 ## MODEM-07
 
@@ -1088,6 +1093,10 @@ carrier-config даёт `read-copy`, запись того же id — `deny`,
 `close-copy`, после закрытия тот же id — `deny`. В конце
 `hardware_actions=none`. Дежурный `saai-modemd` остался pid 155,
 owner один, CP `ONLINE`. В owner и в загрузку это не вшито.
+Пункт закрыт. Приёмка — разобранная политика и хостовые отказы до
+вшивания в загрузку. Команды карантина и carrier-config на телефоне
+печатают решение и `hardware_actions=none`. Исходный EFS не источник
+и не назначение. Встраивание в жизненный цикл остаётся у MODEM-08.
 
 ## MODEM-08
 
