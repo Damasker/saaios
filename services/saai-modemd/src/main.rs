@@ -108,6 +108,12 @@ enum Cmd {
         #[arg(long)]
         ipv4: Option<String>,
     },
+    /// Send one SIGTERM to the camp process. Does not power the CP off,
+    /// unmount, or open a modem device.
+    StopOwner {
+        #[arg(long, default_value = "/proc")]
+        proc: PathBuf,
+    },
     /// Print the controlled-exit plan. Does not signal, power the CP off,
     /// unmount, or open a modem device.
     ExitPlan {
@@ -491,6 +497,29 @@ fn run() -> Result<()> {
             println!("doc=docs/os/targets/panther/MODEM-BLOCKER.md");
             println!("hardware_actions=none");
         }
+        Cmd::StopOwner { proc } => {
+            let pids = camp_owner_pids(&proc)?;
+            if pids.is_empty() {
+                println!("exit=idle");
+                println!("signal=none");
+                println!("power_off=no");
+                println!("performed=no");
+                println!("hardware_actions=none");
+            } else {
+                for pid in &pids {
+                    let rc = unsafe { libc::kill(*pid as i32, libc::SIGTERM) };
+                    if rc != 0 {
+                        return Err(std::io::Error::last_os_error())
+                            .with_context(|| format!("signal {pid}"));
+                    }
+                }
+                println!("exit=signaled");
+                println!("signal=term-once");
+                println!("power_off=no");
+                println!("performed=yes");
+                println!("hardware_actions=none");
+            }
+        }
         Cmd::ExitPlan { proc, mountinfo } => {
             let owner_running = owner_is_running(&proc).unwrap_or(false);
             let mounts = fs::read_to_string(&mountinfo).unwrap_or_default();
@@ -775,6 +804,31 @@ fn supervise_camp(modem_state: &Path, handoff: &Path, proc_root: &Path) -> Resul
             }
         }
     }
+}
+
+fn camp_owner_pids(proc_root: &Path) -> Result<Vec<u32>> {
+    let mut pids = Vec::new();
+    let Ok(entries) = fs::read_dir(proc_root) else {
+        return Ok(pids);
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let cmdline = fs::read(entry.path().join("cmdline")).unwrap_or_default();
+        if saai_observation::cmdline_is_camp_owner(&cmdline) {
+            if let Ok(pid) = name.parse() {
+                pids.push(pid);
+            }
+        }
+    }
+    pids.sort_unstable();
+    Ok(pids)
 }
 
 fn owner_is_running(proc_root: &Path) -> Result<bool> {
@@ -1563,6 +1617,28 @@ fn assert_sha256(path: &Path, expected_hex: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_owner_lists_the_camp_process_only() {
+        let root = std::env::temp_dir().join(format!("saai-stop-owner-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("10")).unwrap();
+        std::fs::write(root.join("10/cmdline"), b"/data/saaios/bin/saai-modemd\0supervise\0").unwrap();
+        std::fs::create_dir_all(root.join("11")).unwrap();
+        std::fs::write(
+            root.join("11/cmdline"),
+            b"/data/saaios/bin/saai-modemd\0--ipc-fd\05\0--rfs-fd\06\0",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("12")).unwrap();
+        std::fs::write(
+            root.join("12/cmdline"),
+            b"/data/saaios/bin/modem-rfs-camp-combined-owner\0--ipc-fd\07\0",
+        )
+        .unwrap();
+        assert_eq!(camp_owner_pids(&root).unwrap(), vec![11, 12]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn lifecycle_attends_a_live_camp_and_refuses_to_open() {

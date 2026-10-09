@@ -6173,6 +6173,8 @@ static int run_owner(int ipc, int rfs, int ready)
         }
         if (stop_requested) {
             terminal(&o, "requested_stop");
+            /* Close the inherited descriptors and return. Do not power the CP off. */
+            break;
         }
         if (o.phase == TERMINAL && !o.final_ack_sent && !o.sit.poisoned)
             sit_disable(&o.sit, "rfs_terminal");
