@@ -21,6 +21,7 @@ pub const KEY_STACK: &str = "cellular.stack";
 pub const KEY_DEVICE_SERVICE: &str = "cellular.device_service";
 pub const KEY_VOICE_OPERATION: &str = "cellular.voice_operation";
 pub const KEY_ALLOW_DATA: &str = "cellular.allow_data";
+pub const KEY_INITIAL_ATTACH: &str = "cellular.initial_attach";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -167,6 +168,15 @@ pub fn observations_from_cellular(
             KEY_ALLOW_DATA,
             token,
             "camp.owner.allow_data",
+            observed_at,
+            sequence,
+        ));
+    }
+    if let Some(token) = log.and_then(last_initial_attach) {
+        out.push(text_observation(
+            KEY_INITIAL_ATTACH,
+            token,
+            "camp.owner.initial_attach",
             observed_at,
             sequence,
         ));
@@ -341,6 +351,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut device_service = None;
     let mut voice_operation = None;
     let mut allow_data = None;
+    let mut initial_attach = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -359,6 +370,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             voice_operation = Some(line);
         } else if line.contains("set=allow_data ") {
             allow_data = Some(line);
+        } else if line.contains("set=initial_attach_apn ") {
+            initial_attach = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -373,6 +386,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         device_service,
         voice_operation,
         allow_data,
+        initial_attach,
         sim,
     ]
         .into_iter()
@@ -429,6 +443,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last initial-attach result. Stock error `0` is accepted. Any other code stays out.
+/// The access-point name stays out of the log line and out of this word.
+pub fn last_initial_attach(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some(rest) = line.split_once("set=initial_attach_apn response=yes error_raw=") {
+            let digits: String = rest.1.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last allow-data result. Stock error `0` is accepted. Any other code stays out.
@@ -613,7 +642,8 @@ mod tests {
                  camp_opx get=stack_status mode_raw=1\n\
                  camp_opx get=device_service mode_raw=1\n\
                  camp_opx get=voice_operation mode_raw=3\n\
-                 camp_reg set=allow_data response=yes error_raw=0\n"
+                 camp_reg set=allow_data response=yes error_raw=0\n\
+                 camp_reg set=initial_attach_apn response=yes error_raw=0\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -629,7 +659,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 12);
+        assert_eq!(rows.len(), 13);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -658,6 +688,9 @@ mod tests {
         let allow = rows.iter().find(|row| row.key == KEY_ALLOW_DATA).unwrap();
         assert_eq!(allow.value, json!("accepted"));
         assert_eq!(allow.source.source_id, "camp.owner.allow_data");
+        let attach = rows.iter().find(|row| row.key == KEY_INITIAL_ATTACH).unwrap();
+        assert_eq!(attach.value, json!("accepted"));
+        assert_eq!(attach.source.source_id, "camp.owner.initial_attach");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -952,6 +985,25 @@ mod tests {
             last_allow_data(
                 "camp_reg set=allow_data response=yes error_raw=0\n\
                  camp_reg set=allow_data response=yes error_raw=1\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_initial_attach(
+                "camp_reg set=initial_attach_apn response=yes error_raw=0\n"
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_initial_attach(
+                "camp_reg set=initial_attach_apn response=yes error_raw=2\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_initial_attach(
+                "camp_reg set=initial_attach_apn response=yes error_raw=0\n\
+                 camp_reg set=initial_attach_apn response=yes error_raw=1\n"
             ),
             None
         );
