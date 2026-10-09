@@ -43,6 +43,7 @@ pub const KEY_CELLINFO: &str = "cellular.cellinfo";
 pub const KEY_SMSC: &str = "cellular.smsc";
 pub const KEY_VONRGET: &str = "cellular.vonrget";
 pub const KEY_APTIME: &str = "cellular.aptime";
+pub const KEY_DBGTRACE: &str = "cellular.dbgtrace";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -391,6 +392,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_dbgtrace) {
+        out.push(text_observation(
+            KEY_DBGTRACE,
+            token,
+            "camp.owner.dbgtrace",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -583,6 +593,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut smsc = None;
     let mut vonrget = None;
     let mut aptime = None;
+    let mut dbgtrace = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -645,6 +656,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             vonrget = Some(line);
         } else if line.contains("camp_aptime response=yes ") {
             aptime = Some(line);
+        } else if line.contains("camp_dbgtrace response=yes ") {
+            dbgtrace = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -681,6 +694,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         smsc,
         vonrget,
         aptime,
+        dbgtrace,
         sim,
     ]
         .into_iter()
@@ -737,6 +751,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last debug-trace acknowledgement. Stock error `0` is accepted.
+/// The trace body stays out. The AP-time read is a different fact.
+pub fn last_dbgtrace(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_dbgtrace response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last AP-time acknowledgement. Stock error `0` is accepted.
@@ -1287,7 +1316,8 @@ mod tests {
                  camp_cellinfo response=yes error_raw=0 len=16\n\
                  camp_smsc response=yes error_raw=0 len=16\n\
                  camp_vonrget response=yes error_raw=0 len=16\n\
-                 camp_aptime response=yes error_raw=0 len=16\n"
+                 camp_aptime response=yes error_raw=0 len=16\n\
+                 camp_dbgtrace response=yes error_raw=0 len=16\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -1303,7 +1333,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 34);
+        assert_eq!(rows.len(), 35);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -1398,6 +1428,9 @@ mod tests {
         let aptime = rows.iter().find(|row| row.key == KEY_APTIME).unwrap();
         assert_eq!(aptime.value, json!("accepted"));
         assert_eq!(aptime.source.source_id, "camp.owner.aptime");
+        let dbgtrace = rows.iter().find(|row| row.key == KEY_DBGTRACE).unwrap();
+        assert_eq!(dbgtrace.value, json!("accepted"));
+        assert_eq!(dbgtrace.source.source_id, "camp.owner.dbgtrace");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -2212,6 +2245,33 @@ mod tests {
             last_aptime(
                 "camp_aptime response=yes error_raw=0 len=16\n\
                  camp_aptime response=yes error_raw=2 len=16\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_dbgtrace("camp_dbgtrace response=yes error_raw=0 len=16\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_dbgtrace("camp_dbgtrace response=yes error_raw=2 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_dbgtrace("camp_dbgtrace=sent elapsed_ms=12\n"),
+            None
+        );
+        assert_eq!(
+            last_dbgtrace("camp_aptime response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_dbgtrace("camp_tty response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_dbgtrace(
+                "camp_dbgtrace response=yes error_raw=0 len=16\n\
+                 camp_dbgtrace response=yes error_raw=2 len=16\n"
             ),
             None
         );
