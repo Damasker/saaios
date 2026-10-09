@@ -289,7 +289,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-06 | Factory post-SIM init / registration prerequisites | **In progress** (home data registration and a live bearer observed) | **yes** |
 | MODEM-07 | RFS design and refusal policy | **Started** (quarantine decision; carrier-config stays on its open id; not a boot service) | **yes** |
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Started** (this boot attends the live camp and refuses to open the endpoint) | **yes** |
-| MODEM-09 | World/Observation + Shell cellular facts | **Started** (cellular row names the supervisor word) | **yes** |
+| MODEM-09 | World/Observation + Shell cellular facts | **Done** (this boot’s row and cache name only live facts) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Started** (live bearer on device) | **yes** |
 
 ## MODEM-00
@@ -1792,6 +1792,11 @@ Fast dormancy (`5327029`, runtime `e26e92a4…`, оболочка
 (pid 5170), runtime pid 5161, `saai-displayd` остался pid 408,
 `saai-modemd` supervise остался pid 155, status-бинарник
 `c0d56dae…`, owner один, CP `ONLINE`. Перезагрузки не было.
+Пункт закрыт (`5a9aca3`). Тест дорожной карты выполнен: без модема
+строка — «Нет модема», `ONLINE` без регистрации не называет оператора
+и данные, имя канала берётся только у живого `rmnet`. На этой загрузке
+кэш даёт `cellular.bearer=rmnet1` и `cellular.ipv4=yes`. Оператор,
+уровень сигнала и идентификаторы абонента в строку не входят.
 
 ## Non-goals For Now
 
