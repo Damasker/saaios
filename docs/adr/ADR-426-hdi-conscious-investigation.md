@@ -3,8 +3,9 @@
 ## Статус
 
 Принято, 2026-10-10. HDI-00 и HDI-01 живут в `crates/hdi-contract`.
-HDI-02 — `crates/hdi-exec`. HDI-03, HDI-04, HDI-05 и HDI-07…HDI-14 —
-`crates/hdi-campaign`. Пробы `pci_drivers` и `platform_nodes` добавлены в белый список v1.
+HDI-02 — `crates/hdi-exec`. HDI-03, HDI-04, HDI-05 и HDI-07…HDI-15 —
+`crates/hdi-campaign`. Пробы `pci_drivers`, `platform_nodes` и
+`platform_drivers` добавлены в белый список v1.
 Шлюз намерения живёт в `intent_gate` и не подключён к `native-init`.
 Демона и образа нет.
 Физический прогон на MacBookPro11,3 ещё не начат: диагностического снимка нет.
@@ -106,7 +107,7 @@ Deny не повторяется автоматически.
 
 Белый список v1: `pci_id`, `pci_drivers`, `pci_tree`, `pci_slot`, `usb_brief`,
 `usb_tree`, `modules`, `drm_class`, `pci_sysfs_list`,
-`dmi_allowlist`, `platform_nodes`, `kernel_warnings_redacted`, `sysfs_read`.
+`dmi_allowlist`, `platform_nodes`, `platform_drivers`, `kernel_warnings_redacted`, `sysfs_read`.
 
 В v1 отсутствуют как операции: `modprobe`, `insmod`, `rmmod`,
 `setpci`, запись в sysfs, NVRAM, `efibootmgr`, запись в debugfs,

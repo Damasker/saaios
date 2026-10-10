@@ -51,6 +51,10 @@ const TEMPLATES: &[ProbeTemplate] = &[
         argv: &["read-fixture", "platform.txt"],
     },
     ProbeTemplate {
+        name: "platform_drivers",
+        argv: &["read-fixture", "platform_drivers.txt"],
+    },
+    ProbeTemplate {
         name: "kernel_warnings_redacted",
         argv: &["read-fixture", "kernel_warnings.txt"],
     },

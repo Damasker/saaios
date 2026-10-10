@@ -23,7 +23,8 @@ impl Investigator for Repeater {
 
 /// Asks for a missing bundle file, then repeats `pci_id`.
 ///
-/// Order: `drm.txt`, then `modules.txt`, then `pci_drivers.txt`, then `platform.txt`.
+/// Order: `drm.txt`, then `modules.txt`, then `pci_drivers.txt`, then `platform.txt`,
+/// then `platform_drivers.txt`.
 /// A DRM driver is recorded only when
 /// the same name is in both files.
 pub struct Hunter;
@@ -54,6 +55,9 @@ impl Investigator for Hunter {
         if !bundle_has(input_json, "platform.txt") {
             return platform_request();
         }
+        if !bundle_has(input_json, "platform_drivers.txt") {
+            return platform_drivers_request();
+        }
         pci_id_request()
     }
 
@@ -64,6 +68,7 @@ impl Investigator for Hunter {
             claims.push(claim);
         }
         claims.extend(platform_claims(input_json));
+        claims.extend(platform_driver_claims(input_json));
         claims
     }
 }
@@ -85,6 +90,11 @@ fn pci_drivers_request() -> String {
 
 fn platform_request() -> String {
     r#"{"campaign_id":"hdi","pass":1,"requested_probe":"platform_nodes","arguments":{},"risk":"read_only"}"#
+        .to_string()
+}
+
+fn platform_drivers_request() -> String {
+    r#"{"campaign_id":"hdi","pass":1,"requested_probe":"platform_drivers","arguments":{},"risk":"read_only"}"#
         .to_string()
 }
 
@@ -260,6 +270,60 @@ fn platform_nodes(text: &str) -> Vec<(String, String)> {
         }
     }
     nodes
+}
+
+/// The driver name is the symlink target in `platform_drivers.txt`.
+/// A loaded module such as `mali_kbase` is not substituted for that name.
+fn platform_driver_claims(input_json: &str) -> Vec<Claim> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(input_json) else {
+        return Vec::new();
+    };
+    let Some(files) = value.get("files") else {
+        return Vec::new();
+    };
+    let Some(platform) = files.get("platform.txt").and_then(|text| text.as_str()) else {
+        return Vec::new();
+    };
+    let Some(drivers) = files
+        .get("platform_drivers.txt")
+        .and_then(|text| text.as_str())
+    else {
+        return Vec::new();
+    };
+    let nodes = platform_nodes(platform);
+    let mut claims = Vec::new();
+    for line in drivers.lines() {
+        let line = line.trim().trim_start_matches('\u{feff}');
+        let mut parts = line.split_whitespace();
+        let Some(node) = parts.next() else {
+            continue;
+        };
+        let Some(driver) = parts.next() else {
+            continue;
+        };
+        if parts.next().is_some() {
+            continue;
+        }
+        let Some((subject, _)) = nodes.iter().find(|(_, name)| name == node) else {
+            continue;
+        };
+        if driver == "unbound" {
+            claims.push(Claim::new(
+                ClaimKind::DriverUnbound,
+                subject.clone(),
+                "unbound",
+                vec!["platform_drivers.txt".into()],
+            ));
+        } else {
+            claims.push(Claim::new(
+                ClaimKind::DriverBound,
+                subject.clone(),
+                driver.to_string(),
+                vec!["platform_drivers.txt".into()],
+            ));
+        }
+    }
+    claims
 }
 
 fn prefer_longer(current: Option<String>, name: &str) -> Option<String> {

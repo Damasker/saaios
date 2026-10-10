@@ -29,6 +29,7 @@ pub enum ProbeName {
     PciSysfsList,
     DmiAllowlist,
     PlatformNodes,
+    PlatformDrivers,
     KernelWarningsRedacted,
     SysfsRead,
 }
@@ -48,6 +49,7 @@ impl ProbeName {
             | Self::PciSysfsList
             | Self::DmiAllowlist
             | Self::PlatformNodes
+            | Self::PlatformDrivers
             | Self::KernelWarningsRedacted => &[],
         }
     }
@@ -94,6 +96,7 @@ impl ProbeName {
             Self::PciSysfsList => "pci_sysfs_list",
             Self::DmiAllowlist => "dmi_allowlist",
             Self::PlatformNodes => "platform_nodes",
+            Self::PlatformDrivers => "platform_drivers",
             Self::KernelWarningsRedacted => "kernel_warnings_redacted",
             Self::SysfsRead => "sysfs_read",
         }
@@ -112,6 +115,7 @@ impl ProbeName {
             "pci_sysfs_list" => Self::PciSysfsList,
             "dmi_allowlist" => Self::DmiAllowlist,
             "platform_nodes" => Self::PlatformNodes,
+            "platform_drivers" => Self::PlatformDrivers,
             "kernel_warnings_redacted" => Self::KernelWarningsRedacted,
             "sysfs_read" => Self::SysfsRead,
             _ => return None,

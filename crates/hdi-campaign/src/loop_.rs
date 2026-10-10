@@ -187,6 +187,7 @@ fn bundle_name(probe: ProbeName) -> Option<&'static str> {
         ProbeName::PciSysfsList => "pci_sysfs.txt",
         ProbeName::DmiAllowlist => "dmi.txt",
         ProbeName::PlatformNodes => "platform.txt",
+        ProbeName::PlatformDrivers => "platform_drivers.txt",
         ProbeName::KernelWarningsRedacted => "kernel_warnings.txt",
         ProbeName::SysfsRead => return None,
     })

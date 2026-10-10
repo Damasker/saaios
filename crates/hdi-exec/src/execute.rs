@@ -172,6 +172,7 @@ impl Executor {
             ProbeName::DrmClass => self.read_named("drm.txt"),
             ProbeName::PciSysfsList => self.read_named("pci_sysfs.txt"),
             ProbeName::PlatformNodes => self.read_named("platform.txt"),
+            ProbeName::PlatformDrivers => self.read_named("platform_drivers.txt"),
             ProbeName::DmiAllowlist => {
                 let raw = self.read_named("dmi.txt")?;
                 let text = String::from_utf8_lossy(&raw);

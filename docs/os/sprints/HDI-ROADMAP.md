@@ -1,6 +1,6 @@
 # HDI — лаборатория аппаратного исследования
 
-Статус трека: **HDI-14 в Verify на host. HDI-06 не начат: нет снимка MacBook.**
+Статус трека: **HDI-15 в Verify на host. HDI-06 не начат: нет снимка MacBook.**
 Активный аппаратный эксперимент на Pixel этот трек не открывает и
 модемный трек не сдвигает. HDI-00…05 — host. HDI-06 — одна
 read-only команда на MacBookPro11,3, когда снимок уже собран и
@@ -504,9 +504,9 @@ A/B/C. Знание машины A не становится фактом маш
 
 Снимка MacBookPro11,3 нет, спринт остаётся в Backlog. 2026-10-10
 по пакету Pixel 7 `C:\Users\Admin\saai-hdi-panther-20261010-163813`
-(в git не входит) прогнан скриптовый Hunter после HDI-14: `intent.txt` есть,
-5 проходов, 5 Allow, `pass_gain=[5, 9, 9, 14, 14]`,
-efficiency 2.8, accuracy 0, coverage 1, `not_transferred`.
+(в git не входит) прогнан скриптовый Hunter после HDI-15: `intent.txt` есть,
+5 проходов, 5 Allow, `pass_gain=[5, 9, 9, 14, 18]`,
+efficiency 3.6, accuracy 0, coverage 1, `not_transferred`.
 Проход 1 разделяет `drm:card0`, `drm:card0-DSI-1`, `drm:card0-Writeback-1`,
 `drm:renderD128` и отсутствие PCI-класса `[0300]`. Проход 2 привязывает
 каждый из этих узлов к `exynos_drm`: путь `renderD128` называет
@@ -515,7 +515,9 @@ efficiency 2.8, accuracy 0, coverage 1, `not_transferred`.
 `pci_drivers`: control получает 9 фактов, включая `s51xx` и `pcieh`,
 gain лаборатории остаётся 9. Проход 4 читает отобранный `platform.txt`:
 `28000000.mali`, `100b0000.TPU`, `100a0000.ISP`, `19000000.aoc` и пустой
-`udc:`. Проход 5 повторяет `pci_id`, gain остаётся 14. Предложение адаптации:
+`udc:`. Проход 5 читает ссылки драйверов: `28000000.mali` → `mali`,
+`19000000.aoc` → `aoc`, у TPU и ISP ссылки нет. Gain становится 18.
+Предложение адаптации:
 драйвер `exynos_drm` уже привязан,
 модуль не загружается, `driver_gap` не пишется. Ключ Pixel даёт
 `PlatformGraphicsMatched`. Ключ MacBookPro11,3 на том же снимке даёт исход C
@@ -1191,6 +1193,72 @@ ISP и AoC — отдельные устройства. Пустой класс 
 Повторный прогон пакета Pixel: `pass_gain=[5, 9, 9, 14, 14]`,
 efficiency 2.8, `control_facts=9`, адаптация `already_bound`
 `exynos_drm`, `loaded_module=false`. Образ panther не собирался.
+
+## Sprint HDI-15 — драйвер платформенного узла
+
+- Состояние: `Verify`
+- Зависит от: HDI-14 в Verify
+- Архитектурные решения: ADR-426. Проба `platform_drivers` в белом списке v1.
+- Рабочий fallback: строка без принятого имени узла не даёт утверждения
+
+### Goal
+
+Пятый проход читает имя драйвера из ссылки sysfs. Имя берётся как есть.
+Загруженный модуль с похожим именем это имя не заменяет. Узел без ссылки
+остаётся непривязанным.
+
+### Current state
+
+Проход 5 повторял `pci_id`. На консоли ссылка `28000000.mali/driver`
+называет `mali`, `19000000.aoc/driver` называет `aoc`. У
+`100b0000.TPU` и `100a0000.ISP` ссылки драйвера нет.
+
+### Scope
+
+Входит: проба `platform_drivers`, файл `platform_drivers.txt`,
+`driver_bound` и `driver_unbound` для уже принятых платформенных узлов.
+
+Не входит: подстановка `mali_kbase` вместо `mali`, загрузка модуля,
+сырой вывод `ls`, закрытие HDI-06.
+
+### Change
+
+1. Hunter просит `platform_drivers` один раз после `platform_nodes`.
+2. Строка `имя драйвер` принимается, только если имя уже есть в
+   `platform.txt`.
+3. Слово `unbound` — `driver_unbound`. Иначе значение — второе слово
+   строки. Лишние слова и чужое имя узла отбрасываются.
+
+### Test
+
+| Тест | Ожидание |
+|---|---|
+| `platform_driver_comes_from_the_driver_file` | Проход 5 — `platform_drivers`; gain растёт на 4; `platform:mali` привязан к `mali`, `platform:aoc` к `aoc`; TPU и ISP непривязаны; `mali_kbase` не записан |
+
+### Acceptance criteria
+
+На снимке Pixel `pass_gain=[5, 9, 9, 14, 18]`, efficiency 3.6,
+`control_facts=9`. Четыре утверждения прохода 5 не входят в control.
+Адаптация карты остаётся `already_bound`. Образ телефона не меняется.
+
+### Threat / privacy impact
+
+В пакет попадают четыре строки вида «узел и имя драйвера». Сырой
+вывод консоли и серийные номера туда не копируются.
+
+### Rollback
+
+Убрать пробу `platform_drivers`. Проход 5 снова повторяет `pci_id`.
+
+### Evidence
+
+2026-10-10, этот Windows-хост, toolchain `1.97.1-x86_64-pc-windows-gnu`:
+`cargo test -p hdi-contract -p hdi-exec -p hdi-campaign --all-targets` зелёный
+(HDI-15: 1, campaign 47). `cargo clippy` по этим трём крейтам с
+`-D warnings` — чисто. Whitelist HDI-02: 14 имён.
+Повторный прогон пакета Pixel: `pass_gain=[5, 9, 9, 14, 18]`,
+efficiency 3.6, `control_facts=9`, адаптация `already_bound`
+`exynos_drm`, вердикт `PlatformGraphicsMatched`. Образ panther не собирался.
 
 ## Каталог фикстур
 

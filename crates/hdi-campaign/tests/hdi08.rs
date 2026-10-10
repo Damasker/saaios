@@ -23,7 +23,7 @@ fn hunter_reads_modules_before_repeating_pci() {
     assert!(report.requests[1].contains("\"modules\""));
     assert!(report.requests[2].contains("pci_drivers"));
     assert!(report.requests[3].contains("platform_nodes"));
-    assert!(report.requests[4].contains("pci_id"));
+    assert!(report.requests[4].contains("platform_drivers"));
     assert_eq!(report.metrics.discovery_gain, 1);
     assert!(report
         .claims

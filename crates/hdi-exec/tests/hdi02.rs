@@ -140,7 +140,7 @@ fn crate_manifest_has_no_runtime_services() {
 #[test]
 fn no_write_syscall_templates() {
     let templates = probe_templates();
-    assert_eq!(templates.len(), 13);
+    assert_eq!(templates.len(), 14);
     let mut names = Vec::new();
     for template in templates {
         names.push(template.name);
@@ -153,7 +153,7 @@ fn no_write_syscall_templates() {
     }
     names.sort_unstable();
     names.dedup();
-    assert_eq!(names.len(), 13);
+    assert_eq!(names.len(), 14);
 }
 
 #[test]
@@ -172,6 +172,7 @@ fn whitelist_executes_and_replay_keeps_one_file() {
         ("pci_sysfs_list", "{}"),
         ("dmi_allowlist", "{}"),
         ("platform_nodes", "{}"),
+        ("platform_drivers", "{}"),
         ("kernel_warnings_redacted", "{}"),
         ("sysfs_read", r#"{"path":"/sys/class/drm/card0/uevent"}"#),
     ];

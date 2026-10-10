@@ -39,7 +39,9 @@ runtime responses уже доказаны, но production modem service ещё 
 `exynos_drm`. Ключ Pixel подтверждает эту пару; ключ MacBook на том же
 снимке остаётся `IdentityInsufficient`. Платформенные имена
 `28000000.mali`, `100b0000.TPU`, `100a0000.ISP`, `19000000.aoc` и пустой
-USB-gadget — отдельные факты прохода 4. `mali_kbase` путём DRM не назван.
+USB-gadget — отдельные факты прохода 4. Проход 5 записывает драйвер
+`mali` у `28000000.mali` и драйвер `aoc` у `19000000.aoc`; у TPU и ISP
+ссылки драйвера нет. `mali_kbase` путём DRM не назван.
 HDI-06 не начат: снимка MacBook нет.
 Образ телефона не меняется.
 
