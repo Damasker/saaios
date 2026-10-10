@@ -97,6 +97,15 @@ Status печатает `sigcrit=accepted`, кэш —
 `sigcrit=accepted` остаются. `bearer=rmnet1`, `ipv4=yes`. Camp 564
 на прежнем образе, `saai-displayd` 391 не останавливался.
 
+### 11d на этой загрузке
+
+`camp_linkcrit`: пять строк `error_raw=0`, последняя тоже 0.
+Status печатает `linkcrit=accepted`, кэш —
+`cellular.linkcrit=accepted`. В «Наблюдениях» это «Связь / дано»,
+в строке — «связь дано». Предыдущие три слова остаются.
+`bearer=rmnet1`, `ipv4=yes`. Camp 564 на прежнем образе,
+`saai-displayd` 391 не останавливался.
+
 ## Сверка RFS
 
 Отдельный шаг 11j, после 11c. Не на той же установке, что новый факт.
