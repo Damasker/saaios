@@ -56,6 +56,11 @@ invents no `open_object` and no action Buttons. `layout_v2` docks
 the summary at `y=140`, the fact row at `y=284`, and permission
 below that.
 
+[`examples/consent-public.sui`](examples/consent-public.sui) is the
+labelled consent sample: `ContextHeader`, Status `DataRow`s for the
+app and a capability (ADR-431), and accept/decline `Button`s.
+Status invents no action. Cards match `stacked_row_rect`.
+
 [`examples/spaces-public.sui`](examples/spaces-public.sui) is the
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 `a11y = Button` (ADR-203), and the same nested tabs. Status
@@ -132,7 +137,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   (ADR-232). Empty Object View header reads the same overlay tree
   (ADR-427). Object View `ObjectSummary` reads that tree (ADR-428).
   Fact `DataRow`s read that tree (ADR-429). Permission
-  `SurfacePattern` reads that tree (ADR-430).
+  `SurfacePattern` reads that tree (ADR-430). Consent Status
+  `DataRow`s read that tree (ADR-431).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.

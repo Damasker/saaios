@@ -1109,6 +1109,13 @@ mod tests {
         assert_eq!(object.components[3].props.a11y.as_deref(), Some("Status"));
         assert!(object.rows.is_empty());
         assert!(guide.contains("object-public.sui"));
+        const CONSENT: &str = include_str!("../../../docs/os/ui/examples/consent-public.sui");
+        let consent = compile_v2_public(CONSENT).unwrap();
+        assert_eq!(consent.id, "consent");
+        assert!(!consent.is_privileged());
+        assert_eq!(consent.components[1].type_name, "DataRow");
+        assert_eq!(consent.components[1].props.a11y.as_deref(), Some("Status"));
+        assert!(guide.contains("consent-public.sui"));
         const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");
         assert!(compile_v2_public(TRUSTED)
             .unwrap_err()

@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–430; production `compile_v2()`; named chrome paint from `layout_v2`; Object View overlay from `layout_v2`; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–431; production `compile_v2()`; named chrome paint from `layout_v2`; Object View and consent overlays from `layout_v2`; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
 
 ---
 
@@ -1186,7 +1186,7 @@ OrbHost paint (ADR-230); diagnostic paint (ADR-231); leftover
 formulas (ADR-232); empty Object View header and public
 `object-public.sui` (ADR-427); Object View `ObjectSummary`
 (ADR-428); Object View fact `DataRow`s (ADR-429); permission
-`SurfacePattern` (ADR-430). Release
+`SurfacePattern` (ADR-430); consent Status cards (ADR-431). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1299,6 +1299,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Dock Object View permission `SurfacePattern` and decision
   fact `DataRow`s through `layout_v2` (ADR-430). Status invents
   no action. Not Visual v1 sign-off.
+- [x] Dock consent / remote-pair Status `DataRow`s through
+  `layout_v2` (ADR-431). Status invents no action. Not Visual v1
+  sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1411,7 +1414,7 @@ After each completed task group, report:
 ## Next action
 
 VUI-09 host release gate remains: public subset stays Experimental
-(ADR-185/265/427–430); leftover formulas stay Keyboard keys, gallery
+(ADR-185/265/427–431); leftover formulas stay Keyboard keys, gallery
 page, lock idle/wake (ADR-232); do not promote Stable; do not
 flash for sign-off. Space detail still deferred. MEM-08 stays
 omitted. Thin tuning stays last (ADR-213).

@@ -1,0 +1,30 @@
+sui 2
+screen consent {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = consent.header
+    focus = 0
+    inset = safe
+  }
+  component DataRow {
+    text = Body
+    a11y = Status
+    loc = consent.app
+  }
+  component DataRow {
+    text = Body
+    a11y = Status
+    loc = consent.cap.0
+  }
+  component Button {
+    text = Label
+    a11y = Button
+    loc = "consent:accept"
+  }
+  component Button {
+    text = Label
+    a11y = Button
+    loc = "consent:decline"
+  }
+}

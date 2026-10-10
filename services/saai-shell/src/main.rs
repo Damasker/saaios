@@ -3184,7 +3184,7 @@ enum Frame {
     /// ADR-142: app-consent is no longer a free-floating title at
     /// `header.y+220`. Header is a real `ContextHeader`; requested
     /// capabilities are Static `DataRow` cards. Accept/decline rects
-    /// stay `consent_view`.
+    /// stay `layout_v2` (ADR-431).
     Consent {
         content_rect: Rect,
         header: ContextHeader,
@@ -3212,7 +3212,7 @@ enum Frame {
     /// ADR-144: SSH pairing is no longer a free-floating title.
     /// Header is a real `ContextHeader`; the live client name is a
     /// Static `DataRow`. Fingerprint stays wrapped mono text. Buttons
-    /// stay `task_confirm_view`.
+    /// stay `layout_v2` (ADR-431).
     RemotePairing {
         content_rect: Rect,
         header: ContextHeader,
@@ -6983,11 +6983,36 @@ fn remote_pair_content_cards(
     client_name: &str,
     width: u32,
     height: u32,
-) -> Vec<(Rect, render::ActionCardView)> {
-    vec![(
-        stacked_row_rect(0, width, height),
-        render::ActionCardView::new(client_name, "", ""),
-    )]
+) -> (Rect, Vec<(Rect, render::ActionCardView)>, Rect, Rect) {
+    let (body, cards, buttons) = status_overlay_paint(
+        "remote-pair",
+        &["pair.client"],
+        &[TASK_CONFIRM_ACCEPT_ACTION, TASK_CONFIRM_DECLINE_ACTION],
+        "ADR-431 status overlay",
+        width,
+        height,
+    );
+    (
+        body,
+        vec![(
+            cards[0],
+            render::ActionCardView::new(client_name, "", ""),
+        )],
+        buttons[0],
+        buttons[1],
+    )
+}
+
+fn consent_card_locs(labels: &[String]) -> Vec<String> {
+    let mut locs = vec!["consent.app".to_string()];
+    if labels.is_empty() {
+        locs.push("consent.empty".to_string());
+    } else {
+        for index in 0..labels.len() {
+            locs.push(format!("consent.cap.{index}"));
+        }
+    }
+    locs
 }
 
 /// First card is the live app name. Then each requested capability
@@ -6997,25 +7022,41 @@ fn consent_content_cards(
     labels: &[String],
     width: u32,
     height: u32,
-) -> Vec<(Rect, render::ActionCardView)> {
-    let mut rows = vec![(
-        stacked_row_rect(0, width, height),
-        render::ActionCardView::new(app_name, "запрашивает доступ", ""),
+) -> (Rect, Vec<(Rect, render::ActionCardView)>, Rect, Rect) {
+    let locs = consent_card_locs(labels);
+    let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+    let (body, cards, buttons) = status_overlay_paint(
+        "consent",
+        &loc_refs,
+        &[CONSENT_ACCEPT_ACTION, CONSENT_DECLINE_ACTION],
+        "ADR-431 status overlay",
+        width,
+        height,
+    );
+    let mut views = vec![render::ActionCardView::new(
+        app_name,
+        "запрашивает доступ",
+        "",
     )];
     if labels.is_empty() {
-        rows.push((
-            stacked_row_rect(1, width, height),
-            render::ActionCardView::new("Без дополнительных разрешений", "", ""),
+        views.push(render::ActionCardView::new(
+            "Без дополнительных разрешений",
+            "",
+            "",
         ));
-        return rows;
+    } else {
+        views.extend(
+            labels
+                .iter()
+                .map(|label| render::ActionCardView::new(label, "", "")),
+        );
     }
-    for (index, label) in labels.iter().enumerate() {
-        rows.push((
-            stacked_row_rect(index + 1, width, height),
-            render::ActionCardView::new(label, "", ""),
-        ));
-    }
-    rows
+    (
+        body,
+        cards.into_iter().zip(views).collect(),
+        buttons[0],
+        buttons[1],
+    )
 }
 
 /// How far a touch has to move (in either direction, on this
@@ -7992,6 +8033,19 @@ fn apps_v2_source(installed_apps: &BTreeMap<String, AppSummary>) -> String {
     src
 }
 
+fn status_overlay_v2_source(screen_id: &str, facts: &[&str], locs: &[&str]) -> String {
+    let mut src = format!("sui 2\nscreen {screen_id} {{\n");
+    src.push_str(&v2_header_block(&format!("{screen_id}.header")));
+    for fact in facts {
+        src.push_str(&v2_stacked_block("DataRow", "Status", fact));
+    }
+    for loc in locs {
+        src.push_str(&v2_stacked_block("Button", "Button", loc));
+    }
+    src.push('}');
+    src
+}
+
 fn overlay_buttons_v2_source(screen_id: &str, locs: &[&str]) -> String {
     let mut src = format!("sui 2\nscreen {screen_id} {{\n");
     src.push_str(&v2_header_block(&format!("{screen_id}.header")));
@@ -8061,6 +8115,38 @@ fn overlay_decision_paint(
         .map(|id| v2_named_rect(&tree, id, why))
         .collect();
     (header, buttons)
+}
+
+/// ADR-431: consent / remote-pair Status cards and decision Buttons
+/// share one generated tree.
+fn status_overlay_paint(
+    screen_id: &str,
+    facts: &[&str],
+    locs: &[&str],
+    why: &'static str,
+    width: u32,
+    height: u32,
+) -> (Rect, Vec<Rect>, Vec<Rect>) {
+    let tree = layout_live_v2(
+        &status_overlay_v2_source(screen_id, facts, locs),
+        why,
+        width,
+        height,
+    );
+    let cards = facts
+        .iter()
+        .map(|id| v2_named_rect(&tree, id, why))
+        .collect::<Vec<_>>();
+    let buttons = locs
+        .iter()
+        .map(|id| v2_named_rect(&tree, id, why))
+        .collect::<Vec<_>>();
+    let body = if let Some(first) = buttons.first() {
+        Rect::new(0, 0, width, first.y)
+    } else {
+        Rect::new(0, 0, width, height)
+    };
+    (body, cards, buttons)
 }
 
 /// ADR-430: Object View identity, Status facts, permission, and
@@ -10152,24 +10238,23 @@ impl Shell {
         // label()` need the whole of `self`, not just those two fields.
         let pressed_key = self.pressed_key.clone();
         let frame = if let Some(pending) = &self.pending_consent {
-            let (content_rect, buttons) = overlay_decision_paint(
-                "consent",
-                &[CONSENT_ACCEPT_ACTION, CONSENT_DECLINE_ACTION],
-                "ADR-229 overlay paint",
-                width,
-                height,
-            );
             let labels = pending
                 .requested
                 .iter()
                 .map(|name| capability_label(name).to_owned())
                 .collect::<Vec<_>>();
+            let (content_rect, rows, accept, decline) = consent_content_cards(
+                &pending.app_name,
+                &labels,
+                width,
+                height,
+            );
             Frame::Consent {
                 content_rect,
                 header: consent_header(&space_display_name(&self.spaces, &self.selected_space_id)),
-                rows: consent_content_cards(&pending.app_name, &labels, width, height),
-                accept: buttons[0],
-                decline: buttons[1],
+                rows,
+                accept,
+                decline,
             }
         } else if let Some(entity) = self.viewing_entity() {
             let content = object_view_content(entity, &self.selected_entities, &self.relationships);
@@ -10226,23 +10311,18 @@ impl Shell {
             // header-plus-two-buttons shape) -- only the drawn text
             // and the touch handler's meaning differ. ADR-144: the
             // header leaf is `content_rect` for `ContextHeader`.
-            let (content_rect, buttons) = overlay_decision_paint(
-                "consent",
-                &[TASK_CONFIRM_ACCEPT_ACTION, TASK_CONFIRM_DECLINE_ACTION],
-                "ADR-229 overlay paint",
-                width,
-                height,
-            );
+            let (content_rect, rows, accept, decline) =
+                remote_pair_content_cards(&pending.client_name, width, height);
             Frame::RemotePairing {
                 content_rect,
                 header: remote_pair_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,
                 )),
-                rows: remote_pair_content_cards(&pending.client_name, width, height),
+                rows,
                 fingerprint: key_fingerprint(&pending.public_key),
-                accept: buttons[0],
-                decline: buttons[1],
+                accept,
+                decline,
             }
         } else if let Some(state) = &self.intent_input {
             let keys = if state.keyboard.shows_panel() {
@@ -15081,20 +15161,28 @@ mod tests {
 
     #[test]
     fn remote_pair_row_names_the_live_client() {
-        let rows = remote_pair_content_cards("test-client", 1080, 2400);
+        let (_, rows, accept, decline) = remote_pair_content_cards("test-client", 1080, 2400);
         assert_eq!(rows[0].1.label, "test-client");
         assert!(rows[0].1.status.is_empty());
+        assert_eq!(rows[0].0, stacked_row_rect(0, 1080, 2400));
+        assert_eq!(accept.y, 2100);
+        assert_eq!(decline.y, 2100);
     }
 
     #[test]
     fn consent_rows_name_the_app_and_requested_or_empty() {
-        let requested =
+        let (_, requested, accept, decline) =
             consent_content_cards("Saai Demo", &["Доступ в интернет".to_string()], 1080, 2400);
         assert_eq!(requested[0].1.label, "Saai Demo");
         assert_eq!(requested[0].1.status, "запрашивает доступ");
         assert_eq!(requested[1].1.label, "Доступ в интернет");
-        let empty = consent_content_cards("Saai Demo", &[], 1080, 2400);
+        assert_eq!(requested[0].0, stacked_row_rect(0, 1080, 2400));
+        assert_eq!(requested[1].0, stacked_row_rect(1, 1080, 2400));
+        assert_eq!(accept.y, 2100);
+        assert_eq!(decline.y, 2100);
+        let (_, empty, _, _) = consent_content_cards("Saai Demo", &[], 1080, 2400);
         assert_eq!(empty[1].1.label, "Без дополнительных разрешений");
+        assert_eq!(empty[1].0, stacked_row_rect(1, 1080, 2400));
     }
 
     fn test_app(id: &str, name: &str) -> AppSummary {

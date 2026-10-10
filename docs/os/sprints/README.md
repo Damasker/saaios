@@ -104,6 +104,7 @@ ADR-427 empty Object View header from `layout_v2`; `object-public.sui` stays Exp
 ADR-428 Object View `ObjectSummary` from `layout_v2`; Status invents no `open_object`.
 ADR-429 Object View fact `DataRow`s from `layout_v2`; Status invents no action.
 ADR-430 Object View permission `SurfacePattern` and decision fact `DataRow`s from `layout_v2`.
+ADR-431 consent / remote-pair Status `DataRow`s from `layout_v2`; Status invents no action.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

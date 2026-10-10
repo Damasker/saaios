@@ -50,6 +50,8 @@
 //! ADR-430: Object View `SurfacePattern` docks the OAM permission
 //! band. Decision fact lines are Status `DataRow`s. Neither invents
 //! an action.
+//! ADR-431: consent / remote-pair Status `DataRow`s dock on
+//! `stacked_row_rect`. They invent no actions.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -484,6 +486,8 @@ fn v2_decision_node(
     object: Option<&crate::SuiV2Component>,
     facts: &[&crate::SuiV2Component],
     pattern: Option<&crate::SuiV2Component>,
+    width: u32,
+    height: u32,
 ) -> Node {
     let mut children = Vec::new();
     if object.is_some() {
@@ -523,6 +527,42 @@ fn v2_decision_node(
                     .with_size(Length::Fill, Length::Fill),
             );
         }
+    } else if !facts.is_empty() {
+        let margin = width / 22;
+        let mut layers = vec![v2_placed_slot(
+            &screen.id,
+            0,
+            "ContextHeader".to_string(),
+            None,
+            0,
+            v2_stacked_row_top(0, height),
+        )];
+        let row_height = v2_stacked_row_height(height);
+        for (index, row) in facts.iter().enumerate() {
+            let id = row
+                .props
+                .loc
+                .clone()
+                .unwrap_or_else(|| format!("{}-{index}", row.type_name));
+            layers.push(v2_placed_slot(
+                &screen.id,
+                index + 1,
+                id,
+                None,
+                v2_stacked_row_top(index, height),
+                row_height,
+            ));
+        }
+        children.push(
+            Node::stack(format!("{}-cards", screen.id), layers)
+                .with_padding(EdgeInsets {
+                    top: 0,
+                    right: margin,
+                    bottom: 0,
+                    left: margin,
+                })
+                .with_size(Length::Fill, Length::Fill),
+        );
     } else {
         children.push(Node::leaf("ContextHeader".to_string()));
     }
@@ -688,7 +728,15 @@ fn v2_content_node(
             .iter()
             .find(|component| component.type_name == "SurfacePattern")
             .copied();
-        return v2_decision_node(screen, &overlay_buttons, object, &stacked, overlay_pattern);
+        return v2_decision_node(
+            screen,
+            &overlay_buttons,
+            object,
+            &stacked,
+            overlay_pattern,
+            width,
+            height,
+        );
     }
     if v2_named_tabs(screen).is_empty() && screen.id == "lock" {
         if let Some(field) = fields.first() {
@@ -1355,6 +1403,32 @@ mod tests {
     }
 
     #[test]
+    fn layout_v2_consent_status_rows_match_stacked_row() {
+        let source = include_str!("../../../docs/os/ui/examples/consent-public.sui");
+        let screen = compile_v2_public(source).expect("public consent");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let app = layout_v1_find(&tree, "consent.app").expect("app");
+        assert_eq!(app.rect.y, 430);
+        assert_eq!(app.rect.height, 190);
+        assert!(app.action.is_none());
+        let cap = layout_v1_find(&tree, "consent.cap.0").expect("cap");
+        assert_eq!(cap.rect.y, 650);
+        assert!(cap.action.is_none());
+        assert_eq!(
+            tree.hit_test(270.0, 2250.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("consent:accept")
+        );
+        assert_eq!(
+            tree.hit_test(810.0, 2250.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("consent:decline")
+        );
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+    }
+
+    #[test]
     fn layout_v2_compose_field_docks_above_keyboard_reserve() {
         let screen = compile_v2(
             r#"
@@ -1933,6 +2007,10 @@ mod tests {
             (
                 "object",
                 include_str!("../../../docs/os/ui/examples/object-public.sui"),
+            ),
+            (
+                "consent",
+                include_str!("../../../docs/os/ui/examples/consent-public.sui"),
             ),
         ] {
             let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));
