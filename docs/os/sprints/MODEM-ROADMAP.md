@@ -292,7 +292,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-09 | World/Observation + Shell cellular facts | **Done** (this boot’s row and cache name only live facts) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Done** (this boot's `saai-modemd` holds the descriptors; `rmnet1` has ipv4) | **yes** |
 | MODEM-11 | Remaining camp facts and RFS parity | **Done** (camp tail words on this boot's live bearer; RFS tables match, owner not rebuilt) | **yes** |
-| MODEM-12 | Voice, SMS, IMS, emergency, APN, operator | **Done** (one dial and hangup accepted; SMS send, IMS, emergency, APN edit, and manual operator stayed gated) | **yes** |
+| MODEM-12 | Voice, SMS, IMS, emergency, APN, operator | **Done** (dial, hangup, one SMS, and the internet APN accepted; VoLTE, emergency, and manual selection recorded and not claimed). Program closed | **yes** |
 
 ## MODEM-00
 
@@ -1821,12 +1821,26 @@ Fast dormancy (`5327029`, runtime `e26e92a4…`, оболочка
 кэш даёт `cellular.bearer=rmnet1` и `cellular.ipv4=yes`. Оператор,
 уровень сигнала и идентификаторы абонента в строку не входят.
 
-## Non-goals For Now
+## Program close
 
-Voice, SMS, IMS/VoLTE, emergency, the APN editor, and operator
-selection moved to [MODEM-12](MODEM-12-SERVICES.md). A step starts
-only from a stock builder already in the tree. `ims` and `sos` stay
-at `error_raw=2` until that changes on a live boot.
+MODEM-00 through MODEM-12 are closed on the personally owned Pixel 7
+panther. This boot keeps the CP `ONLINE`, `bearer=rmnet1`, and
+`ipv4=yes`. The cellular row publishes the data-call list, two-way
+traffic, signal presence, the first link estimate, LTE band 3 at
+width 20000, and access barring clear. Detail is in
+[MODEM-12](MODEM-12-SERVICES.md).
+
+The program closes with these recorded limits:
+
+- VoLTE is not claimed. The `0x0938` read returned `error_raw=22`. Frame `0x0939` was not sent.
+- Emergency calling is not claimed. The `0x0712` query returned `error_raw=6`. No emergency dial was placed.
+- Manual operator selection is not claimed. One `0x0705` SET timed out.
+- The `ims` and `sos` profiles stay at `error_raw=2`.
+- Indication `0x0720` is logged and stays off the row: its bytes on this boot are not 0/1 flags.
+- The secondary link-capacity pair on this boot is zero and stays off the row.
+- SMS activation and cell broadcast remain frame acceptance.
+
+There is no further modem step.
 
 These stay outside the program:
 

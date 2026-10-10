@@ -20,7 +20,7 @@
   EFS, открытый **read-only**; записи handle-1 от CP уходят в
   записываемую карантинную копию, не в реальный EFS. Vendor
   `cbd`/`rfsd`/`rild` как сервисы **не** запускаются (сохраняем запрет
-  MODEM-ROADMAP § Non-goals и AGENTS.md).
+  MODEM-ROADMAP § Program close и AGENTS.md).
 - Рабочий fallback: сегодняшний passive owner (handle-3-only) и
   известный-хороший сток в слоте B остаются путём возврата без
   изменений.
