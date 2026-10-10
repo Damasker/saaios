@@ -292,7 +292,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-09 | World/Observation + Shell cellular facts | **Done** (this boot’s row and cache name only live facts) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Done** (this boot's `saai-modemd` holds the descriptors; `rmnet1` has ipv4) | **yes** |
 | MODEM-11 | Remaining camp facts and RFS parity | **Done** (camp tail words on this boot's live bearer; RFS tables match, owner not rebuilt) | **yes** |
-| MODEM-12 | Voice, SMS, IMS, emergency, APN, operator | **Planned** ([MODEM-12](MODEM-12-SERVICES.md)) | **yes** |
+| MODEM-12 | Voice, SMS, IMS, emergency, APN, operator | **Done** (one dial and hangup accepted; SMS send, IMS, emergency, APN edit, and manual operator stayed gated) | **yes** |
 
 ## MODEM-00
 
