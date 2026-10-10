@@ -51,6 +51,7 @@ pub const KEY_SLOT: &str = "cellular.slot";
 pub const KEY_SIGCRIT: &str = "cellular.sigcrit";
 pub const KEY_SMSACT: &str = "cellular.smsact";
 pub const KEY_LINKCRIT: &str = "cellular.linkcrit";
+pub const KEY_SMSCB: &str = "cellular.smscb";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -471,6 +472,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_smscb) {
+        out.push(text_observation(
+            KEY_SMSCB,
+            token,
+            "camp.owner.smscb",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -685,6 +695,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut sigcrit = None;
     let mut smsact = None;
     let mut linkcrit = None;
+    let mut smscb = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -763,6 +774,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             smsact = Some(line);
         } else if line.contains("camp_linkcrit response=yes ") {
             linkcrit = Some(line);
+        } else if line.contains("camp_smscb response=yes ") {
+            smscb = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -807,6 +820,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         sigcrit,
         smsact,
         linkcrit,
+        smscb,
         sim,
     ]
         .into_iter()
@@ -863,6 +877,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last cell-broadcast acknowledgement. Stock error `0` is accepted.
+/// The record list stays out. The last matching line wins.
+pub fn last_smscb(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_smscb response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last link-criterion acknowledgement. Stock error `0` is accepted.
@@ -1541,7 +1570,8 @@ mod tests {
                  camp_slot response=yes error_raw=0 len=433\n\
                  camp_sigcrit response=yes error_raw=0 len=16\n\
                  camp_smsact response=yes error_raw=0 len=16\n\
-                 camp_linkcrit response=yes error_raw=0 len=16\n"
+                 camp_linkcrit response=yes error_raw=0 len=16\n\
+                 camp_smscb response=yes error_raw=0 len=16\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -1557,7 +1587,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 42);
+        assert_eq!(rows.len(), 43);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -1676,6 +1706,9 @@ mod tests {
         let linkcrit = rows.iter().find(|row| row.key == KEY_LINKCRIT).unwrap();
         assert_eq!(linkcrit.value, json!("accepted"));
         assert_eq!(linkcrit.source.source_id, "camp.owner.linkcrit");
+        let smscb = rows.iter().find(|row| row.key == KEY_SMSCB).unwrap();
+        assert_eq!(smscb.value, json!("accepted"));
+        assert_eq!(smscb.source.source_id, "camp.owner.smscb");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -2696,6 +2729,37 @@ mod tests {
             last_linkcrit(
                 "camp_linkcrit response=yes error_raw=0 len=16\n\
                  camp_linkcrit response=yes error_raw=2 len=16\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_smscb("camp_smscb response=yes error_raw=0 len=16\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_smscb("camp_smscb response=yes error_raw=2 len=16\n"),
+            None
+        );
+        assert_eq!(last_smscb("camp_smscb=sent elapsed_ms=12\n"), None);
+        assert_eq!(
+            last_smscb("camp_smsc response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_smscb("camp_linkcrit response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_smscb(
+                "camp_smscb response=yes error_raw=2 len=16\n\
+                 camp_smscb response=yes error_raw=0 len=16\n"
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_smscb(
+                "camp_smscb response=yes error_raw=0 len=16\n\
+                 camp_smscb response=yes error_raw=2 len=16\n"
             ),
             None
         );

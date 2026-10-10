@@ -106,6 +106,15 @@ Status печатает `linkcrit=accepted`, кэш —
 `bearer=rmnet1`, `ipv4=yes`. Camp 564 на прежнем образе,
 `saai-displayd` 391 не останавливался.
 
+### 11e на этой загрузке
+
+`camp_smscb`: две строки `error_raw=0`, последняя тоже 0.
+Status печатает `smscb=accepted`, кэш —
+`cellular.smscb=accepted`. В «Наблюдениях» это «Рассылка / дано»,
+в строке — «рассылка дано». Список записей не публикуется.
+`linkcrit=accepted` остаётся. `bearer=rmnet1`, `ipv4=yes`.
+Camp 564 на прежнем образе, `saai-displayd` 391 не останавливался.
+
 ## Сверка RFS
 
 Отдельный шаг 11j, после 11c. Не на той же установке, что новый факт.
