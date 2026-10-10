@@ -142,6 +142,15 @@ Camp 564 на прежнем образе, `saai-displayd` 391 не остана
 `bearer=rmnet1`, `ipv4=yes`. Camp 564 на прежнем образе,
 `saai-displayd` 391 не останавливался.
 
+### 11i на этой загрузке
+
+`camp_samode`: одна строка `error_raw=0`. Status печатает
+`samode=accepted`, кэш — `cellular.samode=accepted`. В
+«Наблюдениях» это «SA / дано», в строке — «sa дано». Тело
+кадра не публикуется. `gpsnfw=accepted` остаётся.
+`bearer=rmnet1`, `ipv4=yes`. Camp 564 на прежнем образе,
+`saai-displayd` 391 не останавливался.
+
 ## Сверка RFS
 
 Отдельный шаг 11j, после 11c. Не на той же установке, что новый факт.

@@ -19,6 +19,7 @@ pub use cellular::{
     last_endc, last_throttle, last_unsolff, last_unsol, last_screen, last_cellinfo, last_smsc,
     last_vonrget, last_aptime, last_dbgtrace, last_tty, last_pssvc, last_prefmodem, last_slot,
     last_sigcrit, last_smsact, last_linkcrit, last_smscb, last_calllist, last_gpslock, last_gpsnfw,
+    last_samode,
     last_sim_presence, last_supervisor_token,
     latest_numeric_epoch,
     link_is_modem_endpoint, observations_from_cellular, owner_fact_lines, endpoint_holder,
