@@ -88,6 +88,15 @@ Status печатает `sigcrit=accepted`, кэш —
 `bearer=rmnet1`, `ipv4=yes`. Camp 564 по-прежнему на прежнем
 образе, `saai-displayd` 391 не останавливался.
 
+### 11c на этой загрузке
+
+`camp_smsact`: одна строка `error_raw=0`. Status печатает
+`smsact=accepted`, кэш — `cellular.smsact=accepted`. В
+«Наблюдениях» это «Активация / дано», в строке — «активация дано».
+Это принятие кадра, не служба SMS. `slot=accepted` и
+`sigcrit=accepted` остаются. `bearer=rmnet1`, `ipv4=yes`. Camp 564
+на прежнем образе, `saai-displayd` 391 не останавливался.
+
 ## Сверка RFS
 
 Отдельный шаг 11j, после 11c. Не на той же установке, что новый факт.

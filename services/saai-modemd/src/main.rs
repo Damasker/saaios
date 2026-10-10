@@ -294,6 +294,7 @@ fn run() -> Result<()> {
             let prefmodem = camp_prefmodem(&state, owner_running, owner_log.as_deref());
             let slot = camp_slot(&state, owner_running, owner_log.as_deref());
             let sigcrit = camp_sigcrit(&state, owner_running, owner_log.as_deref());
+            let smsact = camp_smsact(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -335,6 +336,7 @@ fn run() -> Result<()> {
                 prefmodem,
                 slot,
                 sigcrit,
+                smsact,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -1028,6 +1030,7 @@ fn status_lines(
     prefmodem: Option<&str>,
     slot: Option<&str>,
     sigcrit: Option<&str>,
+    smsact: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -1152,6 +1155,9 @@ fn status_lines(
     if sigcrit == Some("accepted") {
         lines.push("sigcrit=accepted".to_string());
     }
+    if smsact == Some("accepted") {
+        lines.push("smsact=accepted".to_string());
+    }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
     }
@@ -1247,6 +1253,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_smsact(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_smsact(&facts)
 }
 
 fn camp_sigcrit(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1753,6 +1767,7 @@ mod tests {
             Some("accepted"),
             Some("accepted"),
             Some("accepted"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1802,6 +1817,7 @@ mod tests {
                 "prefmodem=accepted".to_string(),
                 "slot=accepted".to_string(),
                 "sigcrit=accepted".to_string(),
+                "smsact=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1818,6 +1834,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1910,6 +1927,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("prefmodem=")));
         assert!(!absent.iter().any(|line| line.starts_with("slot=")));
         assert!(!absent.iter().any(|line| line.starts_with("sigcrit=")));
+        assert!(!absent.iter().any(|line| line.starts_with("smsact=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -2866,6 +2884,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_sigcrit response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_smsact(
+                "ONLINE",
+                true,
+                Some("camp_smsact response=yes error_raw=0 len=16\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_smsact(
+                "ONLINE",
+                true,
+                Some("camp_smsact response=yes error_raw=2 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_smsact(
+                "ONLINE",
+                true,
+                Some("camp_sigcrit response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_smsact(
+                "OFFLINE",
+                true,
+                Some("camp_smsact response=yes error_raw=0 len=16\n")
             ),
             None
         );
