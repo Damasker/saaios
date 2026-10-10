@@ -292,6 +292,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-09 | World/Observation + Shell cellular facts | **Done** (this boot’s row and cache name only live facts) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Done** (this boot's `saai-modemd` holds the descriptors; `rmnet1` has ipv4) | **yes** |
 | MODEM-11 | Remaining camp facts and RFS parity | **Done** (camp tail words on this boot's live bearer; RFS tables match, owner not rebuilt) | **yes** |
+| MODEM-12 | Voice, SMS, IMS, emergency, APN, operator | **Planned** ([MODEM-12](MODEM-12-SERVICES.md)) | **yes** |
 
 ## MODEM-00
 
@@ -1822,11 +1823,13 @@ Fast dormancy (`5327029`, runtime `e26e92a4…`, оболочка
 
 ## Non-goals For Now
 
-- voice/IMS/VoLTE
-- SMS
-- emergency calling
-- APN editor
-- operator selection
-- radio firmware updates
-- Android RIL, vendor cbd, or vendor rfsd execution
-- generalized modem support beyond Pixel 7 `panther`
+Voice, SMS, IMS/VoLTE, emergency, the APN editor, and operator
+selection moved to [MODEM-12](MODEM-12-SERVICES.md). A step starts
+only from a stock builder already in the tree. `ims` and `sos` stay
+at `error_raw=2` until that changes on a live boot.
+
+These stay outside the program:
+
+- radio firmware updates: the modem image already in RAM stays
+- vendor `cbd`, `rild`, and `rfsd` as a resident service: `saai-modemd` keeps the endpoint
+- modem support beyond the personally owned Pixel 7 `panther`
