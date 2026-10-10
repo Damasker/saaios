@@ -3206,6 +3206,7 @@ enum Frame {
         decision: Option<DecisionOverlay>,
         permission: Option<SurfacePattern>,
         header: Rect,
+        summary_rect: Rect,
         actions: Vec<(Rect, &'static str)>,
     },
     /// ADR-144: SSH pairing is no longer a free-floating title.
@@ -3390,35 +3391,7 @@ fn task_confirm_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bo
     }
 }
 
-const OBJECT_VIEW_HEADER_ID: &str = "object-view-header";
-const OBJECT_VIEW_BUTTONS_ID: &str = "object-view-buttons";
 const OBJECT_VIEW_ACTION_PREFIX: &str = "object-view-action:";
-
-/// HIA-07 (docs/os/sprints/HIA-ROADMAP.md): one reusable screen for
-/// any entity -- same header-plus-buttons shape as `task_confirm_
-/// view`, generalized to 0-2 buttons instead of always exactly two
-/// (`action_count` comes from `ObjectViewContent::actions`' own
-/// length at the call site). No separate "related" leaf -- like
-/// `task_confirm_view`, this is one header leaf plus an optional
-/// button row; `draw_object_view` places the `ObjectSummary` below the
-/// status layer within the header rect itself.
-fn object_view(width: u32, height: u32, action_count: usize) -> LayoutNode {
-    let mut children = vec![Node::leaf(OBJECT_VIEW_HEADER_ID)];
-    if action_count > 0 {
-        let button_leaves: Vec<Node> = (0..action_count)
-            .map(|index| {
-                Node::leaf(format!("object-view-action-{index}"))
-                    .with_action(format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
-            })
-            .collect();
-        children.push(
-            Node::linear(OBJECT_VIEW_BUTTONS_ID, Axis::Horizontal, button_leaves)
-                .with_size(Length::Fill, Length::Px(TASK_CONFIRM_BUTTON_HEIGHT)),
-        );
-    }
-    let root = Node::linear("object-view", Axis::Vertical, children);
-    layout(&root, Rect::new(0, 0, width, height))
-}
 
 /// The tapped button's position (0 = first/primary), or `None` if the
 /// tap missed every button or there are none -- same "layout only
@@ -3440,8 +3413,8 @@ fn object_view_action_at(
         .collect();
     let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
     live_v2_hit(
-        &overlay_buttons_v2_source("object", &loc_refs),
-        "ADR-221 object view",
+        &object_overlay_v2_source(&loc_refs),
+        "ADR-428 object overlay",
         pos,
         width,
         height,
@@ -8029,6 +8002,17 @@ fn overlay_buttons_v2_source(screen_id: &str, locs: &[&str]) -> String {
     src
 }
 
+fn object_overlay_v2_source(locs: &[&str]) -> String {
+    let mut src = String::from("sui 2\nscreen object {\n");
+    src.push_str(&v2_header_block("object.header"));
+    src.push_str(&v2_stacked_block("ObjectSummary", "Status", "object.summary"));
+    for loc in locs {
+        src.push_str(&v2_stacked_block("Button", "Button", loc));
+    }
+    src.push('}');
+    src
+}
+
 /// ADR-229: decision-row paint from the same generated tree hits use.
 fn overlay_decision_paint(
     screen_id: &str,
@@ -8049,6 +8033,27 @@ fn overlay_decision_paint(
         .map(|id| v2_named_rect(&tree, id, why))
         .collect();
     (header, buttons)
+}
+
+/// ADR-428: Object View identity and decision Buttons share one tree.
+fn object_overlay_paint(
+    locs: &[&str],
+    why: &'static str,
+    width: u32,
+    height: u32,
+) -> (Rect, Rect, Vec<Rect>) {
+    let tree = layout_live_v2(&object_overlay_v2_source(locs), why, width, height);
+    let summary = v2_named_rect(&tree, "object.summary", why);
+    let buttons = locs
+        .iter()
+        .map(|id| v2_named_rect(&tree, id, why))
+        .collect::<Vec<_>>();
+    let body = if let Some(first) = buttons.first() {
+        Rect::new(0, 0, width, first.y)
+    } else {
+        Rect::new(0, 0, width, height)
+    };
+    (body, summary, buttons)
 }
 
 fn overlay_field_v2_source(screen_id: &str, field_id: &str) -> String {
@@ -10127,30 +10132,22 @@ impl Shell {
             }
         } else if let Some(entity) = self.viewing_entity() {
             let content = object_view_content(entity, &self.selected_entities, &self.relationships);
-            let (header, actions) = if content.actions.is_empty() {
-                (object_view(width, height, 0).children[0].rect, Vec::new())
-            } else {
-                let locs: Vec<String> = (0..content.actions.len())
-                    .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
-                    .collect();
-                let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
-                let (header, rects) = overlay_decision_paint(
-                    "object",
-                    &loc_refs,
-                    "ADR-229 overlay paint",
-                    width,
-                    height,
-                );
-                (
-                    header,
-                    content
-                        .actions
-                        .iter()
-                        .zip(rects)
-                        .map(|(label, rect)| (rect, *label))
-                        .collect(),
-                )
-            };
+            let locs: Vec<String> = (0..content.actions.len())
+                .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
+                .collect();
+            let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+            let (header, summary_rect, rects) = object_overlay_paint(
+                &loc_refs,
+                "ADR-428 object overlay",
+                width,
+                height,
+            );
+            let actions = content
+                .actions
+                .iter()
+                .zip(rects)
+                .map(|(label, rect)| (rect, *label))
+                .collect();
             let details = object_view_details(&content);
             let permission = object_view_permission_pattern(&content);
             Frame::ObjectView {
@@ -10160,6 +10157,7 @@ impl Shell {
                 decision: content.decision,
                 permission,
                 header,
+                summary_rect,
                 actions,
             }
         } else if let Some(pending) = &self.pending_pair_request {
@@ -10683,6 +10681,7 @@ impl Shell {
                     decision,
                     permission,
                     header,
+                    summary_rect,
                     actions,
                 } => {
                     render::draw_object_view(
@@ -10693,6 +10692,7 @@ impl Shell {
                         decision.as_ref(),
                         permission.as_ref(),
                         header,
+                        summary_rect,
                         &actions,
                         fonts,
                     );
@@ -17418,9 +17418,8 @@ mod tests {
     #[test]
     fn object_view_action_at_finds_two_buttons_by_position() {
         // Same geometry as task_confirm_view's own accept/decline
-        // split (task_confirm_screen_left/right_half_of_button_row_*
-        // above) -- object_view(_, _, 2) uses the identical layout
-        // shape.
+        // split -- object_overlay_v2_source docks the two action
+        // locs through layout_v2 (ADR-221/428).
         assert_eq!(
             object_view_action_at((270.0, 2250.0), 1080, 2400, 2),
             Some(0)
@@ -17448,6 +17447,32 @@ mod tests {
     fn object_view_action_at_finds_nothing_with_zero_actions() {
         assert_eq!(object_view_action_at((270.0, 2250.0), 1080, 2400, 0), None);
         assert_eq!(object_view_action_at((540.0, 1000.0), 1080, 2400, 0), None);
+    }
+
+    #[test]
+    fn empty_object_view_header_comes_from_layout_v2() {
+        let width = 1080;
+        let height = 2400;
+        let (header, summary, buttons) = super::object_overlay_paint(
+            &[],
+            "ADR-428 object overlay",
+            width,
+            height,
+        );
+        assert!(buttons.is_empty());
+        assert_eq!(header, saai_ui_core::Rect::new(0, 0, width, height));
+        assert_eq!(summary, saai_ui_core::Rect::new(0, 140, width, 144));
+        let two = super::object_overlay_paint(
+            &["object-view-action:0", "object-view-action:1"],
+            "ADR-428 object overlay",
+            width,
+            height,
+        );
+        assert_eq!(two.2.len(), 2);
+        assert_eq!(two.1, summary);
+        assert_eq!(two.0.y, header.y);
+        assert!(two.0.height < header.height);
+        assert!(include_str!("main.rs").contains("ADR-428 object overlay"));
     }
 
     #[test]

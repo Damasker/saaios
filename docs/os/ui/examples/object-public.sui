@@ -1,0 +1,16 @@
+sui 2
+screen object {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = object.header
+    focus = 0
+    inset = safe
+  }
+  component ObjectSummary {
+    text = Body
+    color = TextPrimary
+    a11y = Status
+    loc = object.summary
+  }
+}

@@ -499,6 +499,7 @@ pub fn draw_object_view(
     decision: Option<&DecisionOverlay>,
     permission: Option<&SurfacePattern>,
     header: Rect,
+    summary_rect: Rect,
     actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
@@ -529,7 +530,7 @@ pub fn draw_object_view(
         fonts,
         summary,
         header.x + margin,
-        header.y + 140,
+        summary_rect.y,
         content_width,
     );
     if let Some(related) = related {
@@ -4218,6 +4219,7 @@ mod tests {
             Some(&overlay),
             None,
             Rect::new(0, 0, width, 2200),
+            Rect::new(0, 140, width, 144),
             &[(accept, "Подтвердить"), (decline, "Отклонить")],
             None,
         );

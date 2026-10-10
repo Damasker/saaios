@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232; production `compile_v2()`; named chrome paint from `layout_v2`; leftover formulas recorded; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–428; production `compile_v2()`; named chrome paint from `layout_v2`; Object View header + `ObjectSummary` from `layout_v2`; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
 
 ---
 
@@ -1183,7 +1183,9 @@ swap (ADR-222); OrbHost hits (ADR-223); diagnostic hits (ADR-224);
 NOW chrome paint (ADR-225); list paint (ADR-226); Me scroll paint
 (ADR-227); apps grid paint (ADR-228); overlay paint (ADR-229);
 OrbHost paint (ADR-230); diagnostic paint (ADR-231); leftover
-formulas (ADR-232). Release
+formulas (ADR-232); empty Object View header and public
+`object-public.sui` (ADR-427); Object View `ObjectSummary`
+(ADR-428). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1284,6 +1286,12 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   idle/wake stay formulas. Do not 7-tap.
 - [x] Record leftover paint formulas (ADR-232): Keyboard keys, gallery
   page, lock idle/wake. Not Visual v1 sign-off.
+- [x] Dock empty Object View header through `layout_v2` and publish
+  `object-public.sui` via `compile_v2_public()` (ADR-427). Still
+  Experimental. Not Visual v1 sign-off.
+- [x] Dock Object View `ObjectSummary` through `layout_v2` (ADR-428).
+  Status invents no `open_object`. Facts stay runtime content.
+  Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1395,6 +1403,8 @@ After each completed task group, report:
 
 ## Next action
 
-Apps grid hits through `layout_v2`. Overlays with vocabulary after
-that. Space detail still deferred. MEM-08 stays omitted. Thin tuning stays
-last (ADR-213).
+VUI-09 host release gate remains: public subset stays Experimental
+(ADR-185/265/427–428); leftover formulas stay Keyboard keys, gallery
+page, lock idle/wake (ADR-232); do not promote Stable; do not
+flash for sign-off. Space detail still deferred. MEM-08 stays
+omitted. Thin tuning stays last (ADR-213).

@@ -48,6 +48,12 @@ labelled Inbox sample: `ContextHeader`, `EventRow` with
 `a11y = Button` (ADR-202), and the same nested tabs. Status
 `EventRow` invents no `open_object`.
 
+[`examples/object-public.sui`](examples/object-public.sui) is the
+labelled Object View sample: `ContextHeader` plus Status
+`ObjectSummary` (ADR-427/428). No nested tabs. Status invents no
+`open_object` and no action Buttons. `layout_v2` docks the summary
+at `y=140`.
+
 [`examples/spaces-public.sui`](examples/spaces-public.sui) is the
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 `a11y = Button` (ADR-203), and the same nested tabs. Status
@@ -121,7 +127,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   (ADR-229). OrbHost paint reads generated `layout_v2` (ADR-230).
   Diagnostic paint reads `layout_v2_scrolled` (ADR-231). Leftover
   formulas stay Keyboard keys, gallery page, and lock idle/wake
-  (ADR-232).
+  (ADR-232). Empty Object View header reads the same overlay tree
+  (ADR-427). Object View `ObjectSummary` reads that tree (ADR-428).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.

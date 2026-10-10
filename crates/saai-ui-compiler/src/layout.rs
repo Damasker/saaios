@@ -41,6 +41,10 @@
 //! ADR-230: OrbHost paint reads the same generated `layout_v2` tree.
 //! ADR-231: diagnostic paint reads the same generated `layout_v2_scrolled`
 //! tree as Назад hits, clipping DataRows to the first stacked slot.
+//! ADR-427: a header-only overlay (no tabs, no invented Buttons) still
+//! docks `ContextHeader` through `v2_decision_node`.
+//! ADR-428: Object View `ObjectSummary` docks on that overlay as Status;
+//! it does not invent `open_object`.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -439,6 +443,9 @@ fn v2_orb_node(
 /// Live consent / task-confirm / object-view button row uses
 /// `ROOT_TAB_HEIGHT` (300) as physical `Px`.
 const V2_OVERLAY_BUTTON_HEIGHT: u32 = 300;
+/// ADR-137 / ADR-428: Object View identity sits below the 120 px
+/// PIXEL_7 status layer. The ContextHeader slot is that top band.
+const V2_OVERLAY_SUMMARY_TOP: u32 = 140;
 const V2_LOCK_HEADER_HEIGHT: u32 = 260;
 const V2_LOCK_FIELD_TOP: u32 = 24;
 
@@ -462,34 +469,58 @@ fn v2_overlay_button_action(button: &crate::SuiV2Component) -> Option<String> {
     button.props.loc.clone()
 }
 
-fn v2_decision_node(screen: &crate::SuiV2Screen, buttons: &[&crate::SuiV2Component]) -> Node {
-    let header = Node::leaf("ContextHeader".to_string());
-    let row = Node::linear(
-        format!("{}-buttons", screen.id),
-        Axis::Horizontal,
-        buttons
-            .iter()
-            .enumerate()
-            .map(|(index, button)| {
-                let id = button
-                    .props
-                    .loc
-                    .clone()
-                    .unwrap_or_else(|| format!("Button-{index}"));
-                let mut leaf = Node::leaf(id);
-                if let Some(action) = v2_overlay_button_action(button) {
-                    leaf = leaf.with_action(action);
-                }
-                leaf
-            })
-            .collect(),
-    )
-    .with_size(Length::Fill, Length::Px(V2_OVERLAY_BUTTON_HEIGHT));
-    Node::linear(
-        format!("{}-content", screen.id),
-        Axis::Vertical,
-        vec![header, row],
-    )
+fn v2_decision_node(
+    screen: &crate::SuiV2Screen,
+    buttons: &[&crate::SuiV2Component],
+    object: Option<&crate::SuiV2Component>,
+) -> Node {
+    let mut children = Vec::new();
+    if object.is_some() {
+        children.push(
+            Node::leaf("ContextHeader".to_string())
+                .with_size(Length::Fill, Length::Px(V2_OVERLAY_SUMMARY_TOP)),
+        );
+        let id = object
+            .and_then(|component| component.props.loc.clone())
+            .unwrap_or_else(|| "ObjectSummary".to_string());
+        children.push(
+            Node::leaf(id).with_size(Length::Fill, Length::Px(v2_now_object_height())),
+        );
+        if !buttons.is_empty() {
+            children.push(
+                Node::leaf(format!("{}-body", screen.id))
+                    .with_size(Length::Fill, Length::Fill),
+            );
+        }
+    } else {
+        children.push(Node::leaf("ContextHeader".to_string()));
+    }
+    if !buttons.is_empty() {
+        children.push(
+            Node::linear(
+                format!("{}-buttons", screen.id),
+                Axis::Horizontal,
+                buttons
+                    .iter()
+                    .enumerate()
+                    .map(|(index, button)| {
+                        let id = button
+                            .props
+                            .loc
+                            .clone()
+                            .unwrap_or_else(|| format!("Button-{index}"));
+                        let mut leaf = Node::leaf(id);
+                        if let Some(action) = v2_overlay_button_action(button) {
+                            leaf = leaf.with_action(action);
+                        }
+                        leaf
+                    })
+                    .collect(),
+            )
+            .with_size(Length::Fill, Length::Px(V2_OVERLAY_BUTTON_HEIGHT)),
+        );
+    }
+    Node::linear(format!("{}-content", screen.id), Axis::Vertical, children)
 }
 
 fn v2_compose_node(
@@ -617,8 +648,11 @@ fn v2_content_node(
     if let Some(orb) = orbs.first().copied() {
         return v2_orb_node(screen, width, height, orb, &orb_menus);
     }
-    if v2_named_tabs(screen).is_empty() && !overlay_buttons.is_empty() {
-        return v2_decision_node(screen, &overlay_buttons);
+    if v2_named_tabs(screen).is_empty()
+        && (!overlay_buttons.is_empty()
+            || (header.is_some() && stacked.is_empty() && grid.is_empty() && fields.is_empty()))
+    {
+        return v2_decision_node(screen, &overlay_buttons, object);
     }
     if v2_named_tabs(screen).is_empty() && screen.id == "lock" {
         if let Some(field) = fields.first() {
@@ -1278,6 +1312,10 @@ mod tests {
             .hit_test(540.0, 800.0)
             .and_then(|node| node.action.as_deref())
             .is_none());
+        let summary = layout_v1_find(&tree, "ObjectSummary").expect("object summary");
+        assert_eq!(summary.rect.y, 140);
+        assert_eq!(summary.rect.height, 144);
+        assert!(summary.action.is_none());
     }
 
     #[test]
@@ -1797,5 +1835,69 @@ mod tests {
         let tree = layout_v2(&screen, 1080, 2400);
         assert!(tree.hit_test(135.0, 2250.0).is_none());
         assert!(tree.hit_test(945.0, 2250.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_empty_object_overlay_docks_header_without_inventing_buttons() {
+        let source = include_str!("../../../docs/os/ui/examples/object-public.sui");
+        let screen = compile_v2_public(source).expect("public object");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        assert_eq!(header.rect, saai_ui_core::Rect::new(0, 0, 1080, 140));
+        assert!(header.action.is_none());
+        let summary = layout_v1_find(&tree, "object.summary").expect("summary");
+        assert_eq!(summary.rect, saai_ui_core::Rect::new(0, 140, 1080, 144));
+        assert!(summary.action.is_none());
+        assert!(tree.hit_test(540.0, 200.0).is_none());
+        assert!(layout_v1_find(&tree, "object-buttons").is_none());
+        assert!(tree.hit_test(270.0, 2250.0).is_none());
+        assert!(tree.hit_test(540.0, 335.0).is_none());
+    }
+
+    #[test]
+    fn public_examples_layout_through_v2_without_shell() {
+        for (name, source) in [
+            (
+                "now",
+                include_str!("../../../docs/os/ui/examples/now-public.sui"),
+            ),
+            (
+                "inbox",
+                include_str!("../../../docs/os/ui/examples/inbox-public.sui"),
+            ),
+            (
+                "search",
+                include_str!("../../../docs/os/ui/examples/search-public.sui"),
+            ),
+            (
+                "spaces",
+                include_str!("../../../docs/os/ui/examples/spaces-public.sui"),
+            ),
+            (
+                "me",
+                include_str!("../../../docs/os/ui/examples/me-public.sui"),
+            ),
+            (
+                "wifi",
+                include_str!("../../../docs/os/ui/examples/wifi-public.sui"),
+            ),
+            (
+                "bluetooth",
+                include_str!("../../../docs/os/ui/examples/bluetooth-public.sui"),
+            ),
+            (
+                "object",
+                include_str!("../../../docs/os/ui/examples/object-public.sui"),
+            ),
+        ] {
+            let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));
+            assert!(!screen.is_privileged(), "{name}");
+            let tree = layout_v2(&screen, 1080, 2400);
+            assert!(
+                layout_v1_find(&tree, "ContextHeader").is_some(),
+                "{name}"
+            );
+        }
     }
 }

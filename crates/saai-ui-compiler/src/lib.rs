@@ -1096,6 +1096,15 @@ mod tests {
             Some("Button")
         );
         assert!(guide.contains("bluetooth-public.sui"));
+        const OBJECT: &str = include_str!("../../../docs/os/ui/examples/object-public.sui");
+        let object = compile_v2_public(OBJECT).unwrap();
+        assert_eq!(object.id, "object");
+        assert!(!object.is_privileged());
+        assert_eq!(object.components[0].type_name, "ContextHeader");
+        assert_eq!(object.components[1].type_name, "ObjectSummary");
+        assert_eq!(object.components[1].props.a11y.as_deref(), Some("Status"));
+        assert!(object.rows.is_empty());
+        assert!(guide.contains("object-public.sui"));
         const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");
         assert!(compile_v2_public(TRUSTED)
             .unwrap_err()
