@@ -1,6 +1,6 @@
 # HDI — лаборатория аппаратного исследования
 
-Статус трека: **HDI-15 в Verify на host. HDI-06 не начат: нет снимка MacBook.**
+Статус трека: **HDI-16 в Verify на host. HDI-06 не начат: нет снимка MacBook.**
 Активный аппаратный эксперимент на Pixel этот трек не открывает и
 модемный трек не сдвигает. HDI-00…05 — host. HDI-06 — одна
 read-only команда на MacBookPro11,3, когда снимок уже собран и
@@ -505,8 +505,8 @@ A/B/C. Знание машины A не становится фактом маш
 Снимка MacBookPro11,3 нет, спринт остаётся в Backlog. 2026-10-10
 по пакету Pixel 7 `C:\Users\Admin\saai-hdi-panther-20261010-163813`
 (в git не входит) прогнан скриптовый Hunter после HDI-15: `intent.txt` есть,
-5 проходов, 5 Allow, `pass_gain=[5, 9, 9, 14, 18]`,
-efficiency 3.6, accuracy 0, coverage 1, `not_transferred`.
+5 проходов, 5 Allow, `pass_gain=[5, 9, 9, 14, 20]`,
+efficiency 4, accuracy 0, coverage 1, `not_transferred`.
 Проход 1 разделяет `drm:card0`, `drm:card0-DSI-1`, `drm:card0-Writeback-1`,
 `drm:renderD128` и отсутствие PCI-класса `[0300]`. Проход 2 привязывает
 каждый из этих узлов к `exynos_drm`: путь `renderD128` называет
@@ -515,8 +515,9 @@ efficiency 3.6, accuracy 0, coverage 1, `not_transferred`.
 `pci_drivers`: control получает 9 фактов, включая `s51xx` и `pcieh`,
 gain лаборатории остаётся 9. Проход 4 читает отобранный `platform.txt`:
 `28000000.mali`, `100b0000.TPU`, `100a0000.ISP`, `19000000.aoc` и пустой
-`udc:`. Проход 5 читает ссылки драйверов: `28000000.mali` → `mali`,
-`19000000.aoc` → `aoc`, у TPU и ISP ссылки нет. Gain становится 18.
+`udc:`. Проход 5 читает ссылки драйверов: `28000000.mali` → `mali`
+(модуль `mali_kbase`), `19000000.aoc` → `aoc` (модуль `aoc_core`), у TPU и
+ISP ссылки нет. Gain становится 20.
 Предложение адаптации:
 драйвер `exynos_drm` уже привязан,
 модуль не загружается, `driver_gap` не пишется. Ключ Pixel даёт
@@ -1258,6 +1259,68 @@ efficiency 2.8, `control_facts=9`, адаптация `already_bound`
 `-D warnings` — чисто. Whitelist HDI-02: 14 имён.
 Повторный прогон пакета Pixel: `pass_gain=[5, 9, 9, 14, 18]`,
 efficiency 3.6, `control_facts=9`, адаптация `already_bound`
+`exynos_drm`, вердикт `PlatformGraphicsMatched`. Образ panther не собирался.
+
+## Sprint HDI-16 — модуль за именем драйвера
+
+- Состояние: `Verify`
+- Зависит от: HDI-15 в Verify
+- Архитектурные решения: ADR-426
+- Рабочий fallback: третье слово, которого нет в `modules.txt`, не записывается
+
+### Goal
+
+Имя драйвера и модуль за ним — два утверждения. Модуль берётся из ссылки
+`module` у драйвера и только если он есть в списке загруженных. Имя
+драйвера при этом не меняется. Шестая проба не добавляется.
+
+### Current state
+
+Проход 5 записывал `platform:mali` = `mali` и `platform:aoc` = `aoc`.
+Ссылка `drivers/mali/module` называет `mali_kbase`, `drivers/aoc/module`
+называет `aoc_core`. Оба модуля загружены.
+
+### Scope
+
+Входит: необязательное третье поле строки `platform_drivers.txt` и
+утверждение `driver:<имя>` = модуль.
+
+Не входит: замена значения `platform:mali` на `mali_kbase`, новая проба,
+шестой проход, загрузка модуля, закрытие HDI-06.
+
+### Change
+
+1. Два поля строки остаются привязкой драйвера, как в HDI-15.
+2. Третье поле — модуль. Оно пишется, если имя есть в `modules.txt`.
+3. Четвёртое поле и третье поле у `unbound` отбрасывают строку.
+
+### Test
+
+| Тест | Ожидание |
+|---|---|
+| `driver_module_is_a_separate_fact` | `platform:mali` остаётся `mali`; `driver:mali` = `mali_kbase`; `driver:aoc` = `aoc_core`; незагруженный `mali_pixel` не записан |
+
+### Acceptance criteria
+
+На снимке Pixel `pass_gain=[5, 9, 9, 14, 20]`, efficiency 4,
+`control_facts=9`. Два модульных утверждения не входят в control.
+Адаптация карты остаётся `already_bound`. Образ телефона не меняется.
+
+### Threat / privacy impact
+
+В пакет добавляются два публичных имени модуля. Сырой вывод `ls` не копируется.
+
+### Rollback
+
+Игнорировать третье поле. Проход 5 снова даёт gain 18.
+
+### Evidence
+
+2026-10-10, этот Windows-хост, toolchain `1.97.1-x86_64-pc-windows-gnu`:
+`cargo test -p hdi-campaign --test hdi15 --test hdi16` — оба зелёные.
+`cargo clippy -p hdi-campaign --all-targets -- -D warnings` — чисто.
+Повторный прогон пакета Pixel: `pass_gain=[5, 9, 9, 14, 20]`,
+efficiency 4, `control_facts=9`, адаптация `already_bound`
 `exynos_drm`, вердикт `PlatformGraphicsMatched`. Образ panther не собирался.
 
 ## Каталог фикстур

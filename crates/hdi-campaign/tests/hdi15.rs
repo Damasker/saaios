@@ -24,7 +24,7 @@ fn platform_driver_comes_from_the_driver_file() {
     .unwrap();
     std::fs::write(
         path.join("platform_drivers.txt"),
-        "28000000.mali mali\n100b0000.TPU unbound\n100a0000.ISP unbound\n19000000.aoc aoc\n28000000.mali mali_kbase extra\ndbgdev-pd-tpu mali_kbase\n",
+        "28000000.mali mali\n100b0000.TPU unbound\n100a0000.ISP unbound\n19000000.aoc aoc\n28000000.mali mali_kbase extra noise\ndbgdev-pd-tpu mali_kbase\n",
     )
     .unwrap();
     let campaign = tempfile::tempdir().expect("campaign");

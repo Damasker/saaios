@@ -1,5 +1,5 @@
 //! HDI campaign loop, fixture verifier, and scripted claims
-//! (ADR-426, sprints HDI-03, HDI-04, HDI-05, and HDI-07 through HDI-15).
+//! (ADR-426, sprints HDI-03, HDI-04, HDI-05, and HDI-07 through HDI-16).
 //!
 //! A scripted investigator sees only the redacted bundle. The campaign
 //! stamps the pass, checks the contract, then asks `hdi-exec` to read the

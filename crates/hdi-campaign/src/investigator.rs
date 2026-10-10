@@ -272,8 +272,9 @@ fn platform_nodes(text: &str) -> Vec<(String, String)> {
     nodes
 }
 
-/// The driver name is the symlink target in `platform_drivers.txt`.
-/// A loaded module such as `mali_kbase` is not substituted for that name.
+/// The second field is the sysfs driver name. An optional third field is the
+/// module behind that driver, and only when `modules.txt` lists it. The module
+/// does not replace the driver name.
 fn platform_driver_claims(input_json: &str) -> Vec<Claim> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(input_json) else {
         return Vec::new();
@@ -290,6 +291,12 @@ fn platform_driver_claims(input_json: &str) -> Vec<Claim> {
     else {
         return Vec::new();
     };
+    let loaded = module_names(
+        files
+            .get("modules.txt")
+            .and_then(|text| text.as_str())
+            .unwrap_or(""),
+    );
     let nodes = platform_nodes(platform);
     let mut claims = Vec::new();
     for line in drivers.lines() {
@@ -301,7 +308,8 @@ fn platform_driver_claims(input_json: &str) -> Vec<Claim> {
         let Some(driver) = parts.next() else {
             continue;
         };
-        if parts.next().is_some() {
+        let module = parts.next();
+        if parts.next().is_some() || (driver == "unbound" && module.is_some()) {
             continue;
         }
         let Some((subject, _)) = nodes.iter().find(|(_, name)| name == node) else {
@@ -314,13 +322,23 @@ fn platform_driver_claims(input_json: &str) -> Vec<Claim> {
                 "unbound",
                 vec!["platform_drivers.txt".into()],
             ));
-        } else {
-            claims.push(Claim::new(
-                ClaimKind::DriverBound,
-                subject.clone(),
-                driver.to_string(),
-                vec!["platform_drivers.txt".into()],
-            ));
+            continue;
+        }
+        claims.push(Claim::new(
+            ClaimKind::DriverBound,
+            subject.clone(),
+            driver.to_string(),
+            vec!["platform_drivers.txt".into()],
+        ));
+        if let Some(module) = module {
+            if loaded.iter().any(|name| name == module) {
+                claims.push(Claim::new(
+                    ClaimKind::DriverBound,
+                    format!("driver:{driver}"),
+                    module.to_string(),
+                    vec!["platform_drivers.txt".into(), "modules.txt".into()],
+                ));
+            }
         }
     }
     claims

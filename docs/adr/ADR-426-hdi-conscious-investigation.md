@@ -3,7 +3,7 @@
 ## Статус
 
 Принято, 2026-10-10. HDI-00 и HDI-01 живут в `crates/hdi-contract`.
-HDI-02 — `crates/hdi-exec`. HDI-03, HDI-04, HDI-05 и HDI-07…HDI-15 —
+HDI-02 — `crates/hdi-exec`. HDI-03, HDI-04, HDI-05 и HDI-07…HDI-16 —
 `crates/hdi-campaign`. Пробы `pci_drivers`, `platform_nodes` и
 `platform_drivers` добавлены в белый список v1.
 Шлюз намерения живёт в `intent_gate` и не подключён к `native-init`.
