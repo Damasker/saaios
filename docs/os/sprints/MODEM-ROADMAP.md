@@ -291,6 +291,7 @@ Do not skip directly from `ONLINE` to "cellular works". Separate milestones:
 | MODEM-08 | Long-running `saai-modemd` lifecycle | **Done** (fresh boot, one query, one SIGTERM, CP stayed ONLINE, sensitive mounts clear) | **yes** |
 | MODEM-09 | World/Observation + Shell cellular facts | **Done** (this boot’s row and cache name only live facts) | **yes** |
 | MODEM-10 | Real camp+bearer via valid dual-handle NV (VERDICT 27 reframe) | **Done** (this boot's `saai-modemd` holds the descriptors; `rmnet1` has ipv4) | **yes** |
+| MODEM-11 | Remaining camp facts and RFS parity | **Planned** ([MODEM-11](MODEM-11-TAIL.md)) | **yes** |
 
 ## MODEM-00
 

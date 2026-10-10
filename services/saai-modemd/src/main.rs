@@ -292,6 +292,7 @@ fn run() -> Result<()> {
             let tty = camp_tty(&state, owner_running, owner_log.as_deref());
             let pssvc = camp_pssvc(&state, owner_running, owner_log.as_deref());
             let prefmodem = camp_prefmodem(&state, owner_running, owner_log.as_deref());
+            let slot = camp_slot(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -331,6 +332,7 @@ fn run() -> Result<()> {
                 tty,
                 pssvc,
                 prefmodem,
+                slot,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -1022,6 +1024,7 @@ fn status_lines(
     tty: Option<&str>,
     pssvc: Option<&str>,
     prefmodem: Option<&str>,
+    slot: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -1140,6 +1143,9 @@ fn status_lines(
     if prefmodem == Some("accepted") {
         lines.push("prefmodem=accepted".to_string());
     }
+    if slot == Some("accepted") {
+        lines.push("slot=accepted".to_string());
+    }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
     }
@@ -1235,6 +1241,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_slot(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_slot(&facts)
 }
 
 fn camp_prefmodem(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1723,6 +1737,7 @@ mod tests {
             Some("accepted"),
             Some("accepted"),
             Some("accepted"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1770,6 +1785,7 @@ mod tests {
                 "tty=accepted".to_string(),
                 "pssvc=accepted".to_string(),
                 "prefmodem=accepted".to_string(),
+                "slot=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1786,6 +1802,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1874,6 +1891,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("tty=")));
         assert!(!absent.iter().any(|line| line.starts_with("pssvc=")));
         assert!(!absent.iter().any(|line| line.starts_with("prefmodem=")));
+        assert!(!absent.iter().any(|line| line.starts_with("slot=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -2766,6 +2784,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_prefmodem response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_slot(
+                "ONLINE",
+                true,
+                Some("camp_slot response=yes error_raw=0 len=433\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_slot(
+                "ONLINE",
+                true,
+                Some("camp_slot response=yes error_raw=2 len=433\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_slot(
+                "ONLINE",
+                true,
+                Some("camp_prefmodem response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_slot(
+                "OFFLINE",
+                true,
+                Some("camp_slot response=yes error_raw=0 len=433\n")
             ),
             None
         );

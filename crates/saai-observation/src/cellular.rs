@@ -47,6 +47,7 @@ pub const KEY_DBGTRACE: &str = "cellular.dbgtrace";
 pub const KEY_TTY: &str = "cellular.tty";
 pub const KEY_PSSVC: &str = "cellular.pssvc";
 pub const KEY_PREFMODEM: &str = "cellular.prefmodem";
+pub const KEY_SLOT: &str = "cellular.slot";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -431,6 +432,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_slot) {
+        out.push(text_observation(
+            KEY_SLOT,
+            token,
+            "camp.owner.slot",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -641,6 +651,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut tty = None;
     let mut pssvc = None;
     let mut prefmodem = None;
+    let mut slot = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -711,6 +722,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             pssvc = Some(line);
         } else if line.contains("camp_prefmodem response=yes ") {
             prefmodem = Some(line);
+        } else if line.contains("camp_slot response=yes ") {
+            slot = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -751,6 +764,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         tty,
         pssvc,
         prefmodem,
+        slot,
         sim,
     ]
         .into_iter()
@@ -807,6 +821,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last slot-status acknowledgement. Stock error `0` is accepted.
+/// The reply body stays out. Preferred-modem is a different fact.
+pub fn last_slot(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_slot response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last preferred-modem acknowledgement. Stock error `0` is accepted.
@@ -1421,7 +1450,8 @@ mod tests {
                  camp_dbgtrace response=yes error_raw=0 len=16\n\
                  camp_tty response=yes error_raw=0 len=16\n\
                  camp_pssvc response=yes error_raw=0 len=16\n\
-                 camp_prefmodem response=yes error_raw=0 len=16\n"
+                 camp_prefmodem response=yes error_raw=0 len=16\n\
+                 camp_slot response=yes error_raw=0 len=433\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -1437,7 +1467,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 38);
+        assert_eq!(rows.len(), 39);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -1544,6 +1574,9 @@ mod tests {
         let prefmodem = rows.iter().find(|row| row.key == KEY_PREFMODEM).unwrap();
         assert_eq!(prefmodem.value, json!("accepted"));
         assert_eq!(prefmodem.source.source_id, "camp.owner.prefmodem");
+        let slot = rows.iter().find(|row| row.key == KEY_SLOT).unwrap();
+        assert_eq!(slot.value, json!("accepted"));
+        assert_eq!(slot.source.source_id, "camp.owner.slot");
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -2466,6 +2499,30 @@ mod tests {
             last_prefmodem(
                 "camp_prefmodem response=yes error_raw=0 len=16\n\
                  camp_prefmodem response=yes error_raw=2 len=16\n"
+            ),
+            None
+        );
+        assert_eq!(
+            last_slot("camp_slot response=yes error_raw=0 len=433\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_slot("camp_slot response=yes error_raw=2 len=433\n"),
+            None
+        );
+        assert_eq!(last_slot("camp_slot=sent elapsed_ms=12\n"), None);
+        assert_eq!(
+            last_slot("camp_prefmodem response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_slot("camp_sigcrit response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_slot(
+                "camp_slot response=yes error_raw=0 len=433\n\
+                 camp_slot response=yes error_raw=2 len=433\n"
             ),
             None
         );
