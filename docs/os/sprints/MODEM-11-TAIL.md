@@ -133,6 +133,15 @@ Camp 564 на прежнем образе, `saai-displayd` 391 не остана
 `bearer=rmnet1`, `ipv4=yes`. Camp 564 на прежнем образе,
 `saai-displayd` 391 не останавливался.
 
+### 11h на этой загрузке
+
+`camp_gpsnfw`: одна строка `error_raw=0`. Status печатает
+`gpsnfw=accepted`, кэш — `cellular.gpsnfw=accepted`. В
+«Наблюдениях» это «NFW / дано», в строке — «gpsnfw дано».
+Координаты не публикуются. `gpslock=accepted` остаётся.
+`bearer=rmnet1`, `ipv4=yes`. Camp 564 на прежнем образе,
+`saai-displayd` 391 не останавливался.
+
 ## Сверка RFS
 
 Отдельный шаг 11j, после 11c. Не на той же установке, что новый факт.
