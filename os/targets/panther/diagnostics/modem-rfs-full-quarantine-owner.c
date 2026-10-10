@@ -305,7 +305,13 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
         * SMS-SUBMIT of 3GPP TS 23.040; stock copies it in unchanged. */
        SMS_SEND = 0x0100, SMS_SEND_LEN = 271,
        SMS_PROP_OFF = 12, SMS_SMSC_OFF = 13, SMS_PDU_LEN_OFF = 26,
-       SMS_PDU_OFF = 27, SMS_PDU_MAX = 244, SMS_DIGITS_MAX = 20 };
+       SMS_PDU_OFF = 27, SMS_PDU_MAX = 244, SMS_DIGITS_MAX = 20,
+       /* ProtocolMiscBuilder::BuildGetVoLteProvisionUpdate. Header-only
+        * GET, opcode 0x0938, length 12. The reply status is one byte at
+        * +12: zero or nonzero. The matching SET 0x0939 is the "update
+        * done" notice and is not sent here. */
+       VOLTE_PROV_GET = 0x0938, VOLTE_PROV_LEN = 12,
+       VOLTE_PROV_STATUS_OFF = 12 };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -478,6 +484,8 @@ struct camp_driver {
     int sms_enabled;
     char sms_number[SMS_DIGITS_MAX + 2];
     int sms_sent, sms_done;
+    /* One read of the VoLTE provision-update flag. Header only. */
+    int volteprov_sent, volteprov_done;
     /* VERDICT 17: len-16 scanType sweep (config /data/saaios/etc/scan16). After
      * bring-up completes, fire BuildQueryAvailableNetwork(int) once per distinct
      * accepted scanType 0..5, stopping early if any returns a result list. */
@@ -3424,6 +3432,32 @@ static int camp_sms_reply(struct camp_driver *c, unsigned id, unsigned error)
     return 1;
 }
 
+/* One header-only read after registration. The status byte is published
+ * as 0 or 1. */
+static unsigned camp_volteprov_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || c->capquery || c->volteprov_done ||
+        c->volteprov_sent)
+        return 0;
+    return VOLTE_PROV_GET;
+}
+
+static int camp_volteprov_reply(struct camp_driver *c, const uint8_t *p,
+                                size_t n, unsigned id, unsigned error)
+{
+    unsigned status;
+    if (id != VOLTE_PROV_GET || !c->volteprov_sent || c->volteprov_done)
+        return 0;
+    c->volteprov_done = 1;
+    if (!error && p && n > VOLTE_PROV_STATUS_OFF) {
+        status = p[VOLTE_PROV_STATUS_OFF] ? 1u : 0u;
+        printf("camp_volteprov response=yes error_raw=0 status=%u\n", status);
+    } else {
+        printf("camp_volteprov response=yes error_raw=%u\n", error);
+    }
+    return 1;
+}
+
 /* Advance the PIN-unlock and activation-call sequences on a matching reply.
  * Returns 1 when the reply was consumed here. The PIN never reaches the log;
  * only the public error word, call state/index, and counts do. */
@@ -4037,6 +4071,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_bbver_reply(c, p, n, id, error)) return;
     if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
+    if (camp_volteprov_reply(c, p, n, id, error)) return;
     if (camp_sms_reply(c, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
     if (id == 0x073e || id == 0x0954 || id == 0x0718) {
@@ -5876,6 +5911,22 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_sms=sent step=send elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    if (camp_volteprov_next(c) == VOLTE_PROV_GET) {
+        ++c->probe_token;
+        c->volteprov_sent = 1;
+        int wrote = sit_send_get_once(o->ipc, (uint16_t)VOLTE_PROV_GET,
+                                      c->probe_token);
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = VOLTE_PROV_GET;
+        c->probe_name = "volteprov";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_volteprov=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -8888,6 +8939,29 @@ static int test_camp_reg(void)
         if (camp_sms_next(&sx) != 0) return 271;
         if (!camp_sms_reply(&sx, SMS_SEND, 0) || !sx.sms_done) return 272;
         if (camp_sms_next(&sx) != 0) return 273;
+    }
+    {
+        struct camp_driver vx;
+        memset(&vx, 0, sizeof vx);
+        if (camp_volteprov_next(&vx) != 0) return 274;
+        vx.reg_complete = 1;
+        if (camp_volteprov_next(&vx) != VOLTE_PROV_GET) return 275;
+        vx.capquery = 1;
+        if (camp_volteprov_next(&vx) != 0) return 276;
+        vx.capquery = 0;
+        vx.volteprov_sent = 1;
+        if (camp_volteprov_next(&vx) != 0) return 277;
+        uint8_t vr[13];
+        memset(vr, 0, sizeof vr);
+        vr[VOLTE_PROV_STATUS_OFF] = 0x04;
+        if (!camp_volteprov_reply(&vx, vr, sizeof vr, VOLTE_PROV_GET, 0) ||
+            !vx.volteprov_done) return 278;
+        if (camp_volteprov_next(&vx) != 0) return 279;
+        struct camp_driver ve;
+        memset(&ve, 0, sizeof ve);
+        ve.volteprov_sent = 1;
+        if (!camp_volteprov_reply(&ve, NULL, 0, VOLTE_PROV_GET, 2) ||
+            !ve.volteprov_done) return 280;
     }
     return 0;
 }
