@@ -50,17 +50,16 @@ through this diagnostic path. This does not yet establish cellular service,
 network registration, calls, SMS, mobile data, or long-term modem lifecycle
 handling.
 
-**Current blocker (MODEM-06, updated 2026-10-01):** SIM READY(5) has been
-observed twice; PIN→READY is no longer the active blocker. Under READY and
-radio ON, voice/data registration remains 0 with no `rmnet` RX or cellular
-IPv4. Guarded AllowData(1), RadioPower ON-only, and a reversible LTE_WCDMA
-fallback check did not initiate registration. IPC/RFS endpoints are currently
-short-lived; the kernel drops CP messages without an opener and purges the
-receive queue on the last close. The next architectural step is a single,
-continuous IPC/RFS owner with a safe boot handoff and read-only state API.
-The old tray chase and OEM experiments below are historical diagnostics, not
-current unblock instructions. See `docs/os/targets/panther/MODEM-BLOCKER.md`.
-Do not mark cellular service complete without registration and a bearer.
+**Current OS contract (MODEM-06, updated 2026-10-04):** native CP boot,
+SIM READY(5), radio ON and a continuous diagnostic owner are proven. Cellular
+**service is not:** CS `REG_DENIED`, PS unregistered, camp locked on foreign
+WCDMA `25501`, LTE scans (`0x0734`) ACK then COMPLETE empty (including from
+radio-off, 48 ms). Host registration/scan levers are exhausted. **Write the
+rest of SaaiOS on Wi‑Fi.** PID 1 must not start modem diagnostics or wait
+on `rmnet`. Contract: `docs/os/targets/panther/MODEM-OS-CONTRACT.md`.
+Blocker log: `docs/os/targets/panther/MODEM-BLOCKER.md`. Query:
+`cargo run -p saai-modemd -- os-gate` (`continue_os=yes`).
+Do not mark cellular complete without registration and a bearer.
 
 The reusable pieces in `src/` are pure C helpers with host tests:
 

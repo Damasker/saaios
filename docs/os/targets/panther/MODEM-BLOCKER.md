@@ -1,5 +1,23 @@
 ﻿# Panther modem blocker (MODEM-06) — one pager
 
+**OS CONTRACT (2026-10-04):** host registration/scan levers are exhausted.
+Continue writing SaaiOS on Wi‑Fi/USB-NCM. PID 1 must not wait on cellular.
+See [MODEM-OS-CONTRACT.md](MODEM-OS-CONTRACT.md) and `saai-modemd os-gate`.
+
+**VERDICT 27 — radio-OFF then ON then one `0x0734` still COMPLETE empty in 48 ms: the idle-not-camped window is the same no-op as the camped scan. Scan axis closed. NV/firmware unchanged (2026-10-04):**
+Radio was confirmed OFF, then ON, then a single `StartNetworkScan`. The CP
+accepted the command and returned `0x0736` **scanStatus=2 COMPLETE**, length
+**13** (header only, zero cells), **48 ms** later (`55696` → `55744`). That
+interval cannot contain an EUTRAN band sweep. The empty header matches the
+camped VERDICT 26 result, so radio-off did not reset the scanner. Afterward
+the CP recamped the same cell: Vodafone **`25501`**, **3G/UMTS**, voice
+`REG_DENIED`, PS unregistered, signal mask UMTS-only. No NV/EFS/firmware
+write. **Bearer? no.** Do not repeat `0x0734`/`0x0706` as an OS or camp
+unblock. Remaining gap is CP RF/cell-selection (`nv_protected`/cal), out of
+scope without an operator NV grant.
+
+---
+
 **VERDICT 26 — StartNetworkScan 0x0734 DECODED BYTE-EXACT AND FIRED: the modern band-targeted scan is ACCEPTED (error 0, unlike the operator-control SETs), but a direct EUTRAN scan on UA LTE bands B1/B3/B7/B20 COMPLETES WITH ZERO LTE CELLS — confirming the CP-internal RF/cell-selection wall from the scan side too. Device left known-good (2026-10-04):**
 
 Decoded `ProtocolNetworkBuilder::BuildStartNetworkScan` @0x75870 (SIT stream lib `cef87564`) byte-for-byte — no field guessed. Request `0x0734`: 12-byte SIT header + 10-byte scan scalars (off12 scanType, off13 interval, off15 maxSearchTime, off17 incrementalResults, off18 periodicity[clamp 3..10], off20 numSpecifiers≤8, off21 numMccMncs≤20) + `numSpecifiers`×78 + `numMccMncs`×6. Each 78-byte specifier: off0 radioAccessNetwork(GERAN=1,UTRAN=2,EUTRAN=3,NGRAN=4), off1 bands_length(4B,≤8), off5 bands[8](1B each = 3GPP band numbers), off13 channels_length(1B,≤32), off14 channels[32](2B each); empty channel list = scan whole band. Result = unsolicited **`0x0736`** (`ProtocolNetScanResultAdapter`, scanStatus at frame+8, len≥13). Cross-checked vs public `RIL_RadioAccessSpecifier_V1_5`.

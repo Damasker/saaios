@@ -2,19 +2,25 @@
 
 Maintained boundary for Pixel 7 native modem work.
 
-**Current hardware evidence (2026-10-01):** the separate diagnostic owner
-reaches CP ONLINE, SIM READY/PIN disabled and radio ON. Its newly reviewed
-logical-stack status GET `0x0810` also returned enabled, but voice/data
-registration remain 0 and there is no cellular bearer. The older PIN/soft-lock
-notes below are historical cases, not the current blocker. See the
+**OS gate (2026-10-04):** cellular service is **unavailable**. Host
+registration and LTE-scan levers are exhausted (MODEM-BLOCKER VERDICT 24–27).
+PID 1, the shell, and apps **continue on Wi‑Fi**. This daemon still must not
+power the modem or issue SIT from init.
+
+```sh
+cargo run -p saai-modemd -- os-gate
+# continue_os=yes  cellular_service=unavailable  network_authority=wlan0
+```
+
+Contract: [`docs/os/targets/panther/MODEM-OS-CONTRACT.md`](../../docs/os/targets/panther/MODEM-OS-CONTRACT.md).
+
+**Current hardware evidence (2026-10-04):** diagnostic owner reaches CP ONLINE,
+SIM READY/PIN disabled, radio ON, stack enabled. Camp is foreign WCDMA `25501`;
+voice `REG_DENIED`; PS unregistered; `0x0734` LTE scan ACK then empty COMPLETE
+(including after radio OFF→ON). No `rmnet` bearer. READY/ON/enabled do not
+imply registration. See the
 [modem roadmap](../../docs/os/sprints/MODEM-ROADMAP.md) and
-[factory evidence/live results](../../docs/os/sprints/MODEM-07-RFS-QUARANTINE.md#native-radio-service-boundary-and-logical-stack-check-2026-10-01).
-The native service must keep SIM, logical-stack, radio, registration and
-bearer observations separate; READY/ON/enabled do not imply registration.
-An isolated late factory-carrier SGC request was also accepted, but its
-separate post-request status sweep still showed registration 0. The next
-diagnostic hypothesis is early factory initialization timing, not a missing
-Android application framework or a proven need for another enable command.
+[blocker](../../docs/os/targets/panther/MODEM-BLOCKER.md).
 
 This service is intentionally conservative. It does not power on the modem,
 issue ioctls, mount EFS, serve RFS, start a RIL consumer, or run the September
@@ -25,6 +31,7 @@ service.
 Current host-safe commands:
 
 ```sh
+cargo run -p saai-modemd -- os-gate
 cargo run -p saai-modemd -- status
 cargo run -p saai-modemd -- preflight --modem-state /path/to/state
 cargo run -p saai-modemd -- inspect-image --image /path/to/modem.bin
@@ -54,12 +61,13 @@ Executor-facing helpers bind stage payload sources, enforce the reviewed CRC
 policy, report ACK mismatches with explicit expected/got words, and map
 executor outcomes into the same progress state machine.
 
-Next production work belongs here:
+Next production work on the **OS** is not a modem daemon. Porting the
+diagnostic SIT owner into init is **out of scope** until an operator
+explicitly reopens cellular. If that happens later:
 
-- port the verified S5100SIT boot sequence out of diagnostics;
-- preserve the factory handover block guards;
-- add an isolated RFS design before enabling long-running runtime use;
-- expose registration state only after factory post-SIM init is understood.
+- keep factory handover block guards;
+- keep RFS quarantine (never real EFS);
+- never present cellular as available without `bearer_verified=yes`.
 
 ## Soft-lock / bearer (operator, not daemon)
 

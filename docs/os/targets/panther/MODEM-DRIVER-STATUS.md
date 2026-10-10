@@ -106,7 +106,28 @@ succeeds here.
 
 ---
 
-## 2. Near-term gaps that block connectivity
+## 2. Closed host axes vs remaining CP wall
+
+VERDICT 19 showed an iPhone at the same spot seeing home LTE; this Pixel camps
+only foreign Vodafone-UA `25501` 3G. That is **not** a missing Android RIL.
+
+Host levers that were supposed to move RAT/PLMN/scan are **done and closed**:
+
+- `0x074f` SetAllowedNetworkTypeBitmap — recovered, fired, `error_raw=2`; GET
+  `0x0750` already showed LTE allowed (`0x403fe`). Not a missing bitmap.
+- `0x070a` preferred LTE_ONLY — ACK, no LTE cells.
+- `0x0705` manual home PLMN — `error_raw=2`.
+- `0x0706` legacy scan — GENERIC_FAILURE in every form.
+- `0x0734`/`0x0736` modern EUTRAN scan — **accepted**, COMPLETE empty from
+  camp **and** from radio-OFF→ON in 48 ms (VERDICT 26–27). Scan axis closed.
+
+**OS may continue without a bearer.** See `MODEM-OS-CONTRACT.md`.
+Further cellular work is operator-gated NV/RF-cal (forbidden by default) or
+a later diagnostic poller — not PID 1.
+
+---
+
+## 3. Prioritized implementation plan
 
 The VERDICT log concluded "terminal environmental/firmware boundary," but VERDICT 19
 falsified the *environmental* reading: an iPhone at the same spot sees all three
@@ -194,6 +215,7 @@ IMEI/keys.
    - Treat as diagnostic only until Tier 1 proves them relevant; keep behind
      explicit opt-in. Not on the connectivity critical path.
 
-**Critical path:** item 1 (`0x074f`) then item 2 (modern scan) are the two changes
-most likely to move the modem off the foreign 3G camp and let registration — and
-therefore every gated action above — proceed.
+**Critical path for the OS:** none on cellular. Continue PID 1 / display /
+shell / Wi‑Fi. Cellular actions (SetupDataCall, DIAL, SMS) stay gated on
+registration 1/5 which this CP does not grant. Do not re-open `0x0734` or
+`0x074f` as OS blockers.

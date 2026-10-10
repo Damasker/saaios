@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use saai_modemd::boot_model;
+use saai_modemd::os_gate::OsGate;
 use saai_modemd::post_edge;
 use saai_modemd::soft_lock::{
     self, SoftLockSnapshot, APP_STATE_PIN, PIN1_DISABLED, PIN1_ENABLED_VERIFIED,
@@ -28,6 +29,9 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
+    /// OS boot/shell contract: cellular unavailable; continue without SIT.
+    /// Host-safe: no modem endpoints opened.
+    OsGate,
     /// Read modem state and bearer names without opening modem endpoints.
     Status {
         #[arg(long, default_value = DEFAULT_MODEM_STATE)]
@@ -115,6 +119,11 @@ fn main() {
 
 fn run() -> Result<()> {
     match Args::parse().command {
+        Cmd::OsGate => {
+            for line in OsGate::default().lines() {
+                println!("{line}");
+            }
+        }
         Cmd::Status {
             modem_state,
             net_class,
