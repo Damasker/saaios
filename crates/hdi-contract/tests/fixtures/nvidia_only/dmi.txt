@@ -1,0 +1,4 @@
+sys_vendor: Apple Inc.
+product_name: MacBookPro11,3
+board_name: Mac-2BD1B31983FE1663
+bios_version: 478.0.0.0.0

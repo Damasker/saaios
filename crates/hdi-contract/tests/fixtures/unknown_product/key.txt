@@ -1,0 +1,3 @@
+machine_id: machine-b
+expected_product: MacBookPro11,3
+igd_id: 8086:0d26

@@ -1,0 +1,2 @@
+00:00.0 Host bridge [0600]: Intel Corporation Crystal Well DRAM Controller [8086:0d04]
+00:02.0 VGA compatible controller [0300]: Intel Corporation Crystal Well Integrated Graphics Controller [8086:0d26]

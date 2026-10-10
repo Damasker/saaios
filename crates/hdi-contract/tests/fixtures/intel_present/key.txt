@@ -1,0 +1,3 @@
+machine_id: machine-intel
+expected_product: Test Board
+igd_id: 8086:0d26

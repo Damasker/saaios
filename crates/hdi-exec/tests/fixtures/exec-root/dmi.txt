@@ -1,0 +1,3 @@
+sys_vendor: Apple Inc.
+product_name: MacBookPro11,3
+product_serial: SHOULD-NOT-LEAK

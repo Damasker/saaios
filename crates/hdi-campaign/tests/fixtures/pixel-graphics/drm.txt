@@ -1,0 +1,2 @@
+card0-DSI-1 -> ../../devices/platform/exynos-drm/drm/card0/card0-DSI-1
+renderD128 -> ../../devices/platform/exynos-drm/drm/renderD128

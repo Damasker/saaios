@@ -1,0 +1,21 @@
+[package]
+name = "hdi-campaign"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+hdi-contract.workspace = true
+hdi-exec.workspace = true
+intent-resolution.workspace = true
+serde.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+hdi-contract.workspace = true
+saai-entity-store.workspace = true
+tempfile.workspace = true

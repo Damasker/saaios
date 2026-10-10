@@ -20,6 +20,9 @@ members = [
     "crates/saai-entity-protocol",
     "crates/saai-object-actions",
     "crates/intent-resolution",
+    "crates/hdi-contract",
+    "crates/hdi-exec",
+    "crates/hdi-campaign",
     "crates/saai-observation",
     "crates/saai-attention",
     "crates/saai-authority",
@@ -69,6 +72,9 @@ saai-entity-store = { path = "crates/saai-entity-store" }
 saai-entity-protocol = { path = "crates/saai-entity-protocol" }
 saai-object-actions = { path = "crates/saai-object-actions" }
 intent-resolution = { path = "crates/intent-resolution" }
+hdi-contract = { path = "crates/hdi-contract" }
+hdi-exec = { path = "crates/hdi-exec" }
+hdi-campaign = { path = "crates/hdi-campaign" }
 saai-observation = { path = "crates/saai-observation" }
 saai-attention = { path = "crates/saai-attention" }
 saai-authority = { path = "crates/saai-authority" }

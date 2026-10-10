@@ -1,0 +1,2 @@
+0000:01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GK107M [GeForce GT 750M] [10de:0fe9]
+        Kernel driver in use: nouveau

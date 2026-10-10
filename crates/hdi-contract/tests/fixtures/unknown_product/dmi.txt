@@ -1,0 +1,3 @@
+sys_vendor: Dell Inc.
+product_name: Latitude 7490
+board_name: 0DYWY7

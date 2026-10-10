@@ -1,0 +1,3 @@
+00:00.0 Host bridge [0600]: Intel Corporation Crystal Well DRAM Controller [8086:0d04]
+01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GK107M [GeForce GT 750M] [10de:0fe9]
+02:00.0 Network controller [0280]: Broadcom Inc. and subsidiaries BCM4360 802.11ac Wireless Network Adapter [14e4:43a0]

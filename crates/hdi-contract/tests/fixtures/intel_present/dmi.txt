@@ -1,0 +1,2 @@
+sys_vendor: Example Vendor
+product_name: Test Board

@@ -1,0 +1,6 @@
+machine_id: pixel-7
+expected_model: GS201 PANTHER MP based on GS201
+display_node: card0-DSI-1
+display_driver: exynos_drm
+render_node: renderD128
+render_driver: exynos_drm

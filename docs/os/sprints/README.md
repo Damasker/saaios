@@ -29,6 +29,17 @@ S00–S32 закрыли базовый трек — рабочий телефо
 [MODEM-ROADMAP.md](MODEM-ROADMAP.md): diagnostic CP `ONLINE` и первые SIT
 runtime responses уже доказаны, но production modem service ещё не открыт.
 
+Аппаратная лаборатория вынесена в отдельный
+[HDI-ROADMAP.md](HDI-ROADMAP.md) (ADR-426). Это userspace-кампания по
+явному намерению, не автозапуск и не модем. HDI-05 в Verify: `IntentGate`
+в `crates/hdi-campaign` открывает одну кампанию только на явный
+`investigate_hardware`. Предусловие `graphics_class_incomplete` в
+поставляемых данных выключено. `adapt_hardware` остаётся AskUser и
+модуль не загружает. HDI-12 в Verify: дисплей `card0-DSI-1` и рендер `renderD128` — разные
+узлы. На снимке Pixel оба привязаны к `exynos_drm`; `mali_kbase`
+загружен, но путём DRM не назван. HDI-06 не начат: снимка MacBook нет.
+Образ телефона не меняется.
+
 **Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
 ([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…06 закрыты на host;
 VUI-04 remainder и VUI-06 на panther; **VUI-07 закрыт** на panther

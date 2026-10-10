@@ -1,0 +1,1 @@
+card0 -> ../../devices/platform/vendor-drm/drm/card0

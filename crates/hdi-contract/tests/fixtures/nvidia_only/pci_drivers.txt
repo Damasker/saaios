@@ -1,0 +1,4 @@
+01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GK107M [GeForce GT 750M] [10de:0fe9]
+	Subsystem: Apple Inc. Device [106b:011b]
+	Kernel driver in use: nouveau
+	Kernel modules: nouveau
