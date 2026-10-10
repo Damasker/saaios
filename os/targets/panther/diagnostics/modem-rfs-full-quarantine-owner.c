@@ -311,7 +311,14 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
         * +12: zero or nonzero. The matching SET 0x0939 is the "update
         * done" notice and is not sent here. */
        VOLTE_PROV_GET = 0x0938, VOLTE_PROV_LEN = 12,
-       VOLTE_PROV_STATUS_OFF = 12 };
+       VOLTE_PROV_STATUS_OFF = 12,
+       /* ProtocolNetworkBuilder::BuildSetEmergencyCallStatus as called by
+        * QueryEmergencyCallAvailableRadioTech: opcode 0x0712, length 14,
+        * byte +12 = 1, byte +13 = 0xff. No dial string. The reply body is
+        * not logged. */
+       EM_QUERY = 0x0712, EM_QUERY_LEN = 14,
+       EM_QUERY_MODE_OFF = 12, EM_QUERY_MODE = 1,
+       EM_QUERY_ARG_OFF = 13, EM_QUERY_ARG = 0xff };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -486,6 +493,8 @@ struct camp_driver {
     int sms_sent, sms_done;
     /* One read of the VoLTE provision-update flag. Header only. */
     int volteprov_sent, volteprov_done;
+    /* One emergency-availability query. Not a dial. */
+    int emquery_sent, emquery_done;
     /* VERDICT 17: len-16 scanType sweep (config /data/saaios/etc/scan16). After
      * bring-up completes, fire BuildQueryAvailableNetwork(int) once per distinct
      * accepted scanType 0..5, stopping early if any returns a result list. */
@@ -3458,6 +3467,32 @@ static int camp_volteprov_reply(struct camp_driver *c, const uint8_t *p,
     return 1;
 }
 
+static void make_emquery_request(uint8_t request[EM_QUERY_LEN], uint32_t token)
+{
+    memset(request, 0, EM_QUERY_LEN);
+    request[2] = (uint8_t)EM_QUERY;
+    request[3] = (uint8_t)(EM_QUERY >> 8);
+    request[4] = (uint8_t)EM_QUERY_LEN;
+    put_little32(request + 6, token);
+    request[EM_QUERY_MODE_OFF] = EM_QUERY_MODE;
+    request[EM_QUERY_ARG_OFF] = (uint8_t)EM_QUERY_ARG;
+}
+
+static unsigned camp_emquery_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || c->capquery || c->emquery_done || c->emquery_sent)
+        return 0;
+    return EM_QUERY;
+}
+
+static int camp_emquery_reply(struct camp_driver *c, unsigned id, unsigned error)
+{
+    if (id != EM_QUERY || !c->emquery_sent || c->emquery_done) return 0;
+    c->emquery_done = 1;
+    printf("camp_emquery response=yes error_raw=%u\n", error);
+    return 1;
+}
+
 /* Advance the PIN-unlock and activation-call sequences on a matching reply.
  * Returns 1 when the reply was consumed here. The PIN never reaches the log;
  * only the public error word, call state/index, and counts do. */
@@ -4071,6 +4106,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_bbver_reply(c, p, n, id, error)) return;
     if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
+    if (camp_emquery_reply(c, id, error)) return;
     if (camp_volteprov_reply(c, p, n, id, error)) return;
     if (camp_sms_reply(c, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
@@ -5927,6 +5963,23 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_volteprov=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    if (camp_emquery_next(c) == EM_QUERY) {
+        uint8_t f[EM_QUERY_LEN];
+        ++c->probe_token;
+        make_emquery_request(f, c->probe_token);
+        c->emquery_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = EM_QUERY;
+        c->probe_name = "emquery";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_emquery=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -8962,6 +9015,26 @@ static int test_camp_reg(void)
         ve.volteprov_sent = 1;
         if (!camp_volteprov_reply(&ve, NULL, 0, VOLTE_PROV_GET, 2) ||
             !ve.volteprov_done) return 280;
+    }
+    {
+        uint8_t eq[EM_QUERY_LEN];
+        static const uint8_t eq_e[EM_QUERY_LEN] = {
+            0,0,0x12,0x07,14,0,0x78,0x56,0x34,0x12,0,0, 1,0xff};
+        make_emquery_request(eq, 0x12345678u);
+        if (!same_bytes(eq, eq_e, sizeof eq)) return 281;
+        struct camp_driver ex;
+        memset(&ex, 0, sizeof ex);
+        if (camp_emquery_next(&ex) != 0) return 282;
+        ex.reg_complete = 1;
+        if (camp_emquery_next(&ex) != EM_QUERY) return 283;
+        ex.capquery = 1;
+        if (camp_emquery_next(&ex) != 0) return 284;
+        ex.capquery = 0;
+        ex.emquery_sent = 1;
+        if (camp_emquery_next(&ex) != 0) return 285;
+        if (!camp_emquery_reply(&ex, EM_QUERY, 0) || !ex.emquery_done)
+            return 286;
+        if (camp_emquery_next(&ex) != 0) return 287;
     }
     return 0;
 }
