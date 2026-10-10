@@ -1,14 +1,22 @@
-use hdi_campaign::{run_campaign, Hunter, Investigator};
+use hdi_campaign::{run_campaign, Hunter};
 use hdi_contract::ClaimKind;
 
 #[test]
 fn platform_nodes_are_named_once() {
     let root = tempfile::tempdir().expect("fixture");
     let path = root.path();
-    std::fs::write(path.join("pci.txt"), "0000:00:00.0 PCI bridge [0604]: [1234:0001]\n").unwrap();
+    std::fs::write(
+        path.join("pci.txt"),
+        "0000:00:00.0 PCI bridge [0604]: [1234:0001]\n",
+    )
+    .unwrap();
     std::fs::write(path.join("drm.txt"), "card0\n").unwrap();
     std::fs::write(path.join("modules.txt"), "other\n").unwrap();
-    std::fs::write(path.join("pci_drivers.txt"), "0000:00:00.0 PCI bridge [0604]: [1234:0001]\n        Kernel driver in use: pcieport\n").unwrap();
+    std::fs::write(
+        path.join("pci_drivers.txt"),
+        "0000:00:00.0 PCI bridge [0604]: [1234:0001]\n        Kernel driver in use: pcieport\n",
+    )
+    .unwrap();
     std::fs::write(
         path.join("platform.txt"),
         "mali\n28000000.mali\n100b0000.TPU\n100a0000.ISP\n19000000.aoc\ndbgdev-pd-tpu\nudc:\n",
@@ -32,9 +40,7 @@ fn platform_nodes_are_named_once() {
         }));
     }
     assert!(report.claims.iter().any(|claim| {
-        claim.kind == ClaimKind::DeviceAbsent
-            && claim.subject == "usb:udc"
-            && claim.value == "none"
+        claim.kind == ClaimKind::DeviceAbsent && claim.subject == "usb:udc" && claim.value == "none"
     }));
     assert!(report
         .claims

@@ -35,9 +35,12 @@ runtime responses уже доказаны, но production modem service ещё 
 в `crates/hdi-campaign` открывает одну кампанию только на явный
 `investigate_hardware`. Предусловие `graphics_class_incomplete` в
 поставляемых данных выключено. `adapt_hardware` остаётся AskUser и
-модуль не загружает. HDI-12 в Verify: дисплей `card0-DSI-1` и рендер `renderD128` — разные
-узлы. На снимке Pixel оба привязаны к `exynos_drm`; `mali_kbase`
-загружен, но путём DRM не назван. HDI-06 не начат: снимка MacBook нет.
+модуль не загружает. HDI-14 в Verify: дисплей `card0-DSI-1` и рендер `renderD128` привязаны к
+`exynos_drm`. Ключ Pixel подтверждает эту пару; ключ MacBook на том же
+снимке остаётся `IdentityInsufficient`. Платформенные имена
+`28000000.mali`, `100b0000.TPU`, `100a0000.ISP`, `19000000.aoc` и пустой
+USB-gadget — отдельные факты прохода 4. `mali_kbase` путём DRM не назван.
+HDI-06 не начат: снимка MacBook нет.
 Образ телефона не меняется.
 
 **Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)

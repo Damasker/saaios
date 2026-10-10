@@ -1,6 +1,6 @@
 # HDI — лаборатория аппаратного исследования
 
-Статус трека: **HDI-12 в Verify на host. HDI-06 не начат: нет снимка MacBook.**
+Статус трека: **HDI-14 в Verify на host. HDI-06 не начат: нет снимка MacBook.**
 Активный аппаратный эксперимент на Pixel этот трек не открывает и
 модемный трек не сдвигает. HDI-00…05 — host. HDI-06 — одна
 read-only команда на MacBookPro11,3, когда снимок уже собран и
@@ -504,18 +504,21 @@ A/B/C. Знание машины A не становится фактом маш
 
 Снимка MacBookPro11,3 нет, спринт остаётся в Backlog. 2026-10-10
 по пакету Pixel 7 `C:\Users\Admin\saai-hdi-panther-20261010-163813`
-(в git не входит) прогнан скриптовый Hunter после HDI-12: `intent.txt` есть,
-5 проходов, 5 Allow, `pass_gain=[5, 9, 9, 9, 9]`,
-efficiency 1.8, accuracy 0, coverage 1, `not_transferred`.
+(в git не входит) прогнан скриптовый Hunter после HDI-14: `intent.txt` есть,
+5 проходов, 5 Allow, `pass_gain=[5, 9, 9, 14, 14]`,
+efficiency 2.8, accuracy 0, coverage 1, `not_transferred`.
 Проход 1 разделяет `drm:card0`, `drm:card0-DSI-1`, `drm:card0-Writeback-1`,
 `drm:renderD128` и отсутствие PCI-класса `[0300]`. Проход 2 привязывает
 каждый из этих узлов к `exynos_drm`: путь `renderD128` называет
 `exynos-drm`, поэтому `mali_kbase` драйвером рендера не записывается.
 Проход 3 читает
 `pci_drivers`: control получает 9 фактов, включая `s51xx` и `pcieh`,
-gain лаборатории остаётся 9. Проходы 4–5 повторяют `pci_id`. Предложение адаптации:
+gain лаборатории остаётся 9. Проход 4 читает отобранный `platform.txt`:
+`28000000.mali`, `100b0000.TPU`, `100a0000.ISP`, `19000000.aoc` и пустой
+`udc:`. Проход 5 повторяет `pci_id`, gain остаётся 14. Предложение адаптации:
 драйвер `exynos_drm` уже привязан,
-модуль не загружается, `driver_gap` не пишется. Ключ MacBookPro11,3 даёт исход C
+модуль не загружается, `driver_gap` не пишется. Ключ Pixel даёт
+`PlatformGraphicsMatched`. Ключ MacBookPro11,3 на том же снимке даёт исход C
 (`IdentityInsufficient`): отрицательный рецепт Iris Pro на этот
 снимок не переносится. Исторические сведения о ноутбуке в пакет
 исследователя не отправлялись.
@@ -1056,6 +1059,139 @@ Hunter писал одну карту `drm:card0` и один `exynos_drm`. На
 efficiency 1.8, `control_facts=9`, адаптация `already_bound`
 `exynos_drm`, вердикт `IdentityInsufficient`. Образ panther не собирался.
 
+## Sprint HDI-13 — ключ стенда Pixel
+
+- Состояние: `Verify`
+- Зависит от: HDI-12 в Verify
+- Архитектурные решения: ADR-426
+- Рабочий fallback: чужая модель или смесь полей MacBook даёт отказ ключа
+
+### Goal
+
+Ключ Pixel читает модель из device tree и проверяет два узла DRM.
+Ключ MacBook на том же снимке остаётся исходом C.
+
+### Current state
+
+Ключ MacBookPro11,3 ищет DMI `product_name` и `8086:0d26`. На Pixel
+файла DMI нет, поэтому тот ключ всегда даёт `IdentityInsufficient`.
+Модель платы есть в `devicetree-model.txt`: `GS201 PANTHER MP based on GS201`.
+
+### Scope
+
+Входит: второй формат ключа (`expected_model`, `display_node`,
+`display_driver`, `render_node`, `render_driver`). Вердикты
+`PlatformGraphicsMatched` и `GraphicsMismatch`.
+
+Не входит: замена ключа MacBook, запись ключа внутрь `redacted/`,
+привязка Mali к `renderD128`, закрытие HDI-06, загрузка модуля.
+
+### Change
+
+1. Поле `expected_model` выбирает проверку device tree. Поля
+   `expected_product` или `igd_id` рядом с ним делают ключ недействительным.
+2. Совпадение модели, обоих узлов и отсутствие `[0300]` подтверждает
+   две привязки и отсутствие VGA-класса.
+3. Другая модель подтверждает только `dt:model` как
+   `InsufficientEvidence`. Чужой драйвер на строке узла — `GraphicsMismatch`.
+
+### Test
+
+| Тест | Ожидание |
+|---|---|
+| `pixel_key_matches_display_and_render` | `PlatformGraphicsMatched`; подтверждены `card0-DSI-1` и `renderD128` на `exynos_drm`, плюс отсутствие `0300` |
+| `wrong_model_stays_insufficient` | `IdentityInsufficient`, субъект `dt:model`, привязок нет |
+| `mali_render_driver_mismatches` | `GraphicsMismatch`; заявка `mali_kbase` на `renderD128` отклонена |
+
+### Acceptance criteria
+
+Ключ `pixel-key.txt` на снимке Pixel даёт `PlatformGraphicsMatched`.
+Ключ `verifier-key.txt` на том же снимке даёт `IdentityInsufficient`.
+Образ телефона не меняется.
+
+### Threat / privacy impact
+
+Ключ хранит публичные имена узлов и модулей. Он не лежит в пакете
+исследователя и не содержит серийных идентификаторов.
+
+### Rollback
+
+Оставить только ключ PCI/DMI и исходы A/B/C.
+
+### Evidence
+
+2026-10-10, этот Windows-хост, toolchain `1.97.1-x86_64-pc-windows-gnu`:
+`cargo test -p hdi-campaign --all-targets` — 46 passed
+(HDI-13: 3). `cargo clippy -p hdi-contract -p hdi-exec -p hdi-campaign --all-targets -- -D warnings` — чисто.
+Ключ Pixel: `PlatformGraphicsMatched`. Ключ MacBook на том же пакете:
+`IdentityInsufficient`. Образ panther не собирался.
+
+## Sprint HDI-14 — платформенные узлы
+
+- Состояние: `Verify`
+- Зависит от: HDI-13 в Verify
+- Архитектурные решения: ADR-426. Проба `platform_nodes` в белом списке v1.
+- Рабочий fallback: файл без точных имён не добавляет утверждений
+
+### Goal
+
+Четвёртый проход читает короткий список платформенных имён. Mali, TPU,
+ISP и AoC — отдельные устройства. Пустой класс USB-gadget записывается
+как отсутствие. Загруженный модуль сам по себе имя не создаёт.
+
+### Current state
+
+Проходы 4–5 повторяли `pci_id`. Консоль показала `28000000.mali`,
+`100b0000.TPU`, `100a0000.ISP`, `19000000.aoc`. `/sys/class/udc` пуст.
+Сырой дамп в пакет исследователя не входит.
+
+### Scope
+
+Входит: проба `platform_nodes`, файл `platform.txt`, утверждения
+`platform:mali`, `platform:tpu`, `platform:isp`, `platform:aoc` и
+`usb:udc` = `none`.
+
+Не входит: сырой список `/proc/device-tree`, привязка Mali к
+`renderD128`, загрузка модуля, закрытие HDI-06.
+
+### Change
+
+1. Hunter просит `platform_nodes` один раз после `pci_drivers`.
+2. Берутся точные `mali` / суффикс `.mali`, `.TPU`, `.ISP`, `aoc` / `.aoc`.
+   Из двух имён Mali остаётся более длинное.
+3. Строка `udc:` — `device_absent`. Соседние `dbgdev-pd-tpu` и похожие
+   имена не становятся устройствами.
+
+### Test
+
+| Тест | Ожидание |
+|---|---|
+| `platform_nodes_are_named_once` | Проход 4 — `platform_nodes`; gain растёт на 5; значения `28000000.mali`, `100b0000.TPU`, `100a0000.ISP`, `19000000.aoc`; `usb:udc` отсутствует; `dbgdev-pd-tpu` и короткое `mali` не записаны |
+
+### Acceptance criteria
+
+На снимке Pixel `pass_gain=[5, 9, 9, 14, 14]`, efficiency 2.8,
+`control_facts=9`. Пять новых утверждений не входят в control.
+Адаптация карты остаётся `already_bound`. Образ телефона не меняется.
+
+### Threat / privacy impact
+
+В пакет попадает отобранный список из пяти строк, не дерево устройств
+целиком. Серийные номера в этот файл не пишутся.
+
+### Rollback
+
+Убрать пробу `platform_nodes`. Проходы 4–5 снова повторяют `pci_id`.
+
+### Evidence
+
+2026-10-10, этот Windows-хост, toolchain `1.97.1-x86_64-pc-windows-gnu`:
+`cargo test -p hdi-campaign --all-targets` — 46 passed
+(HDI-14: 1). Whitelist HDI-02: 13 имён.
+Повторный прогон пакета Pixel: `pass_gain=[5, 9, 9, 14, 14]`,
+efficiency 2.8, `control_facts=9`, адаптация `already_bound`
+`exynos_drm`, `loaded_module=false`. Образ panther не собирался.
+
 ## Каталог фикстур
 
 Синтетика, безопасная для git:
@@ -1067,6 +1203,8 @@ efficiency 1.8, `control_facts=9`, адаптация `already_bound`
 | `secrets` | Фальшивые MAC, `iSerial`, uuid |
 | `unknown_product` | DMI другого имени |
 | `machine-b` | Второе шасси для отказа переноса |
+| `pixel-graphics` | Модель GS201, два узла `exynos-drm`, без `[0300]` |
+| `pixel-key.txt` | Ключ стенда Pixel, снаружи каталога `redacted` |
 
 Живой снимок MacBook в фикстуры не копируется.
 

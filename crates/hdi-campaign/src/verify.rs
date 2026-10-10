@@ -151,16 +151,14 @@ impl Verification {
                 _ => RecordStatus::Refuted,
             },
             StandVerdict::PlatformGraphicsMatched => {
-                if proposal.kind == ClaimKind::DeviceAbsent
+                let vga_absent = proposal.kind == ClaimKind::DeviceAbsent
                     && proposal.subject == "pci:class:0300"
-                    && proposal.value == "0300"
-                {
-                    RecordStatus::Confirmed
-                } else if proposal.kind == ClaimKind::DriverBound
+                    && proposal.value == "0300";
+                let expected_driver = proposal.kind == ClaimKind::DriverBound
                     && self.expected_bindings.iter().any(|(subject, value)| {
                         subject == &proposal.subject && value == &proposal.value
-                    })
-                {
+                    });
+                if vga_absent || expected_driver {
                     RecordStatus::Confirmed
                 } else {
                     RecordStatus::Refuted
