@@ -37,6 +37,14 @@ impl Metrics {
         }
     }
 
+    /// Accuracy against the claims a stand verdict confirmed. An empty
+    /// confirmation list stays 0. This does not read the key file.
+    pub fn with_stand_key(&self, investigator: &[Claim], confirmed: &[Claim]) -> Self {
+        let mut scored = self.clone();
+        scored.identification_accuracy = identification_accuracy(investigator, confirmed);
+        scored
+    }
+
     pub fn is_finite(&self) -> bool {
         self.identification_accuracy.is_finite()
             && self.evidence_coverage.is_finite()

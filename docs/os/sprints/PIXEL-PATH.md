@@ -294,6 +294,21 @@ diagnose (ADR-238, `351b0b6f…`).
 - APP-COMPAT APP-06 first browser is Falkon/QtWebEngine (ADR-269; package tree ADR-281; host qemu shm frame ADR-306; panther appd launch ADR-312, software scanout). Empty NEWNET loopback ADR-313 (`e9b3c57c…`); swrast/llvmpipe packed ADR-314; sandbox procfs + 128 MiB tmp/shm ADR-315 (`2503f4f5…`); fonts.conf → `/saaios/fonts` ADR-316; panther paints `file://` hello.html; `launch.c` serves that document on `127.0.0.1:8765` and Falkon loads `http://127.0.0.1:8765/hello.html` (ADR-321; screencap `loopback http`; not NetInternet, not public browse).
 - Visual v1 unsigned; `compile_v2_public` stays Experimental (ADR-265)
 
+## HDI — лаборатория в ОС
+
+Host-кампания доведена до HDI-16 (Verify). В ОС её ещё нет.
+
+Очередь [HDI-ROADMAP.md](HDI-ROADMAP.md) HDI-17…23: метрика ключа, один
+вызов из действия, ветка уже запущенного `saai-taskd`, тот же белый
+список на корне sysfs, одна сознательная команда на panther, Result на
+существующем экране, AskUser без загрузки модуля. `native-init` и udev
+лабораторию не запускают. Предусловие `graphics_class_incomplete`
+остаётся выключенным. Прошивка — только HDI-21 и только userspace
+`saai-taskd`.
+
+HDI-06 (снимок MacBook) в эту очередь не входит. Модемный трек она не
+сдвигает и bearer не объявляет.
+
 ## Что сознательно не делать сейчас
 
 - новые ADR «ещё одна фундаментальная модель»
@@ -301,6 +316,8 @@ diagnose (ADR-238, `351b0b6f…`).
 - отдельный `saai-memoryd` / `saai-learningd` / `policyd`
 - ждать AUTH-10, чтобы трогать confirmation (он уже есть)
 - шесть Pixel-weekend'ов `WORK-09 WORLD-08 ATTN-07 AUTH-10 MEM-10`
+- демон HDI, пункт `native-init`, автозапуск лаборатории от загрузки или udev
+- закрывать HDI-06 снимком Pixel или прошивкой HDI-21
 
 Один device pass в неделю покрывает то, что реально прошито в P0–P2.
 

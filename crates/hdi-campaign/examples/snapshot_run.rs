@@ -46,19 +46,40 @@ fn main() -> ExitCode {
         eprintln!("campaign did not complete");
         return ExitCode::from(1);
     }
+    let mut metrics = report.metrics.clone();
+    let verdict = match key.as_deref() {
+        None => None,
+        Some(key) if key.starts_with(&fixture) => {
+            eprintln!("verifier key must stay outside redacted/");
+            return ExitCode::from(2);
+        }
+        Some(key) => match verify(&fixture, key) {
+            Ok(verification) => {
+                metrics = metrics.with_stand_key(
+                    &report.claims,
+                    &verification.confirmed_for(&verification.machine_id),
+                );
+                Some(verification.verdict)
+            }
+            Err(error) => {
+                eprintln!("verify failed: {error}");
+                return ExitCode::from(1);
+            }
+        },
+    };
     println!(
         "executed={} calls={} gain={} pass_gain={:?} efficiency={} accuracy={} coverage={} transferability={:?}",
         report.executed,
         report.investigator_calls,
-        report.metrics.discovery_gain,
+        metrics.discovery_gain,
         report.pass_gain,
-        report.metrics.probe_efficiency,
-        report.metrics.identification_accuracy,
-        report.metrics.evidence_coverage,
-        report.metrics.transferability,
+        metrics.probe_efficiency,
+        metrics.identification_accuracy,
+        metrics.evidence_coverage,
+        metrics.transferability,
     );
     println!("control_facts={}", report.control_facts);
-    println!("finite={}", report.metrics.is_finite());
+    println!("finite={}", metrics.is_finite());
     let proposal = propose_display_adaptation(&report.claims);
     println!(
         "adaptation={:?} loaded_module={} gap={}",
@@ -67,21 +88,8 @@ fn main() -> ExitCode {
         proposal.gap.is_some()
     );
 
-    let Some(key) = key else {
-        return ExitCode::SUCCESS;
-    };
-    if key.starts_with(&fixture) {
-        eprintln!("verifier key must stay outside redacted/");
-        return ExitCode::from(2);
+    if let Some(verdict) = verdict {
+        println!("verdict={verdict:?}");
     }
-    match verify(&fixture, &key) {
-        Ok(verification) => {
-            println!("verdict={:?}", verification.verdict);
-            ExitCode::SUCCESS
-        }
-        Err(error) => {
-            eprintln!("verify failed: {error}");
-            ExitCode::from(1)
-        }
-    }
+    ExitCode::SUCCESS
 }

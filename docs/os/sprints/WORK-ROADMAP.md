@@ -11,6 +11,10 @@ This is an independent track (same pattern as APP-COMPAT / VUI). It is **not**
 S33 and does not reopen S00–S32. Phone/UI slices wait for the one-hardware-
 experiment rule. Host-only logic may land in parallel.
 
+HDI is not a Work DAG. It enters the OS as one explicit Task inside the
+already running `saai-taskd` (HDI-17…23 in [HDI-ROADMAP.md](HDI-ROADMAP.md)),
+not as a scheduler job and not as a new daemon.
+
 ## Outcome
 
 Let SaaiOS run multi-step work with a validated DAG, derived ready set,
