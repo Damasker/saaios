@@ -38,6 +38,10 @@ pub const KEY_TRAFFIC: &str = "cellular.traffic";
 pub const KEY_SIGNAL: &str = "cellular.signal";
 pub const KEY_LINK_DOWN: &str = "cellular.link_down";
 pub const KEY_LINK_UP: &str = "cellular.link_up";
+pub const KEY_RAT: &str = "cellular.rat";
+pub const KEY_BAND: &str = "cellular.band";
+pub const KEY_BANDWIDTH: &str = "cellular.bandwidth";
+pub const KEY_BANDWIDTH_UP: &str = "cellular.bandwidth_up";
 pub const KEY_SETUP: &str = "cellular.setup";
 pub const KEY_PROFILE: &str = "cellular.profile";
 pub const KEY_ACTIVITY: &str = "cellular.activity";
@@ -665,6 +669,38 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(phy) = log.and_then(last_phy_channel) {
+        out.push(text_observation(
+            KEY_RAT,
+            phy.rat,
+            "camp.owner.phy",
+            observed_at,
+            sequence,
+        ));
+        out.push(number_observation(
+            KEY_BAND,
+            phy.band,
+            "camp.owner.phy",
+            observed_at,
+            sequence,
+        ));
+        out.push(number_observation(
+            KEY_BANDWIDTH,
+            phy.down_bw,
+            "camp.owner.phy",
+            observed_at,
+            sequence,
+        ));
+        if phy.up_bw != phy.down_bw {
+            out.push(number_observation(
+                KEY_BANDWIDTH_UP,
+                phy.up_bw,
+                "camp.owner.phy",
+                observed_at,
+                sequence,
+            ));
+        }
+    }
     out
 }
 
@@ -796,6 +832,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut dcall = None;
     let mut signal = None;
     let mut linkcap = None;
+    let mut phy = None;
     let mut profile = None;
     let mut activity = None;
     let mut fastdorm = None;
@@ -865,6 +902,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             signal = Some(line);
         } else if line.contains("camp_ind linkcap ") {
             linkcap = Some(line);
+        } else if line.contains("camp_ind phy ") {
+            phy = Some(line);
         } else if line.contains("camp_profile response=yes ") {
             profile = Some(line);
         } else if line.contains("camp_activity response=yes ") {
@@ -942,6 +981,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         dcall,
         signal,
         linkcap,
+        phy,
         profile,
         activity,
         fastdorm,
@@ -1518,6 +1558,59 @@ pub fn last_link_estimate(log: &str) -> Option<LinkEstimate> {
         return Some(LinkEstimate { down_kbps, up_kbps });
     }
     None
+}
+
+/// Serving channel from the first physical-channel indication.
+/// Channel numbers and the physical cell id stay out.
+pub struct PhyChannel {
+    pub rat: &'static str,
+    pub band: u32,
+    pub down_bw: u32,
+    pub up_bw: u32,
+}
+
+pub fn last_phy_channel(log: &str) -> Option<PhyChannel> {
+    for line in log.lines().rev() {
+        let Some((_, rest)) = line.split_once("camp_ind phy ") else {
+            continue;
+        };
+        let rat = field_word(rest, "rat=").and_then(rat_word)?;
+        let (band, _) = field_plain(rest, "band=")?;
+        if !(1..=256).contains(&band) {
+            return None;
+        }
+        let (down_bw, _) = field_plain(rest, "dl_bw=")?;
+        let (up_bw, _) = field_plain(rest, "ul_bw=")?;
+        if down_bw > 2_000_000 || up_bw > 2_000_000 {
+            return None;
+        }
+        return Some(PhyChannel {
+            rat,
+            band,
+            down_bw,
+            up_bw,
+        });
+    }
+    None
+}
+
+fn rat_word(raw: u32) -> Option<&'static str> {
+    match raw {
+        3 => Some("umts"),
+        14 => Some("lte"),
+        16 => Some("gsm"),
+        20 => Some("nr"),
+        _ => None,
+    }
+}
+
+fn field_word(text: &str, key: &str) -> Option<u32> {
+    field_plain(text, key).map(|(value, _)| value)
+}
+
+fn field_plain<'a>(text: &'a str, key: &str) -> Option<(u32, &'a str)> {
+    let (_, rest) = text.split_once(key)?;
+    take_u32(rest)
 }
 
 fn take_i32(text: &str) -> Option<(i32, &str)> {
@@ -2559,6 +2652,18 @@ mod tests {
         assert_eq!(link.down_kbps, 41579);
         assert_eq!(link.up_kbps, 3600);
         assert!(last_link_estimate("camp_ind linkcap id=0x0945 len=24 dl=-1 ul=3600\n").is_none());
+        let phy = last_phy_channel(
+            "camp_ind phy id=0x0742 len=1004 count=1 status=1 rat=14 dl_ch=1 ul_ch=2 dl_bw=20000 ul_bw=20000 pci=9 band=3\n",
+        )
+        .unwrap();
+        assert_eq!(phy.rat, "lte");
+        assert_eq!(phy.band, 3);
+        assert_eq!(phy.down_bw, 20000);
+        assert_eq!(phy.up_bw, 20000);
+        assert!(last_phy_channel(
+            "camp_ind phy id=0x0742 len=1004 count=1 status=1 rat=14 dl_ch=1 ul_ch=2 dl_bw=20000 ul_bw=20000 pci=9 band=-2\n"
+        )
+        .is_none());
         assert_eq!(
             owner_fact_lines(
                 "pad\n\
@@ -2649,6 +2754,24 @@ mod tests {
             with_radio.iter().find(|row| row.key == KEY_LINK_UP).unwrap().value,
             json!(3600)
         );
+        reading.owner_log = Some(
+            "camp_ind phy id=0x0742 len=1004 count=1 status=1 rat=14 dl_ch=1 ul_ch=2 dl_bw=20000 ul_bw=20000 pci=9 band=3\n"
+                .into(),
+        );
+        let phy_rows = observations_from_cellular(&reading, Utc::now(), 14);
+        assert_eq!(
+            phy_rows.iter().find(|row| row.key == KEY_RAT).unwrap().value,
+            json!("lte")
+        );
+        assert_eq!(
+            phy_rows.iter().find(|row| row.key == KEY_BAND).unwrap().value,
+            json!(3)
+        );
+        assert_eq!(
+            phy_rows.iter().find(|row| row.key == KEY_BANDWIDTH).unwrap().value,
+            json!(20000)
+        );
+        assert!(phy_rows.iter().all(|row| row.value != json!(9)));
         reading.owner_log = Some(
             "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n".into(),
         );

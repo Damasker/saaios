@@ -1819,6 +1819,28 @@ fn read_link_estimate() -> Option<(u32, u32)> {
     Some((link.down_kbps, link.up_kbps))
 }
 
+fn read_phy_channel() -> Option<saai_observation::PhyChannel> {
+    saai_observation::last_phy_channel(&read_camp_owner_log()?)
+}
+
+fn radio_suffix(phy: Option<&saai_observation::PhyChannel>) -> String {
+    let Some(phy) = phy else {
+        return String::new();
+    };
+    let mut parts = Vec::new();
+    if matches!(phy.rat, "lte" | "umts" | "gsm" | "nr") {
+        parts.push(phy.rat.to_string());
+    }
+    parts.push(format!("диапазон {}", phy.band));
+    if phy.down_bw == phy.up_bw {
+        parts.push(format!("ширина {}", phy.down_bw));
+    } else {
+        parts.push(format!("ширина {}", phy.down_bw));
+        parts.push(format!("ширина вверх {}", phy.up_bw));
+    }
+    parts.join(" · ")
+}
+
 fn read_radio_token() -> Option<String> {
     saai_observation::last_radio_token(&read_camp_owner_log()?).map(str::to_string)
 }
@@ -2144,6 +2166,14 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
         camp_log_is_current().then(read_signal_token).flatten(),
         camp_log_is_current().then(read_link_estimate).flatten(),
     );
+    let phy = camp_log_is_current().then(read_phy_channel).flatten();
+    let radio = radio_suffix(phy.as_ref());
+    let suffix = match (suffix.is_empty(), radio.is_empty()) {
+        (true, true) => String::new(),
+        (false, true) => suffix,
+        (true, false) => radio,
+        (false, false) => format!("{suffix} · {radio}"),
+    };
     if suffix.is_empty() {
         base
     } else {
@@ -7155,6 +7185,10 @@ fn observation_row_label(key: &str) -> String {
         "cellular.signal" => "Сигнал".into(),
         "cellular.link_down" => "Вниз".into(),
         "cellular.link_up" => "Вверх".into(),
+        "cellular.rat" => "Радио".into(),
+        "cellular.band" => "Диапазон".into(),
+        "cellular.bandwidth" => "Ширина".into(),
+        "cellular.bandwidth_up" => "Ширина вверх".into(),
         "cellular.setup" => "Сессия".into(),
         "cellular.profile" => "Профиль".into(),
         "cellular.activity" => "Активность".into(),
@@ -7240,6 +7274,12 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     }
     if key == "cellular.dns" || key == "cellular.dns6" || key == "cellular.ipv4" || key == "cellular.ipv6" || key == "cellular.signal" {
         return dns_phrase(value.as_str()?.trim()).map(str::to_string);
+    }
+    if key == "cellular.rat" {
+        return match value.as_str()?.trim() {
+            token @ ("lte" | "umts" | "gsm" | "nr") => Some(token.to_string()),
+            _ => None,
+        };
     }
     if key == "cellular.traffic" {
         return traffic_phrase(value.as_str()?.trim()).map(str::to_string);
@@ -15650,6 +15690,18 @@ mod tests {
         assert_eq!(super::traffic_phrase("both"), Some("трафик"));
         assert_eq!(super::traffic_phrase("out"), Some("только исходящий"));
         assert_eq!(super::traffic_phrase("nope"), None);
+        let phy = saai_observation::PhyChannel {
+            rat: "lte",
+            band: 3,
+            down_bw: 20000,
+            up_bw: 20000,
+        };
+        assert_eq!(
+            super::radio_suffix(Some(&phy)),
+            "lte · диапазон 3 · ширина 20000"
+        );
+        assert!(!super::radio_suffix(Some(&phy)).contains("pci"));
+        assert_eq!(super::radio_suffix(None), "");
     }
 
     #[test]
