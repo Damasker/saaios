@@ -33,6 +33,7 @@ Diagnostic paint reads `layout_v2_scrolled` (ADR-231). Leftover
 formulas stay Keyboard keys, gallery page, and lock idle/wake
 (ADR-232). Empty Object View header reads generated `layout_v2`
 (ADR-427). Object View `ObjectSummary` reads that tree (ADR-428).
+Fact `DataRow`s read that tree (ADR-429).
 Public `object-public.sui` stays Experimental.
 
 The verification ledger stays in

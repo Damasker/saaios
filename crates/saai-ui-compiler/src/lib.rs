@@ -1103,6 +1103,8 @@ mod tests {
         assert_eq!(object.components[0].type_name, "ContextHeader");
         assert_eq!(object.components[1].type_name, "ObjectSummary");
         assert_eq!(object.components[1].props.a11y.as_deref(), Some("Status"));
+        assert_eq!(object.components[2].type_name, "DataRow");
+        assert_eq!(object.components[2].props.a11y.as_deref(), Some("Status"));
         assert!(object.rows.is_empty());
         assert!(guide.contains("object-public.sui"));
         const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");

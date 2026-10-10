@@ -45,6 +45,8 @@
 //! docks `ContextHeader` through `v2_decision_node`.
 //! ADR-428: Object View `ObjectSummary` docks on that overlay as Status;
 //! it does not invent `open_object`.
+//! ADR-429: Object View fact `DataRow`s dock below that summary as
+//! Status; they invent no actions.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -469,10 +471,15 @@ fn v2_overlay_button_action(button: &crate::SuiV2Component) -> Option<String> {
     button.props.loc.clone()
 }
 
+fn v2_overlay_fact_height() -> u32 {
+    v2_line_height(TextRole::Body)
+}
+
 fn v2_decision_node(
     screen: &crate::SuiV2Screen,
     buttons: &[&crate::SuiV2Component],
     object: Option<&crate::SuiV2Component>,
+    facts: &[&crate::SuiV2Component],
 ) -> Node {
     let mut children = Vec::new();
     if object.is_some() {
@@ -486,6 +493,16 @@ fn v2_decision_node(
         children.push(
             Node::leaf(id).with_size(Length::Fill, Length::Px(v2_now_object_height())),
         );
+        for (index, row) in facts.iter().enumerate() {
+            let id = row
+                .props
+                .loc
+                .clone()
+                .unwrap_or_else(|| format!("object.fact.{index}"));
+            children.push(
+                Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())),
+            );
+        }
         if !buttons.is_empty() {
             children.push(
                 Node::leaf(format!("{}-body", screen.id))
@@ -650,9 +667,10 @@ fn v2_content_node(
     }
     if v2_named_tabs(screen).is_empty()
         && (!overlay_buttons.is_empty()
+            || object.is_some()
             || (header.is_some() && stacked.is_empty() && grid.is_empty() && fields.is_empty()))
     {
-        return v2_decision_node(screen, &overlay_buttons, object);
+        return v2_decision_node(screen, &overlay_buttons, object, &stacked);
     }
     if v2_named_tabs(screen).is_empty() && screen.id == "lock" {
         if let Some(field) = fields.first() {
@@ -1851,6 +1869,10 @@ mod tests {
         assert!(summary.action.is_none());
         assert!(tree.hit_test(540.0, 200.0).is_none());
         assert!(layout_v1_find(&tree, "object-buttons").is_none());
+        let related = layout_v1_find(&tree, "object.related").expect("related");
+        assert_eq!(related.rect.y, 284);
+        assert!(related.action.is_none());
+        assert!(tree.hit_test(540.0, (related.rect.y + 8) as f64).is_none());
         assert!(tree.hit_test(270.0, 2250.0).is_none());
         assert!(tree.hit_test(540.0, 335.0).is_none());
     }

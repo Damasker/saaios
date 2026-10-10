@@ -494,8 +494,7 @@ pub fn now_object_summary_rect(content: Rect, has_lifecycle: bool, object: &Obje
 pub fn draw_object_view(
     canvas: &mut Canvas<'_>,
     summary: &ObjectSummary,
-    related: Option<&str>,
-    details: &[String],
+    facts: &[(Rect, &str)],
     decision: Option<&DecisionOverlay>,
     permission: Option<&SurfacePattern>,
     header: Rect,
@@ -533,18 +532,17 @@ pub fn draw_object_view(
         summary_rect.y,
         content_width,
     );
-    if let Some(related) = related {
-        y = y.saturating_add(physical(SpacingToken::Medium.value()));
+    for (rect, text) in facts {
         draw_text(
             canvas,
             &fonts.regular,
-            related,
+            text,
             role_px(TextRole::Caption),
             header.x + margin,
-            y,
+            rect.y,
             theme_color(ColorRole::TextSecondary),
         );
-        y = y.saturating_add(scaled_line_height(TextRole::Body));
+        y = rect.y.saturating_add(rect.height);
     }
     if let Some(overlay) = decision {
         for fact in overlay.fact_lines() {
@@ -581,23 +579,7 @@ pub fn draw_object_view(
                 y,
                 content_width,
             );
-            y = y.saturating_add(scaled_line_height(TextRole::Body));
         }
-    }
-    for detail in details {
-        if y + 40 >= header.y + header.height {
-            break;
-        }
-        draw_text(
-            canvas,
-            &fonts.regular,
-            detail,
-            role_px(TextRole::Caption),
-            header.x + margin,
-            y,
-            theme_color(ColorRole::TextSecondary),
-        );
-        y = y.saturating_add(scaled_line_height(TextRole::Body));
     }
 
     let overlay_labels: Option<[&str; 2]> = decision.map(|overlay| {
@@ -4214,7 +4196,6 @@ mod tests {
         draw_object_view(
             canvas,
             &ObjectSummary::new("Подтвердите: убить процесс", "saaios.task · версия 1"),
-            None,
             &[],
             Some(&overlay),
             None,

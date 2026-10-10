@@ -13,4 +13,9 @@ screen object {
     a11y = Status
     loc = object.summary
   }
+  component DataRow {
+    text = Body
+    a11y = Status
+    loc = object.related
+  }
 }

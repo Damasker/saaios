@@ -199,6 +199,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 leftover formulas | Keyboard keys / gallery page / lock idle/wake stay formulas **host** (ADR-232; do not 7-tap; leave Сейчас) |
 | VUI-09 empty object overlay | header-only Object View from `layout_v2`; `object-public.sui` **host** (ADR-427; Experimental; do not open Object View; leave Сейчас) |
 | VUI-09 object summary overlay | Object View `ObjectSummary` from `layout_v2` **host** (ADR-428; Status; no `open_object`; do not open Object View; leave Сейчас) |
+| VUI-09 object fact rows | Object View Status `DataRow`s from `layout_v2` **host** (ADR-429; no action; do not open Object View; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

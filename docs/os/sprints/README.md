@@ -102,6 +102,7 @@ ADR-231 diagnostic paint from the same generated `layout_v2_scrolled` tree as hi
 ADR-232 leftover formulas: Keyboard keys, gallery page, lock idle/wake.
 ADR-427 empty Object View header from `layout_v2`; `object-public.sui` stays Experimental.
 ADR-428 Object View `ObjectSummary` from `layout_v2`; Status invents no `open_object`.
+ADR-429 Object View fact `DataRow`s from `layout_v2`; Status invents no action.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.
