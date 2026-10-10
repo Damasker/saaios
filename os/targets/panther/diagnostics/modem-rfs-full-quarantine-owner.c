@@ -318,7 +318,11 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
         * not logged. */
        EM_QUERY = 0x0712, EM_QUERY_LEN = 14,
        EM_QUERY_MODE_OFF = 12, EM_QUERY_MODE = 1,
-       EM_QUERY_ARG_OFF = 13, EM_QUERY_ARG = 0xff };
+       EM_QUERY_ARG_OFF = 13, EM_QUERY_ARG = 0xff,
+       /* ProtocolPsBuilder::BuildGetDataCallList. Header-only GET,
+        * opcode 0x0602, length 12. The adapter reads the call count as
+        * the first payload byte. The rest of the payload is not logged. */
+       DCALL_LIST = 0x0602, DCALL_COUNT_OFF = 12 };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -495,6 +499,8 @@ struct camp_driver {
     int volteprov_sent, volteprov_done;
     /* One emergency-availability query. Not a dial. */
     int emquery_sent, emquery_done;
+    /* One read of the data-call list. Count only. */
+    int dcall_sent, dcall_done, dcall_count;
     /* VERDICT 17: len-16 scanType sweep (config /data/saaios/etc/scan16). After
      * bring-up completes, fire BuildQueryAvailableNetwork(int) once per distinct
      * accepted scanType 0..5, stopping early if any returns a result list. */
@@ -3492,6 +3498,29 @@ static int camp_emquery_reply(struct camp_driver *c, unsigned id, unsigned error
     return 1;
 }
 
+static unsigned camp_dcall_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || c->capquery || c->dcall_done || c->dcall_sent)
+        return 0;
+    return DCALL_LIST;
+}
+
+static int camp_dcall_reply(struct camp_driver *c, const uint8_t *p, size_t n,
+                            unsigned id, unsigned error)
+{
+    if (id != DCALL_LIST || !c->dcall_sent || c->dcall_done) return 0;
+    c->dcall_done = 1;
+    if (!error && p && n > (size_t)DCALL_COUNT_OFF) {
+        c->dcall_count = p[DCALL_COUNT_OFF];
+        printf("camp_dcall response=yes error_raw=0 count=%u\n",
+               p[DCALL_COUNT_OFF]);
+    } else {
+        c->dcall_count = -1;
+        printf("camp_dcall response=yes error_raw=%u\n", error);
+    }
+    return 1;
+}
+
 /* Advance the PIN-unlock and activation-call sequences on a matching reply.
  * Returns 1 when the reply was consumed here. The PIN never reaches the log;
  * only the public error word, call state/index, and counts do. */
@@ -4105,6 +4134,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_bbver_reply(c, p, n, id, error)) return;
     if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
+    if (camp_dcall_reply(c, p, n, id, error)) return;
     if (camp_emquery_reply(c, id, error)) return;
     if (camp_volteprov_reply(c, p, n, id, error)) return;
     if (camp_sms_reply(c, id, error)) return;
@@ -5980,6 +6010,22 @@ static void camp_probe_advance(struct owner *o, int64_t now)
         c->probe_next_ms = now + PROBE_GAP_MS;
         c->probe_sent++;
         printf("camp_emquery=sent elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
+    if (camp_dcall_next(c) == DCALL_LIST) {
+        ++c->probe_token;
+        c->dcall_sent = 1;
+        int wrote = sit_send_get_once(o->ipc, (uint16_t)DCALL_LIST,
+                                      c->probe_token);
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = DCALL_LIST;
+        c->probe_name = "dcall";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_dcall=sent elapsed_ms=%lld\n",
                (long long)(now - c->owner_start_ms));
         return;
     }
@@ -9035,6 +9081,29 @@ static int test_camp_reg(void)
         if (!camp_emquery_reply(&ex, EM_QUERY, 0) || !ex.emquery_done)
             return 286;
         if (camp_emquery_next(&ex) != 0) return 287;
+    }
+    {
+        struct camp_driver dx;
+        uint8_t body[13];
+        memset(&dx, 0, sizeof dx);
+        if (DCALL_LIST != 0x0602) return 288;
+        if (camp_dcall_next(&dx) != 0) return 289;
+        dx.reg_complete = 1;
+        if (camp_dcall_next(&dx) != DCALL_LIST) return 290;
+        dx.capquery = 1;
+        if (camp_dcall_next(&dx) != 0) return 291;
+        dx.capquery = 0;
+        dx.dcall_sent = 1;
+        if (camp_dcall_next(&dx) != 0) return 292;
+        memset(body, 0, sizeof body);
+        body[DCALL_COUNT_OFF] = 2;
+        if (!camp_dcall_reply(&dx, body, sizeof body, DCALL_LIST, 0) ||
+            !dx.dcall_done || dx.dcall_count != 2) return 293;
+        if (camp_dcall_next(&dx) != 0) return 294;
+        memset(&dx, 0, sizeof dx);
+        dx.dcall_sent = 1;
+        if (!camp_dcall_reply(&dx, NULL, 0, DCALL_LIST, 6) ||
+            !dx.dcall_done || dx.dcall_count != -1) return 295;
     }
     return 0;
 }
