@@ -42,6 +42,7 @@ pub const KEY_RAT: &str = "cellular.rat";
 pub const KEY_BAND: &str = "cellular.band";
 pub const KEY_BANDWIDTH: &str = "cellular.bandwidth";
 pub const KEY_BANDWIDTH_UP: &str = "cellular.bandwidth_up";
+pub const KEY_BARRING: &str = "cellular.barring";
 pub const KEY_SETUP: &str = "cellular.setup";
 pub const KEY_PROFILE: &str = "cellular.profile";
 pub const KEY_ACTIVITY: &str = "cellular.activity";
@@ -701,6 +702,15 @@ pub fn observations_from_cellular(
             ));
         }
     }
+    if let Some(token) = log.and_then(last_barring) {
+        out.push(text_observation(
+            KEY_BARRING,
+            token,
+            "camp.owner.barring",
+            observed_at,
+            sequence,
+        ));
+    }
     out
 }
 
@@ -833,6 +843,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut signal = None;
     let mut linkcap = None;
     let mut phy = None;
+    let mut barring = None;
     let mut profile = None;
     let mut activity = None;
     let mut fastdorm = None;
@@ -904,6 +915,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             linkcap = Some(line);
         } else if line.contains("camp_ind phy ") {
             phy = Some(line);
+        } else if line.contains("camp_ind barring ") {
+            barring = Some(line);
         } else if line.contains("camp_profile response=yes ") {
             profile = Some(line);
         } else if line.contains("camp_activity response=yes ") {
@@ -982,6 +995,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         signal,
         linkcap,
         phy,
+        barring,
         profile,
         activity,
         fastdorm,
@@ -1590,6 +1604,45 @@ pub fn last_phy_channel(log: &str) -> Option<PhyChannel> {
             down_bw,
             up_bw,
         });
+    }
+    None
+}
+
+/// `clear` when every logged barring record ends in barred=0.
+/// `set` when any record ends in barred=1. Service numbers stay out.
+pub fn last_barring(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        let Some((_, rest)) = line.split_once("camp_ind barring ") else {
+            continue;
+        };
+        let Some((_, recs)) = rest.split_once("recs=") else {
+            return None;
+        };
+        let recs = recs.split_whitespace().next().unwrap_or("");
+        if recs.is_empty() {
+            return None;
+        }
+        let mut saw = false;
+        let mut barred = false;
+        let mut count = 0u32;
+        for rec in recs.split(',') {
+            count += 1;
+            if count > 8 {
+                return None;
+            }
+            match rec.rsplit('/').next() {
+                Some("0") => saw = true,
+                Some("1") => {
+                    saw = true;
+                    barred = true;
+                }
+                _ => return None,
+            }
+        }
+        if !saw {
+            return None;
+        }
+        return Some(if barred { "set" } else { "clear" });
     }
     None
 }
@@ -2665,6 +2718,16 @@ mod tests {
         )
         .is_none());
         assert_eq!(
+            last_barring(
+                "camp_ind barring id=0x074b len=413 cell=2 count=2 ci=1 pci=2 tac=3 earfcn=4 recs=8/0/0/0/0,3/0/100/0/0\n"
+            ),
+            Some("clear")
+        );
+        assert_eq!(
+            last_barring("camp_ind barring id=0x074b len=413 cell=2 count=1 recs=6/0/255/0/1\n"),
+            Some("set")
+        );
+        assert_eq!(
             owner_fact_lines(
                 "pad\n\
                  camp_ind signal id=0x0906 len=206 mask_low7=4\n\
@@ -2772,6 +2835,16 @@ mod tests {
             json!(20000)
         );
         assert!(phy_rows.iter().all(|row| row.value != json!(9)));
+        reading.owner_log = Some(
+            "camp_ind barring id=0x074b len=413 cell=2 count=2 ci=1 pci=2 tac=3 earfcn=4 recs=8/0/0/0/0,3/0/100/0/0\n"
+                .into(),
+        );
+        let bar_rows = observations_from_cellular(&reading, Utc::now(), 15);
+        assert_eq!(
+            bar_rows.iter().find(|row| row.key == KEY_BARRING).unwrap().value,
+            json!("clear")
+        );
+        assert!(bar_rows.iter().all(|row| row.value != json!(1) && row.value != json!(2) && row.value != json!(4)));
         reading.owner_log = Some(
             "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n".into(),
         );

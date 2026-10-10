@@ -1823,6 +1823,18 @@ fn read_phy_channel() -> Option<saai_observation::PhyChannel> {
     saai_observation::last_phy_channel(&read_camp_owner_log()?)
 }
 
+fn read_barring() -> Option<&'static str> {
+    saai_observation::last_barring(&read_camp_owner_log()?)
+}
+
+fn barring_phrase(token: Option<&str>) -> Option<&'static str> {
+    match token {
+        Some("clear") => Some("ограничений нет"),
+        Some("set") => Some("ограничение есть"),
+        _ => None,
+    }
+}
+
 fn radio_suffix(phy: Option<&saai_observation::PhyChannel>) -> String {
     let Some(phy) = phy else {
         return String::new();
@@ -2168,12 +2180,17 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
     );
     let phy = camp_log_is_current().then(read_phy_channel).flatten();
     let radio = radio_suffix(phy.as_ref());
-    let suffix = match (suffix.is_empty(), radio.is_empty()) {
-        (true, true) => String::new(),
-        (false, true) => suffix,
-        (true, false) => radio,
-        (false, false) => format!("{suffix} · {radio}"),
-    };
+    let barring = barring_phrase(
+        camp_log_is_current()
+            .then(read_barring)
+            .flatten()
+            .as_deref(),
+    );
+    let suffix = [suffix, radio, barring.unwrap_or("").to_string()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
     if suffix.is_empty() {
         base
     } else {
@@ -7189,6 +7206,7 @@ fn observation_row_label(key: &str) -> String {
         "cellular.band" => "Диапазон".into(),
         "cellular.bandwidth" => "Ширина".into(),
         "cellular.bandwidth_up" => "Ширина вверх".into(),
+        "cellular.barring" => "Ограничения".into(),
         "cellular.setup" => "Сессия".into(),
         "cellular.profile" => "Профиль".into(),
         "cellular.activity" => "Активность".into(),
@@ -7278,6 +7296,13 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.rat" {
         return match value.as_str()?.trim() {
             token @ ("lte" | "umts" | "gsm" | "nr") => Some(token.to_string()),
+            _ => None,
+        };
+    }
+    if key == "cellular.barring" {
+        return match value.as_str()?.trim() {
+            "clear" => Some("нет".to_string()),
+            "set" => Some("есть".to_string()),
             _ => None,
         };
     }
@@ -15702,6 +15727,9 @@ mod tests {
         );
         assert!(!super::radio_suffix(Some(&phy)).contains("pci"));
         assert_eq!(super::radio_suffix(None), "");
+        assert_eq!(super::barring_phrase(Some("clear")), Some("ограничений нет"));
+        assert_eq!(super::barring_phrase(Some("set")), Some("ограничение есть"));
+        assert_eq!(super::barring_phrase(Some("nope")), None);
     }
 
     #[test]
