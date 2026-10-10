@@ -499,8 +499,11 @@ struct camp_driver {
     int volteprov_sent, volteprov_done;
     /* One emergency-availability query. Not a dial. */
     int emquery_sent, emquery_done;
-    /* One read of the data-call list. Count only. */
+    /* One read of the data-call list, after SetupDataCall has been sent.
+     * Count, and the first item's cid/active/pdp when the 292-byte
+     * item size matches the indication. Addresses stay off the log. */
     int dcall_sent, dcall_done, dcall_count;
+    int dcall_cid, dcall_active, dcall_pdp;
     /* VERDICT 17: len-16 scanType sweep (config /data/saaios/etc/scan16). After
      * bring-up completes, fire BuildQueryAvailableNetwork(int) once per distinct
      * accepted scanType 0..5, stopping early if any returns a result list. */
@@ -3500,7 +3503,8 @@ static int camp_emquery_reply(struct camp_driver *c, unsigned id, unsigned error
 
 static unsigned camp_dcall_next(const struct camp_driver *c)
 {
-    if (!c->reg_complete || c->capquery || c->dcall_done || c->dcall_sent)
+    if (!c->reg_complete || !c->setup_sent || c->capquery || c->dcall_done ||
+        c->dcall_sent)
         return 0;
     return DCALL_LIST;
 }
@@ -3508,15 +3512,29 @@ static unsigned camp_dcall_next(const struct camp_driver *c)
 static int camp_dcall_reply(struct camp_driver *c, const uint8_t *p, size_t n,
                             unsigned id, unsigned error)
 {
+    unsigned count;
     if (id != DCALL_LIST || !c->dcall_sent || c->dcall_done) return 0;
     c->dcall_done = 1;
-    if (!error && p && n > (size_t)DCALL_COUNT_OFF) {
-        c->dcall_count = p[DCALL_COUNT_OFF];
-        printf("camp_dcall response=yes error_raw=0 count=%u\n",
-               p[DCALL_COUNT_OFF]);
-    } else {
-        c->dcall_count = -1;
+    c->dcall_count = -1;
+    c->dcall_cid = -1;
+    c->dcall_active = -1;
+    c->dcall_pdp = -1;
+    if (error || !p || n <= (size_t)DCALL_COUNT_OFF) {
         printf("camp_dcall response=yes error_raw=%u\n", error);
+        return 1;
+    }
+    count = p[DCALL_COUNT_OFF];
+    c->dcall_count = (int)count;
+    if (count >= 1 && count <= 16 && n >= 13 &&
+        (n - 13) == (size_t)count * 292u) {
+        c->dcall_cid = p[15];
+        c->dcall_active = p[16];
+        c->dcall_pdp = p[17];
+        printf("camp_dcall response=yes error_raw=0 count=%u cid=%u "
+               "active=%u pdp=%u\n",
+               count, p[15], p[16], p[17]);
+    } else {
+        printf("camp_dcall response=yes error_raw=0 count=%u\n", count);
     }
     return 1;
 }
@@ -9089,7 +9107,9 @@ static int test_camp_reg(void)
         if (DCALL_LIST != 0x0602) return 288;
         if (camp_dcall_next(&dx) != 0) return 289;
         dx.reg_complete = 1;
-        if (camp_dcall_next(&dx) != DCALL_LIST) return 290;
+        if (camp_dcall_next(&dx) != 0) return 290;
+        dx.setup_sent = 1;
+        if (camp_dcall_next(&dx) != DCALL_LIST) return 296;
         dx.capquery = 1;
         if (camp_dcall_next(&dx) != 0) return 291;
         dx.capquery = 0;
@@ -9104,6 +9124,19 @@ static int test_camp_reg(void)
         dx.dcall_sent = 1;
         if (!camp_dcall_reply(&dx, NULL, 0, DCALL_LIST, 6) ||
             !dx.dcall_done || dx.dcall_count != -1) return 295;
+        {
+            uint8_t item[305];
+            memset(&dx, 0, sizeof dx);
+            memset(item, 0, sizeof item);
+            dx.dcall_sent = 1;
+            item[DCALL_COUNT_OFF] = 1;
+            item[15] = 2;
+            item[16] = 2;
+            item[17] = 3;
+            if (!camp_dcall_reply(&dx, item, sizeof item, DCALL_LIST, 0) ||
+                dx.dcall_count != 1 || dx.dcall_cid != 2 ||
+                dx.dcall_active != 2 || dx.dcall_pdp != 3) return 297;
+        }
     }
     return 0;
 }
