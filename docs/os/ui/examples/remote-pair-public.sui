@@ -1,0 +1,30 @@
+sui 2
+screen remote-pair {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = remote-pair.header
+    focus = 0
+    inset = safe
+  }
+  component DataRow {
+    text = Body
+    a11y = Status
+    loc = pair.client
+  }
+  component DataRow {
+    text = Body
+    a11y = Status
+    loc = pair.fingerprint
+  }
+  component Button {
+    text = Label
+    a11y = Button
+    loc = "pair:accept"
+  }
+  component Button {
+    text = Label
+    a11y = Button
+    loc = "pair:decline"
+  }
+}

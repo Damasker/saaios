@@ -36,7 +36,10 @@ formulas stay Keyboard keys, gallery page, and lock idle/wake
 Fact `DataRow`s read that tree (ADR-429).
 Permission `SurfacePattern` and decision facts read that tree
 (ADR-430). Consent / pair Status cards read that tree (ADR-431).
-Public `object-public.sui` and `consent-public.sui` stay Experimental.
+Pair fingerprint reads that tree (ADR-432). Overlay
+`ContextHeader` paint reads that tree (ADR-433). Public
+`object-public.sui`, `consent-public.sui`, and
+`remote-pair-public.sui` stay Experimental.
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).

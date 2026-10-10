@@ -61,6 +61,12 @@ labelled consent sample: `ContextHeader`, Status `DataRow`s for the
 app and a capability (ADR-431), and accept/decline `Button`s.
 Status invents no action. Cards match `stacked_row_rect`.
 
+[`examples/remote-pair-public.sui`](examples/remote-pair-public.sui)
+is the labelled pairing sample: `ContextHeader`, Status `DataRow`s
+for the client and fingerprint (ADR-432), and accept/decline
+`Button`s. Status invents no action. The fingerprint slot matches
+`stacked_row_rect`; wrap stays paint.
+
 [`examples/spaces-public.sui`](examples/spaces-public.sui) is the
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 `a11y = Button` (ADR-203), and the same nested tabs. Status
@@ -138,7 +144,9 @@ review. Copying them into an app document fails `compile_v2_public()`.
   (ADR-427). Object View `ObjectSummary` reads that tree (ADR-428).
   Fact `DataRow`s read that tree (ADR-429). Permission
   `SurfacePattern` reads that tree (ADR-430). Consent Status
-  `DataRow`s read that tree (ADR-431).
+  `DataRow`s read that tree (ADR-431). Pair fingerprint reads that
+  tree (ADR-432). Overlay `ContextHeader` paint reads that tree
+  (ADR-433).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.

@@ -315,6 +315,7 @@ pub fn draw_consent(
     canvas: &mut Canvas<'_>,
     content: Rect,
     header: &ContextHeader,
+    header_rect: Rect,
     rows: &[(Rect, ActionCardView)],
     accept_button: Rect,
     decline_button: Rect,
@@ -323,7 +324,7 @@ pub fn draw_consent(
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
-        paint_context_header(canvas, fonts, content, header);
+        paint_overlay_context_header(canvas, fonts, header_rect, canvas.height, header);
     }
     for (rect, card) in rows {
         draw_action_card(canvas, *rect, card, fonts);
@@ -719,15 +720,18 @@ fn draw_square_ring(canvas: &mut Canvas<'_>, rect: Rect, thickness: u32, color: 
 }
 
 /// ADR-144: SSH pairing through `ContextHeader`. The live client name
-/// is a Static `DataRow`; the fingerprint stays wrapped mono text so
-/// the full `SHA256:` string remains readable. Buttons stay
-/// `task_confirm_view`. Lock unlock stays `draw_lock_pin_entry`.
+/// is a Static `DataRow`. ADR-432: the fingerprint slot is
+/// `pair.fingerprint` on `layout_v2`; wrap stays MonoBody so the
+/// full `SHA256:` string remains readable. Buttons stay `layout_v2`.
+/// Lock unlock stays `draw_lock_pin_entry`.
 pub fn draw_remote_pair(
     canvas: &mut Canvas<'_>,
     content: Rect,
     header: &ContextHeader,
+    header_rect: Rect,
     rows: &[(Rect, ActionCardView)],
     fingerprint: &str,
+    fingerprint_rect: Rect,
     accept_button: Rect,
     decline_button: Rect,
     fonts: Option<&Fonts>,
@@ -735,21 +739,17 @@ pub fn draw_remote_pair(
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
-        paint_context_header(canvas, fonts, content, header);
+        paint_overlay_context_header(canvas, fonts, header_rect, canvas.height, header);
     }
     for (rect, card) in rows {
         draw_action_card(canvas, *rect, card, fonts);
     }
     if let Some(fonts) = fonts {
-        let margin = (content.width / 22).max(12);
-        let top = rows
-            .first()
-            .map(|(rect, _)| rect.y + rect.height + 24)
-            .unwrap_or(content.y + 430);
+        let margin = (fingerprint_rect.width / 22).max(12);
         let (mono, mono_size) = fonts.resolve(TextRole::MonoBody);
         let scaled_size = mono_size * text_scale();
         let glyph_width = mono.metrics('0', scaled_size).advance_width.max(1.0);
-        let available_width = content.width.saturating_sub(margin * 2) as f32;
+        let available_width = fingerprint_rect.width.saturating_sub(margin * 2) as f32;
         let chars_per_line = (available_width / glyph_width).floor().max(1.0) as usize;
         let line_height = SurfaceScale::PIXEL_7
             .logical_to_physical(TextRole::MonoBody.style().line_height)
@@ -762,13 +762,19 @@ pub fn draw_remote_pair(
             .enumerate()
         {
             let chunk = chunk.iter().collect::<String>();
+            let y = fingerprint_rect.y + (line as f32 * line_height).round() as u32;
+            if y.saturating_add(line_height.round() as u32)
+                > fingerprint_rect.y + fingerprint_rect.height
+            {
+                break;
+            }
             draw_text(
                 canvas,
                 mono,
                 &chunk,
                 mono_size,
-                content.x + margin,
-                top + (line as f32 * line_height).round() as u32,
+                fingerprint_rect.x + margin,
+                y,
                 theme_color(ColorRole::TextSecondary),
             );
         }
@@ -2300,6 +2306,32 @@ pub fn draw_root(
     }
 }
 
+/// ADR-433: overlay heading sits inside the compiled `ContextHeader`
+/// slot. The 150/2400 clearance matches NOW (ADR-225) so copy is not
+/// drawn under the status layer.
+fn paint_overlay_context_header(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    slot: Rect,
+    panel_height: u32,
+    header: &ContextHeader,
+) {
+    let top_inset = ((150_u64 * u64::from(panel_height.max(1))) / 2400) as u32;
+    let mut cursor_y = slot.y + top_inset;
+    draw_semantic_text(
+        canvas,
+        fonts,
+        &header.heading(),
+        slot.x,
+        cursor_y,
+        slot.width,
+    );
+    cursor_y += scaled_line_height(TextRole::Title);
+    if let Some(lifecycle) = &header.lifecycle {
+        draw_status_indicator(canvas, fonts, lifecycle, slot.x, cursor_y);
+    }
+}
+
 fn paint_context_header(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -3755,6 +3787,7 @@ mod tests {
             canvas,
             content,
             &header,
+            Rect::new(49, 0, 982, 430),
             &rows,
             Rect::new(0, 2100, 540, 300),
             Rect::new(540, 2100, 540, 300),
@@ -3821,8 +3854,10 @@ mod tests {
             canvas,
             content,
             &header,
+            Rect::new(49, 0, 982, 430),
             &rows,
             "SHA256:OuaL+poCXsAtdU50sBMBwOUNL+faDqJqWTmiE3baoOI",
+            Rect::new(49, 650, 982, 190),
             Rect::new(0, 2100, 540, 300),
             Rect::new(540, 2100, 540, 300),
             None,

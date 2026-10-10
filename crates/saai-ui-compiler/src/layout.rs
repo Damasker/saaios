@@ -52,6 +52,10 @@
 //! an action.
 //! ADR-431: consent / remote-pair Status `DataRow`s dock on
 //! `stacked_row_rect`. They invent no actions.
+//! ADR-432: remote-pair `pair.fingerprint` docks the next stacked
+//! slot. Wrap stays paint. The row invents no action.
+//! ADR-433: overlay `ContextHeader` paint reads the generated slot.
+//! Heading inset matches NOW. The header invents no action.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -1408,6 +1412,10 @@ mod tests {
         let screen = compile_v2_public(source).expect("public consent");
         assert!(!screen.is_privileged());
         let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        assert_eq!(header.rect.y, 0);
+        assert_eq!(header.rect.height, 430);
+        assert!(header.action.is_none());
         let app = layout_v1_find(&tree, "consent.app").expect("app");
         assert_eq!(app.rect.y, 430);
         assert_eq!(app.rect.height, 190);
@@ -1426,6 +1434,32 @@ mod tests {
             Some("consent:decline")
         );
         assert!(tree.hit_test(540.0, 525.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_remote_pair_fingerprint_matches_stacked_row() {
+        let source = include_str!("../../../docs/os/ui/examples/remote-pair-public.sui");
+        let screen = compile_v2_public(source).expect("public pair");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        assert_eq!(header.rect.y, 0);
+        assert_eq!(header.rect.height, 430);
+        assert!(header.action.is_none());
+        let client = layout_v1_find(&tree, "pair.client").expect("client");
+        assert_eq!(client.rect.y, 430);
+        assert_eq!(client.rect.height, 190);
+        assert!(client.action.is_none());
+        let fingerprint = layout_v1_find(&tree, "pair.fingerprint").expect("fingerprint");
+        assert_eq!(fingerprint.rect.y, 650);
+        assert_eq!(fingerprint.rect.height, 190);
+        assert!(fingerprint.action.is_none());
+        assert_eq!(
+            tree.hit_test(270.0, 2250.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("pair:accept")
+        );
+        assert!(tree.hit_test(540.0, 745.0).is_none());
     }
 
     #[test]
@@ -2011,6 +2045,10 @@ mod tests {
             (
                 "consent",
                 include_str!("../../../docs/os/ui/examples/consent-public.sui"),
+            ),
+            (
+                "remote-pair",
+                include_str!("../../../docs/os/ui/examples/remote-pair-public.sui"),
             ),
         ] {
             let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));

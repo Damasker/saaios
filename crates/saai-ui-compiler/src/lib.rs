@@ -1116,6 +1116,14 @@ mod tests {
         assert_eq!(consent.components[1].type_name, "DataRow");
         assert_eq!(consent.components[1].props.a11y.as_deref(), Some("Status"));
         assert!(guide.contains("consent-public.sui"));
+        const PAIR: &str = include_str!("../../../docs/os/ui/examples/remote-pair-public.sui");
+        let pair = compile_v2_public(PAIR).unwrap();
+        assert_eq!(pair.id, "remote-pair");
+        assert!(!pair.is_privileged());
+        assert_eq!(pair.components[2].type_name, "DataRow");
+        assert_eq!(pair.components[2].props.loc.as_deref(), Some("pair.fingerprint"));
+        assert_eq!(pair.components[2].props.a11y.as_deref(), Some("Status"));
+        assert!(guide.contains("remote-pair-public.sui"));
         const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");
         assert!(compile_v2_public(TRUSTED)
             .unwrap_err()

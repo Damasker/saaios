@@ -202,6 +202,8 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 object fact rows | Object View Status `DataRow`s from `layout_v2` **host** (ADR-429; no action; do not open Object View; leave Сейчас) |
 | VUI-09 object permission | Object View `SurfacePattern` + decision facts from `layout_v2` **host** (ADR-430; Status; do not open Object View; leave Сейчас) |
 | VUI-09 consent status rows | consent / pair Status `DataRow`s from `layout_v2` **host** (ADR-431; no Разрешить/Сопряжь; leave Сейчас) |
+| VUI-09 pair fingerprint | remote-pair `pair.fingerprint` from `layout_v2` **host** (ADR-432; wrap stays MonoBody; no Сопряжь; leave Сейчас) |
+| VUI-09 overlay header paint | consent / pair `ContextHeader` paint from `layout_v2` **host** (ADR-433; inset matches NOW; no Разрешить/Сопряжь; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
