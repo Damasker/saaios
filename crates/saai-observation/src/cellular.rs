@@ -30,6 +30,11 @@ pub const KEY_POWER: &str = "cellular.power";
 pub const KEY_VOICE_SET: &str = "cellular.voice_set";
 pub const KEY_IPV4: &str = "cellular.ipv4";
 pub const KEY_IPV6: &str = "cellular.ipv6";
+pub const KEY_DCALL_COUNT: &str = "cellular.dcall_count";
+pub const KEY_DCALL_CID: &str = "cellular.dcall_cid";
+pub const KEY_DCALL_ACTIVE: &str = "cellular.dcall_active";
+pub const KEY_DCALL_PDP: &str = "cellular.dcall_pdp";
+pub const KEY_TRAFFIC: &str = "cellular.traffic";
 pub const KEY_SETUP: &str = "cellular.setup";
 pub const KEY_PROFILE: &str = "cellular.profile";
 pub const KEY_ACTIVITY: &str = "cellular.activity";
@@ -286,6 +291,42 @@ pub fn observations_from_cellular(
             observed_at,
             sequence,
         ));
+    }
+    if let Some(call) = log.and_then(last_data_call) {
+        out.push(number_observation(
+            KEY_DCALL_COUNT,
+            call.count,
+            "camp.owner.dcall",
+            observed_at,
+            sequence,
+        ));
+        if let Some(cid) = call.cid {
+            out.push(number_observation(
+                KEY_DCALL_CID,
+                cid,
+                "camp.owner.dcall",
+                observed_at,
+                sequence,
+            ));
+        }
+        if let Some(active) = call.active {
+            out.push(number_observation(
+                KEY_DCALL_ACTIVE,
+                active,
+                "camp.owner.dcall",
+                observed_at,
+                sequence,
+            ));
+        }
+        if let Some(pdp) = call.pdp {
+            out.push(number_observation(
+                KEY_DCALL_PDP,
+                pdp,
+                "camp.owner.dcall",
+                observed_at,
+                sequence,
+            ));
+        }
     }
     if let Some(token) = log.and_then(last_data_setup) {
         out.push(text_observation(
@@ -587,6 +628,15 @@ pub fn observations_from_cellular(
         observed_at,
         sequence,
     ));
+    if let Some(token) = traffic_from_ifaces(&reading.ifaces) {
+        out.push(text_observation(
+            KEY_TRAFFIC,
+            token,
+            "sysfs.net.traffic",
+            observed_at,
+            sequence,
+        ));
+    }
     out
 }
 
@@ -715,6 +765,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut ipv4 = None;
     let mut ipv6 = None;
     let mut setup = None;
+    let mut dcall = None;
     let mut profile = None;
     let mut activity = None;
     let mut fastdorm = None;
@@ -778,6 +829,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             ipv4 = Some(line);
         } else if line.contains("camp_setup response=yes ") {
             setup = Some(line);
+        } else if line.contains("camp_dcall response=yes ") {
+            dcall = Some(line);
         } else if line.contains("camp_profile response=yes ") {
             profile = Some(line);
         } else if line.contains("camp_activity response=yes ") {
@@ -852,6 +905,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         ipv4,
         ipv6,
         setup,
+        dcall,
         profile,
         activity,
         fastdorm,
@@ -1338,6 +1392,95 @@ pub fn last_ipv6(log: &str) -> Option<&'static str> {
         }
     }
     None
+}
+
+/// Last data-call list. Count is always present on an accepted reply.
+/// `cid`, `active` and `pdp` are present only together. Addresses stay out.
+/// A nonzero error hides the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DataCallList {
+    pub count: u32,
+    pub cid: Option<u32>,
+    pub active: Option<u32>,
+    pub pdp: Option<u32>,
+}
+
+pub fn last_data_call(log: &str) -> Option<DataCallList> {
+    for line in log.lines().rev() {
+        let Some((_, rest)) = line.split_once("camp_dcall response=yes error_raw=") else {
+            continue;
+        };
+        let (err, rest) = take_u32(rest)?;
+        if err != 0 {
+            return None;
+        }
+        let (count, rest) = field_u32(rest, "count=")?;
+        let rest = rest.trim_start();
+        if !rest.starts_with("cid=") {
+            return Some(DataCallList {
+                count,
+                cid: None,
+                active: None,
+                pdp: None,
+            });
+        }
+        let (cid, rest) = field_u32(rest, "cid=")?;
+        let (active, rest) = field_u32(rest, "active=")?;
+        let (pdp, _) = field_u32(rest, "pdp=")?;
+        return Some(DataCallList {
+            count,
+            cid: Some(cid),
+            active: Some(active),
+            pdp: Some(pdp),
+        });
+    }
+    None
+}
+
+/// `both` when a live cellular iface has moved receive and transmit.
+/// One side stays `in` or `out`. Idle ifaces publish nothing.
+pub fn traffic_token(rx_any: bool, tx_any: bool) -> Option<&'static str> {
+    match (rx_any, tx_any) {
+        (true, true) => Some("both"),
+        (true, false) => Some("in"),
+        (false, true) => Some("out"),
+        (false, false) => None,
+    }
+}
+
+fn traffic_from_ifaces(ifaces: &[IfaceSample]) -> Option<&'static str> {
+    let mut rx_any = false;
+    let mut tx_any = false;
+    for iface in ifaces {
+        if !is_cellular_iface(&iface.name) || !sample_is_live(iface) {
+            continue;
+        }
+        if iface.rx > 0 {
+            rx_any = true;
+        }
+        if iface.tx > 0 {
+            tx_any = true;
+        }
+    }
+    traffic_token(rx_any, tx_any)
+}
+
+fn take_u32(text: &str) -> Option<(u32, &str)> {
+    let digits: String = text.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let value = digits.parse::<u32>().ok()?;
+    Some((value, &text[digits.len()..]))
+}
+
+fn field_u32<'a>(text: &'a str, key: &str) -> Option<(u32, &'a str)> {
+    let rest = text.trim_start().strip_prefix(key)?;
+    let (value, rest) = take_u32(rest)?;
+    if value > 16 {
+        return None;
+    }
+    Some((value, rest))
 }
 
 /// Last IPv4 apply. `yes` only when link, address, and route all succeeded.
@@ -2019,7 +2162,7 @@ mod tests {
             ifaces: vec![sample("rmnet1", true, 4, 4)],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 5);
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 7);
         assert_eq!(rows[0].key, KEY_CP_STATE);
         assert_eq!(rows[0].value, json!("OFFLINE"));
         assert_eq!(rows[1].key, KEY_BEARER);
@@ -2027,6 +2170,10 @@ mod tests {
         assert_eq!(rows[2].key, KEY_SUPERVISOR);
         assert_eq!(rows[3].key, KEY_OWNER);
         assert_eq!(rows[3].value, json!("running"));
+        assert_eq!(
+            rows.iter().find(|row| row.key == KEY_TRAFFIC).unwrap().value,
+            json!("both")
+        );
         assert!(rows.iter().all(|row| row.key != KEY_REGISTRATION_RAW));
         assert!(rows.iter().all(|row| row.key != KEY_RADIO));
         assert!(rows.iter().all(|row| row.key != KEY_SIM_APP));
@@ -2283,6 +2430,89 @@ mod tests {
             last_ipv4("camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=1 route=1\n"),
             Some("yes")
         );
+        assert_eq!(
+            last_data_call(
+                "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n"
+            ),
+            Some(DataCallList {
+                count: 1,
+                cid: Some(2),
+                active: Some(2),
+                pdp: Some(3),
+            })
+        );
+        assert_eq!(
+            owner_fact_lines(
+                "pad\n\
+                 camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n"
+            ),
+            "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n"
+        );
+        assert_eq!(
+            last_data_call("camp_dcall response=yes error_raw=0 count=0\n"),
+            Some(DataCallList {
+                count: 0,
+                cid: None,
+                active: None,
+                pdp: None,
+            })
+        );
+        assert_eq!(
+            last_data_call("camp_dcall response=yes error_raw=6\n"),
+            None
+        );
+        assert_eq!(
+            last_data_call(
+                "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n\
+                 camp_dcall response=yes error_raw=0 count=0\n"
+            ),
+            Some(DataCallList {
+                count: 0,
+                cid: None,
+                active: None,
+                pdp: None,
+            })
+        );
+        assert_eq!(traffic_token(true, true), Some("both"));
+        assert_eq!(traffic_token(false, true), Some("out"));
+        assert_eq!(traffic_token(true, false), Some("in"));
+        assert_eq!(traffic_token(false, false), None);
+        let mut reading = CellularReading {
+            cp_text: Some("ONLINE\n".into()),
+            owner_log: Some(
+                "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n".into(),
+            ),
+            supervisor_log: None,
+            owner_running: true,
+            boot_epoch: None,
+            endpoint: None,
+            status_lock_busy: false,
+            ifaces: vec![sample("rmnet1", true, 84, 468)],
+        };
+        let rows = observations_from_cellular(&reading, Utc::now(), 11);
+        assert_eq!(
+            rows.iter().find(|row| row.key == KEY_DCALL_COUNT).unwrap().value,
+            json!(1)
+        );
+        assert_eq!(
+            rows.iter().find(|row| row.key == KEY_DCALL_CID).unwrap().value,
+            json!(2)
+        );
+        assert_eq!(
+            rows.iter().find(|row| row.key == KEY_DCALL_ACTIVE).unwrap().value,
+            json!(2)
+        );
+        assert_eq!(
+            rows.iter().find(|row| row.key == KEY_DCALL_PDP).unwrap().value,
+            json!(3)
+        );
+        assert_eq!(
+            rows.iter().find(|row| row.key == KEY_TRAFFIC).unwrap().value,
+            json!("both")
+        );
+        reading.ifaces = vec![sample("rmnet1", true, 0, 0)];
+        let idle = observations_from_cellular(&reading, Utc::now(), 12);
+        assert!(idle.iter().all(|row| row.key != KEY_TRAFFIC));
         assert_eq!(
             last_ipv4("camp_setup if=rmnet1 ipv4=yes prefix=32 up=1 add=0 route=1\n"),
             Some("no")

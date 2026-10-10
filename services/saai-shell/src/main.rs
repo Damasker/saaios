@@ -1752,6 +1752,54 @@ fn config_phrase(token: &str) -> Option<&'static str> {
     }
 }
 
+fn traffic_phrase(token: &str) -> Option<&'static str> {
+    match token {
+        "both" => Some("трафик"),
+        "out" => Some("только исходящий"),
+        "in" => Some("только входящий"),
+        _ => None,
+    }
+}
+
+fn data_session_suffix(
+    call: Option<saai_observation::DataCallList>,
+    traffic: Option<&str>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(call) = call {
+        parts.push(format!("список {}", call.count));
+        if let (Some(cid), Some(active), Some(pdp)) = (call.cid, call.active, call.pdp) {
+            parts.push(format!("cid {cid}"));
+            parts.push(format!("active {active}"));
+            parts.push(format!("pdp {pdp}"));
+        }
+    }
+    if let Some(phrase) = traffic.and_then(traffic_phrase) {
+        parts.push(phrase.to_string());
+    }
+    parts.join(" · ")
+}
+
+fn live_traffic_token() -> Option<&'static str> {
+    let mut rx_any = false;
+    let mut tx_any = false;
+    for name in cellular_ifaces() {
+        let rx = iface_counter(&name, "rx_bytes");
+        let tx = iface_counter(&name, "tx_bytes");
+        if rx > 0 {
+            rx_any = true;
+        }
+        if tx > 0 {
+            tx_any = true;
+        }
+    }
+    saai_observation::traffic_token(rx_any, tx_any)
+}
+
+fn read_data_call() -> Option<saai_observation::DataCallList> {
+    saai_observation::last_data_call(&read_camp_owner_log()?)
+}
+
 fn read_radio_token() -> Option<String> {
     saai_observation::last_radio_token(&read_camp_owner_log()?).map(str::to_string)
 }
@@ -2014,6 +2062,74 @@ fn cellular_row_status(
 
 /// Capture nodes in `video4linux`. `v4l-touch*` is the panel, not a
 /// camera (ADR-256). No `/dev/video*` on panther as of 2026-09-20.
+fn cellular_row_with_session(facts: &MeFacts) -> String {
+    let base = cellular_row_status(
+        facts.cellular_cp.as_deref(),
+        facts.cellular_registration_raw,
+        facts.cellular_radio.as_deref(),
+        facts.cellular_sim.as_deref(),
+        facts.cellular_owner.as_deref(),
+        facts.cellular_endpoint.as_deref(),
+        facts.cellular_supervisor.as_deref(),
+        facts.cellular_action.as_deref(),
+        facts.cellular_open.as_deref(),
+        facts.cellular_voice_raw,
+        facts.cellular_selection.as_deref(),
+        facts.cellular_stack.as_deref(),
+        facts.cellular_device_service.as_deref(),
+        facts.cellular_voice_operation.as_deref(),
+        facts.cellular_allow_data.as_deref(),
+        facts.cellular_initial_attach.as_deref(),
+        facts.cellular_dns.as_deref(),
+        facts.cellular_dns6.as_deref(),
+        facts.cellular_config.as_deref(),
+        facts.cellular_sgc.as_deref(),
+        facts.cellular_power.as_deref(),
+        facts.cellular_voice_set.as_deref(),
+        facts.cellular_ipv4.as_deref(),
+        facts.cellular_ipv6.as_deref(),
+        facts.cellular_setup.as_deref(),
+        facts.cellular_profile.as_deref(),
+        facts.cellular_activity.as_deref(),
+        facts.cellular_fastdorm.as_deref(),
+        facts.cellular_endc.as_deref(),
+        facts.cellular_throttle.as_deref(),
+        facts.cellular_unsolff.as_deref(),
+        facts.cellular_unsol.as_deref(),
+        facts.cellular_screen.as_deref(),
+        facts.cellular_cellinfo.as_deref(),
+        facts.cellular_smsc.as_deref(),
+        facts.cellular_vonrget.as_deref(),
+        facts.cellular_aptime.as_deref(),
+        facts.cellular_dbgtrace.as_deref(),
+        facts.cellular_tty.as_deref(),
+        facts.cellular_pssvc.as_deref(),
+        facts.cellular_prefmodem.as_deref(),
+        facts.cellular_slot.as_deref(),
+        facts.cellular_sigcrit.as_deref(),
+        facts.cellular_smsact.as_deref(),
+        facts.cellular_linkcrit.as_deref(),
+        facts.cellular_smscb.as_deref(),
+        facts.cellular_calllist.as_deref(),
+        facts.cellular_gpslock.as_deref(),
+        facts.cellular_gpsnfw.as_deref(),
+        facts.cellular_samode.as_deref(),
+        &facts.cellular_ifaces,
+    );
+    if base == "Нет модема" {
+        return base;
+    }
+    let suffix = data_session_suffix(
+        camp_log_is_current().then(read_data_call).flatten(),
+        live_traffic_token(),
+    );
+    if suffix.is_empty() {
+        base
+    } else {
+        format!("{base} · {suffix}")
+    }
+}
+
 fn capture_v4l_name(name: &str) -> bool {
     let name = name.trim();
     !name.is_empty() && name.starts_with("video") && !name.contains("touch")
@@ -7010,6 +7126,11 @@ fn observation_row_label(key: &str) -> String {
         "cellular.voice_set" => "Задание".into(),
         "cellular.ipv4" => "IPv4".into(),
         "cellular.ipv6" => "IPv6".into(),
+        "cellular.dcall_count" => "Каналы".into(),
+        "cellular.dcall_cid" => "CID".into(),
+        "cellular.dcall_active" => "Флаг канала".into(),
+        "cellular.dcall_pdp" => "Тип канала".into(),
+        "cellular.traffic" => "Трафик".into(),
         "cellular.setup" => "Сессия".into(),
         "cellular.profile" => "Профиль".into(),
         "cellular.activity" => "Активность".into(),
@@ -7095,6 +7216,9 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     }
     if key == "cellular.dns" || key == "cellular.dns6" || key == "cellular.ipv4" || key == "cellular.ipv6" {
         return dns_phrase(value.as_str()?.trim()).map(str::to_string);
+    }
+    if key == "cellular.traffic" {
+        return traffic_phrase(value.as_str()?.trim()).map(str::to_string);
     }
     if key == "cellular.config" || key == "cellular.sgc" || key == "cellular.power" || key == "cellular.voice_set" || key == "cellular.setup" || key == "cellular.profile" || key == "cellular.activity" || key == "cellular.fastdorm" || key == "cellular.endc" || key == "cellular.throttle" || key == "cellular.unsolff" || key == "cellular.unsol" || key == "cellular.screen" || key == "cellular.cellinfo" || key == "cellular.smsc" || key == "cellular.vonrget" || key == "cellular.aptime" || key == "cellular.dbgtrace" || key == "cellular.tty" || key == "cellular.pssvc" || key == "cellular.prefmodem" || key == "cellular.slot" || key == "cellular.sigcrit" || key == "cellular.smsact" || key == "cellular.linkcrit" || key == "cellular.smscb" || key == "cellular.calllist" || key == "cellular.gpslock" || key == "cellular.gpsnfw" || key == "cellular.samode" {
         return config_phrase(value.as_str()?.trim()).map(str::to_string);
@@ -7630,62 +7754,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 } else {
                     SettingRow::readout("Bluetooth", "Нет адаптера").row
                 },
-                SettingRow::readout(
-                    "Сотовая сеть",
-                    cellular_row_status(
-                        facts.cellular_cp.as_deref(),
-                        facts.cellular_registration_raw,
-                        facts.cellular_radio.as_deref(),
-                        facts.cellular_sim.as_deref(),
-                        facts.cellular_owner.as_deref(),
-                        facts.cellular_endpoint.as_deref(),
-                        facts.cellular_supervisor.as_deref(),
-                        facts.cellular_action.as_deref(),
-                        facts.cellular_open.as_deref(),
-                        facts.cellular_voice_raw,
-                        facts.cellular_selection.as_deref(),
-                        facts.cellular_stack.as_deref(),
-                        facts.cellular_device_service.as_deref(),
-                        facts.cellular_voice_operation.as_deref(),
-                        facts.cellular_allow_data.as_deref(),
-                        facts.cellular_initial_attach.as_deref(),
-                        facts.cellular_dns.as_deref(),
-                        facts.cellular_dns6.as_deref(),
-                        facts.cellular_config.as_deref(),
-                        facts.cellular_sgc.as_deref(),
-                        facts.cellular_power.as_deref(),
-                        facts.cellular_voice_set.as_deref(),
-                        facts.cellular_ipv4.as_deref(),
-                        facts.cellular_ipv6.as_deref(),
-                        facts.cellular_setup.as_deref(),
-                        facts.cellular_profile.as_deref(),
-                        facts.cellular_activity.as_deref(),
-                        facts.cellular_fastdorm.as_deref(),
-                        facts.cellular_endc.as_deref(),
-                        facts.cellular_throttle.as_deref(),
-                        facts.cellular_unsolff.as_deref(),
-                        facts.cellular_unsol.as_deref(),
-                        facts.cellular_screen.as_deref(),
-                        facts.cellular_cellinfo.as_deref(),
-                        facts.cellular_smsc.as_deref(),
-                        facts.cellular_vonrget.as_deref(),
-                        facts.cellular_aptime.as_deref(),
-                        facts.cellular_dbgtrace.as_deref(),
-                        facts.cellular_tty.as_deref(),
-                        facts.cellular_pssvc.as_deref(),
-                        facts.cellular_prefmodem.as_deref(),
-                        facts.cellular_slot.as_deref(),
-                        facts.cellular_sigcrit.as_deref(),
-                        facts.cellular_smsact.as_deref(),
-                        facts.cellular_linkcrit.as_deref(),
-                        facts.cellular_smscb.as_deref(),
-                        facts.cellular_calllist.as_deref(),
-                        facts.cellular_gpslock.as_deref(),
-                        facts.cellular_gpsnfw.as_deref(),
-                        facts.cellular_samode.as_deref(),
-                        &facts.cellular_ifaces,
-                    ),
-                )
+                SettingRow::readout("Сотовая сеть", cellular_row_with_session(&facts))
                 .row,
                 SettingRow::cycle(
                     "Удалённый доступ (SSH)",
@@ -15534,6 +15603,24 @@ mod tests {
             vec!["wwan0".to_string(), "qmimux0".to_string()]
         );
         assert!(cellular_ifaces_from_net_listing("google_modemctl").is_empty());
+    }
+
+    #[test]
+    fn data_session_suffix_names_the_list_and_traffic() {
+        let text = super::data_session_suffix(
+            Some(saai_observation::DataCallList {
+                count: 1,
+                cid: Some(2),
+                active: Some(2),
+                pdp: Some(3),
+            }),
+            Some("both"),
+        );
+        assert_eq!(text, "список 1 · cid 2 · active 2 · pdp 3 · трафик");
+        assert_eq!(super::data_session_suffix(None, None), "");
+        assert_eq!(super::traffic_phrase("both"), Some("трафик"));
+        assert_eq!(super::traffic_phrase("out"), Some("только исходящий"));
+        assert_eq!(super::traffic_phrase("nope"), None);
     }
 
     #[test]
