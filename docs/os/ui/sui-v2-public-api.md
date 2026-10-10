@@ -35,7 +35,8 @@ and nested `row apps` / `row intent` (ADR-199). It matches the live
 without leftover v1 NOW cards and without `OrbHost`. Empty
 `BottomNavigation` invents no v1 hits. Empty screens invent no
 footer hits. A screen without `ObjectSummary` invents no object
-hit (ADR-200).
+hit (ADR-200). The empty `SurfacePattern` is loc `now.empty`
+(ADR-438); Status invents no action.
 
 [`examples/search-public.sui`](examples/search-public.sui) is the
 labelled Search sample: `ContextHeader`, `DataRow` with
@@ -53,8 +54,9 @@ labelled Object View sample: `ContextHeader` plus Status
 `ObjectSummary` (ADR-427/428), a Status `DataRow` (ADR-429), and
 a Status `SurfacePattern` (ADR-430). No nested tabs. Status
 invents no `open_object` and no action Buttons. `layout_v2` docks
-the summary at `y=140`, the fact row at `y=284`, and permission
-below that.
+the summary at `(49, 140, 982, 144)`, the fact row at `y=284`,
+and permission below that, all with the `width/22` margin
+(ADR-436).
 
 [`examples/consent-public.sui`](examples/consent-public.sui) is the
 labelled consent sample: `ContextHeader`, Status `DataRow`s for the
@@ -66,6 +68,16 @@ is the labelled pairing sample: `ContextHeader`, Status `DataRow`s
 for the client and fingerprint (ADR-432), and accept/decline
 `Button`s. Status invents no action. The fingerprint slot matches
 `stacked_row_rect`; wrap stays paint.
+
+[`examples/intent-public.sui`](examples/intent-public.sui) is the
+labelled compose sample: `ContextHeader` plus a Status `Field`
+(ADR-434). No `Keyboard`. Status invents no action. Header x
+matches the Field margin.
+
+[`examples/apps-public.sui`](examples/apps-public.sui) is the
+labelled apps sample: `ContextHeader`, Status `SurfacePattern`
+(ADR-437), and the same nested tabs. Status invents no tile.
+Empty docks below the header.
 
 [`examples/spaces-public.sui`](examples/spaces-public.sui) is the
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
@@ -146,7 +158,11 @@ review. Copying them into an app document fails `compile_v2_public()`.
   `SurfacePattern` reads that tree (ADR-430). Consent Status
   `DataRow`s read that tree (ADR-431). Pair fingerprint reads that
   tree (ADR-432). Overlay `ContextHeader` paint reads that tree
-  (ADR-433).
+  (ADR-433). Compose `ContextHeader` paint reads that tree
+  (ADR-434). List / apps `ContextHeader` paint reads that tree
+  (ADR-435). Object View identity / facts share the `width/22`
+  margin (ADR-436). Apps empty `SurfacePattern` reads that tree
+  (ADR-437). NOW empty keeps loc `now.empty` (ADR-438).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.

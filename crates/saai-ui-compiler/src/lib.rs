@@ -1124,6 +1124,21 @@ mod tests {
         assert_eq!(pair.components[2].props.loc.as_deref(), Some("pair.fingerprint"));
         assert_eq!(pair.components[2].props.a11y.as_deref(), Some("Status"));
         assert!(guide.contains("remote-pair-public.sui"));
+        const INTENT: &str = include_str!("../../../docs/os/ui/examples/intent-public.sui");
+        let intent = compile_v2_public(INTENT).unwrap();
+        assert_eq!(intent.id, "intent");
+        assert!(!intent.is_privileged());
+        assert_eq!(intent.components[1].type_name, "Field");
+        assert_eq!(intent.components[1].props.a11y.as_deref(), Some("Status"));
+        assert!(guide.contains("intent-public.sui"));
+        const APPS: &str = include_str!("../../../docs/os/ui/examples/apps-public.sui");
+        let apps = compile_v2_public(APPS).unwrap();
+        assert_eq!(apps.id, "apps");
+        assert!(!apps.is_privileged());
+        assert_eq!(apps.components[1].type_name, "SurfacePattern");
+        assert_eq!(apps.components[1].props.a11y.as_deref(), Some("Status"));
+        assert_eq!(apps.components[1].props.loc.as_deref(), Some("apps.empty"));
+        assert!(guide.contains("apps-public.sui"));
         const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");
         assert!(compile_v2_public(TRUSTED)
             .unwrap_err()

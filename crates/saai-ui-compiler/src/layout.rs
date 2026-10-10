@@ -56,6 +56,15 @@
 //! slot. Wrap stays paint. The row invents no action.
 //! ADR-433: overlay `ContextHeader` paint reads the generated slot.
 //! Heading inset matches NOW. The header invents no action.
+//! ADR-434: compose `ContextHeader` docks with the Field margin.
+//! Paint reads that slot. Keyboard keys stay a formula.
+//! ADR-435: list / apps `ContextHeader` paint reads the generated slot.
+//! ADR-436: Object View identity / facts / permission share the
+//! `width/22` margin. Paint reads those slots. Status invents no action.
+//! ADR-437: apps empty `SurfacePattern` docks below the header. Status
+//! invents no tile.
+//! ADR-438: NOW empty `SurfacePattern` keeps loc `now.empty`. Status
+//! invents no action.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -499,10 +508,12 @@ fn v2_decision_node(
             Node::leaf("ContextHeader".to_string())
                 .with_size(Length::Fill, Length::Px(V2_OVERLAY_SUMMARY_TOP)),
         );
+        let margin = width / 22;
+        let mut cards = Vec::new();
         let id = object
             .and_then(|component| component.props.loc.clone())
             .unwrap_or_else(|| "ObjectSummary".to_string());
-        children.push(
+        cards.push(
             Node::leaf(id).with_size(Length::Fill, Length::Px(v2_now_object_height())),
         );
         for (index, row) in facts.iter().enumerate() {
@@ -511,7 +522,7 @@ fn v2_decision_node(
                 .loc
                 .clone()
                 .unwrap_or_else(|| format!("object.fact.{index}"));
-            children.push(
+            cards.push(
                 Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())),
             );
         }
@@ -521,16 +532,20 @@ fn v2_decision_node(
                 .loc
                 .clone()
                 .unwrap_or_else(|| "SurfacePattern".to_string());
-            children.push(
+            cards.push(
                 Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())),
             );
         }
-        if !buttons.is_empty() {
-            children.push(
-                Node::leaf(format!("{}-body", screen.id))
-                    .with_size(Length::Fill, Length::Fill),
-            );
-        }
+        children.push(
+            Node::linear(format!("{}-cards", screen.id), Axis::Vertical, cards)
+                .with_padding(EdgeInsets {
+                    top: 0,
+                    right: margin,
+                    bottom: 0,
+                    left: margin,
+                })
+                .with_size(Length::Fill, Length::Fill),
+        );
     } else if !facts.is_empty() {
         let margin = width / 22;
         let mut layers = vec![v2_placed_slot(
@@ -624,7 +639,19 @@ fn v2_compose_node(
         bottom: 0,
         left: margin,
     });
-    let mut children = vec![Node::leaf("ContextHeader".to_string()), field_row];
+    let header = Node::stack(
+        format!("{}-header", screen.id),
+        vec![Node::leaf("ContextHeader".to_string())
+            .with_size(Length::Fill, Length::Fill)],
+    )
+    .with_padding(EdgeInsets {
+        top: 0,
+        right: margin,
+        bottom: 0,
+        left: margin,
+    })
+    .with_size(Length::Fill, Length::Fill);
+    let mut children = vec![header, field_row];
     if let Some(keyboard) = keyboard {
         let keyboard_id = keyboard
             .props
@@ -752,10 +779,14 @@ fn v2_content_node(
             return v2_compose_node(screen, width, height, field, keyboards.first().copied());
         }
     }
+    let empty_pattern = rest
+        .iter()
+        .find(|component| component.type_name == "SurfacePattern")
+        .copied();
     let header_height = if header.is_some() {
         if object.is_some() && !v2_named_tabs(screen).is_empty() {
             v2_now_header_height(content_height)
-        } else if !stacked.is_empty() || !grid.is_empty() {
+        } else if !stacked.is_empty() || !grid.is_empty() || empty_pattern.is_some() {
             v2_stacked_row_top(0, height)
         } else {
             0
@@ -872,7 +903,31 @@ fn v2_content_node(
         ));
     }
     for component in rest {
-        layers.push(Node::leaf(component.type_name.clone()));
+        if component.type_name == "SurfacePattern"
+            && object.is_none()
+            && header_height > 0
+        {
+            let id = component
+                .props
+                .loc
+                .clone()
+                .unwrap_or_else(|| "SurfacePattern".to_string());
+            layers.push(v2_placed_slot(
+                &screen.id,
+                layers.len() + 2,
+                id,
+                None,
+                header_height,
+                content_height.saturating_sub(header_height),
+            ));
+        } else {
+            let id = component
+                .props
+                .loc
+                .clone()
+                .unwrap_or_else(|| component.type_name.clone());
+            layers.push(Node::leaf(id));
+        }
     }
     if layers.is_empty() {
         layers
@@ -1054,7 +1109,8 @@ mod tests {
         assert!(v2.hit_test(540.0, 1200.0).is_none());
         assert!(layout_v1_find(&v2, "ContextHeader").is_some());
         assert!(layout_v1_find(&v2, "ObjectSummary").is_some());
-        assert!(layout_v1_find(&v2, "SurfacePattern").is_some());
+        let empty = layout_v1_find(&v2, "now.empty").expect("now.empty");
+        assert!(empty.action.is_none());
         let header = layout_v1_find(&v2, "ContextHeader").expect("header");
         assert_eq!(header.rect.y, 0);
         let edges = saai_ui_core::EdgeInsets::from_safe(
@@ -1339,6 +1395,36 @@ mod tests {
         assert!(tree
             .hit_test(f64::from(cell_0.x + 10), f64::from(cell_0.y + 10))
             .is_none());
+        let header = layout_v1_find(&tree, "ContextHeader").expect("empty header");
+        assert_eq!(header.rect, saai_ui_core::Rect::new(49, 0, 982, 430));
+        assert!(header.action.is_none());
+        let pattern = layout_v1_find(&tree, "SurfacePattern").expect("empty pattern");
+        assert_eq!(pattern.rect.x, 49);
+        assert_eq!(pattern.rect.y, 430);
+        assert_eq!(pattern.rect.width, 982);
+        assert!(pattern.rect.height > 0);
+        assert!(pattern.action.is_none());
+    }
+
+    #[test]
+    fn layout_v2_apps_empty_public_docks_status_pattern() {
+        let source = include_str!("../../../docs/os/ui/examples/apps-public.sui");
+        let screen = compile_v2_public(source).expect("public apps");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        assert_eq!(header.rect, saai_ui_core::Rect::new(49, 0, 982, 430));
+        assert!(header.action.is_none());
+        let empty = layout_v1_find(&tree, "apps.empty").expect("apps.empty");
+        assert_eq!(empty.rect.x, 49);
+        assert_eq!(empty.rect.y, 430);
+        assert_eq!(empty.rect.width, 982);
+        assert!(empty.action.is_none());
+        assert!(tree.hit_test(540.0, 800.0).is_none());
+        assert_eq!(
+            tree.hit_test(135.0, 2250.0).map(|node| node.id.as_str()),
+            Some("now")
+        );
     }
 
     #[test]
@@ -1401,8 +1487,7 @@ mod tests {
             .and_then(|node| node.action.as_deref())
             .is_none());
         let summary = layout_v1_find(&tree, "ObjectSummary").expect("object summary");
-        assert_eq!(summary.rect.y, 140);
-        assert_eq!(summary.rect.height, 144);
+        assert_eq!(summary.rect, saai_ui_core::Rect::new(49, 140, 982, 144));
         assert!(summary.action.is_none());
     }
 
@@ -1463,6 +1548,34 @@ mod tests {
     }
 
     #[test]
+    fn layout_v2_intent_header_matches_field_margin() {
+        let source = include_str!("../../../docs/os/ui/examples/intent-public.sui");
+        let screen = compile_v2_public(source).expect("public intent");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        let field = layout_v1_find(&tree, "intent-field").expect("field");
+        assert_eq!(header.rect.y, 0);
+        assert_eq!(header.rect.x, field.rect.x);
+        assert_eq!(header.rect.x, 1080 / 22);
+        assert!(header.action.is_none());
+        assert!(field.action.is_none());
+        assert!(tree.hit_test(540.0, 150.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_inbox_header_matches_stacked_top() {
+        let source = include_str!("../../../docs/os/ui/examples/inbox-public.sui");
+        let screen = compile_v2_public(source).expect("public inbox");
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        assert_eq!(header.rect.y, 0);
+        assert_eq!(header.rect.height, 430);
+        assert_eq!(header.rect.x, 1080 / 22);
+        assert!(header.action.is_none());
+    }
+
+    #[test]
     fn layout_v2_compose_field_docks_above_keyboard_reserve() {
         let screen = compile_v2(
             r#"
@@ -1482,8 +1595,12 @@ mod tests {
         )
         .expect("intent field");
         let v2 = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&v2, "ContextHeader").expect("header");
         let field = layout_v1_find(&v2, "intent-field").expect("field");
         let keyboard = layout_v1_find(&v2, "intent-keyboard").expect("keyboard reserve");
+        assert_eq!(header.rect.y, 0);
+        assert_eq!(header.rect.x, field.rect.x);
+        assert!(header.action.is_none());
         assert_eq!(field.rect.y + field.rect.height, keyboard.rect.y);
         assert!(v2.hit_test(540.0, f64::from(field.rect.y + 10)).is_none());
         let pin = compile_v2(
@@ -1991,14 +2108,16 @@ mod tests {
         assert_eq!(header.rect, saai_ui_core::Rect::new(0, 0, 1080, 140));
         assert!(header.action.is_none());
         let summary = layout_v1_find(&tree, "object.summary").expect("summary");
-        assert_eq!(summary.rect, saai_ui_core::Rect::new(0, 140, 1080, 144));
+        assert_eq!(summary.rect, saai_ui_core::Rect::new(49, 140, 982, 144));
         assert!(summary.action.is_none());
         assert!(tree.hit_test(540.0, 200.0).is_none());
         assert!(layout_v1_find(&tree, "object-buttons").is_none());
         let related = layout_v1_find(&tree, "object.related").expect("related");
-        assert_eq!(related.rect.y, 284);
+        assert_eq!(related.rect, saai_ui_core::Rect::new(49, 284, 982, related.rect.height));
         assert!(related.action.is_none());
         let permission = layout_v1_find(&tree, "object.permission").expect("permission");
+        assert_eq!(permission.rect.x, 49);
+        assert_eq!(permission.rect.width, 982);
         assert_eq!(permission.rect.y, related.rect.y + related.rect.height);
         assert!(permission.action.is_none());
         assert!(tree.hit_test(540.0, (related.rect.y + 8) as f64).is_none());
@@ -2049,6 +2168,14 @@ mod tests {
             (
                 "remote-pair",
                 include_str!("../../../docs/os/ui/examples/remote-pair-public.sui"),
+            ),
+            (
+                "intent",
+                include_str!("../../../docs/os/ui/examples/intent-public.sui"),
+            ),
+            (
+                "apps",
+                include_str!("../../../docs/os/ui/examples/apps-public.sui"),
             ),
         ] {
             let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));

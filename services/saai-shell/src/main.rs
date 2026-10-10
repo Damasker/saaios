@@ -3231,6 +3231,7 @@ enum Frame {
     IntentInput {
         content_rect: Rect,
         header: ContextHeader,
+        header_rect: Rect,
         field: Field,
         field_rect: Rect,
         keys: Vec<(Rect, String)>,
@@ -3238,6 +3239,7 @@ enum Frame {
     WifiPasswordInput {
         content_rect: Rect,
         header: ContextHeader,
+        header_rect: Rect,
         field: Field,
         field_rect: Rect,
         keys: Vec<(Rect, String)>,
@@ -3248,6 +3250,7 @@ enum Frame {
     WifiList {
         content_rect: Rect,
         header: ContextHeader,
+        header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-145: Bluetooth is no longer `draw_action_row_list` Surface
@@ -3256,6 +3259,7 @@ enum Frame {
     BluetoothList {
         content_rect: Rect,
         header: ContextHeader,
+        header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-147: trusted clients is no longer `draw_action_row_list`
@@ -3264,6 +3268,7 @@ enum Frame {
     TrustedClients {
         content_rect: Rect,
         header: ContextHeader,
+        header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-152: DevSurface is no longer `draw_action_row_list`
@@ -3272,6 +3277,7 @@ enum Frame {
     DevSurface {
         content_rect: Rect,
         header: ContextHeader,
+        header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-143/149: PIN setup is no longer a Surface header fill.
@@ -3280,6 +3286,7 @@ enum Frame {
     PinSetup {
         content_rect: Rect,
         header: ContextHeader,
+        header_rect: Rect,
         field: Field,
         field_rect: Rect,
         keys: Vec<(Rect, String)>,
@@ -3299,7 +3306,9 @@ enum Frame {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
+        header_rect: Rect,
         apps: Vec<(Rect, render::ActionCardView)>,
+        empty_slot: Option<Rect>,
         empty_pattern: Option<SurfacePattern>,
     },
     /// ADR-139: Inbox is no longer `Frame::Root`. Header is a real
@@ -3308,6 +3317,7 @@ enum Frame {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
+        header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-140: Пространства is no longer `Frame::Root`. Header is a
@@ -3317,6 +3327,7 @@ enum Frame {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
+        header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-240: Поиск lists live objects in the selected space.
@@ -3325,6 +3336,7 @@ enum Frame {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
+        header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
     },
     /// ADR-141: `Система` is no longer `Frame::Root`. Header is a real
@@ -3335,6 +3347,7 @@ enum Frame {
         content_rect: Rect,
         tabs: Vec<(Rect, NavigationItem)>,
         header: ContextHeader,
+        header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
         paint_navigation: bool,
     },
@@ -4641,7 +4654,7 @@ fn now_paint_chrome_from(view: &LayoutNode) -> render::NowPaintChrome {
     render::NowPaintChrome {
         header: now_node_rect(view, "ContextHeader"),
         object: now_node_rect(view, "ObjectSummary"),
-        empty: now_node_rect(view, "SurfacePattern"),
+        empty: now_node_rect(view, "now.empty"),
     }
 }
 
@@ -8243,15 +8256,30 @@ fn overlay_field_rect_with(
     height: u32,
     with_keyboard: bool,
 ) -> Rect {
+    overlay_field_paint(screen_id, field_id, with_keyboard, width, height).1
+}
+
+/// ADR-434: compose ContextHeader and Field share one generated tree.
+fn overlay_field_paint(
+    screen_id: &str,
+    field_id: &str,
+    with_keyboard: bool,
+    width: u32,
+    height: u32,
+) -> (Rect, Rect) {
     let source = if with_keyboard {
         overlay_field_v2_source(screen_id, field_id)
     } else {
         overlay_field_v2_source_with(screen_id, field_id, false)
     };
-    let tree = layout_live_v2(&source, "ADR-221 field", width, height);
-    saai_ui_compiler::layout_v1_find(&tree, field_id)
-        .map(|node| node.rect)
-        .unwrap_or_else(|| stacked_row_rect(0, width, height))
+    let why = "ADR-434 compose overlay";
+    let tree = layout_live_v2(&source, why, width, height);
+    (
+        v2_named_rect(&tree, "ContextHeader", why),
+        saai_ui_compiler::layout_v1_find(&tree, field_id)
+            .map(|node| node.rect)
+            .unwrap_or_else(|| stacked_row_rect(0, width, height)),
+    )
 }
 
 fn me_dispatch_at(
@@ -10348,38 +10376,42 @@ impl Shell {
             } else {
                 Vec::new()
             };
+            let (header_rect, field_rect) = overlay_field_paint(
+                "intent",
+                INTENT_FIELD_ID,
+                state.keyboard.shows_panel(),
+                width,
+                height,
+            );
             Frame::IntentInput {
                 content_rect: Rect::new(0, 0, width, height),
                 header: intent_compose_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,
                 )),
+                header_rect,
                 field: intent_input_field(&state.buffer, self.entityd.is_connected()),
-                field_rect: overlay_field_rect_with(
-                    "intent",
-                    INTENT_FIELD_ID,
-                    width,
-                    height,
-                    state.keyboard.shows_panel(),
-                ),
+                field_rect,
                 keys,
             }
         } else if let Some(state) = &self.pin_setup {
             let has_existing_pin = self.settings.pin_code.is_some();
+            let (header_rect, field_rect) = overlay_field_paint(
+                "pin-setup",
+                PIN_SETUP_FIELD_ID,
+                state.keyboard.shows_panel(),
+                width,
+                height,
+            );
             Frame::PinSetup {
                 content_rect: Rect::new(0, 0, width, height),
                 header: pin_setup_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,
                 )),
+                header_rect,
                 field: pin_setup_field(&state.buffer),
-                field_rect: overlay_field_rect_with(
-                    "pin-setup",
-                    PIN_SETUP_FIELD_ID,
-                    width,
-                    height,
-                    state.keyboard.shows_panel(),
-                ),
+                field_rect,
                 keys: if state.keyboard.shows_panel() {
                     pin_keyboard_keys(
                         width,
@@ -10398,20 +10430,22 @@ impl Shell {
             } else {
                 Vec::new()
             };
+            let (header_rect, field_rect) = overlay_field_paint(
+                "intent",
+                INTENT_FIELD_ID,
+                state.keyboard.shows_panel(),
+                width,
+                height,
+            );
             Frame::WifiPasswordInput {
                 content_rect: Rect::new(0, 0, width, height),
                 header: wifi_password_compose_header(&space_display_name(
                     &self.spaces,
                     &self.selected_space_id,
                 )),
+                header_rect,
                 field: wifi_password_field(&state.ssid, &state.buffer),
-                field_rect: overlay_field_rect_with(
-                    "intent",
-                    INTENT_FIELD_ID,
-                    width,
-                    height,
-                    state.keyboard.shows_panel(),
-                ),
+                field_rect,
                 keys,
             }
         } else if let Some(networks) = &self.wifi_list {
@@ -10443,6 +10477,7 @@ impl Shell {
             Frame::WifiList {
                 content_rect: tree.rect,
                 header: wifi_header(&space_display_name(&self.spaces, &self.selected_space_id)),
+                header_rect: v2_named_rect(&tree, "ContextHeader", "ADR-435 list header"),
                 rows: list_paint_cards(&tree, "ADR-226 wifi paint", cards, &ids),
             }
         } else if self.bluetooth_list_open {
@@ -10488,6 +10523,7 @@ impl Shell {
                     &self.spaces,
                     &self.selected_space_id,
                 )),
+                header_rect: v2_named_rect(&tree, "ContextHeader", "ADR-435 list header"),
                 rows: list_paint_cards(&tree, "ADR-226 bluetooth paint", cards, &ids),
             }
         } else if self.trusted_clients_open {
@@ -10528,6 +10564,7 @@ impl Shell {
             Frame::TrustedClients {
                 content_rect: tree.rect,
                 header: trusted_header(&space_display_name(&self.spaces, &self.selected_space_id)),
+                header_rect: v2_named_rect(&tree, "ContextHeader", "ADR-435 list header"),
                 rows: list_paint_cards(&tree, "ADR-226 trusted paint", cards, &ids),
             }
         } else if self.dev_surface_open {
@@ -10554,6 +10591,7 @@ impl Shell {
                     &self.spaces,
                     &self.selected_space_id,
                 )),
+                header_rect: v2_named_rect(&tree, "ContextHeader", "ADR-435 list header"),
                 rows: diagnostic_paint_cards(&tree, &data_rows),
             }
         } else if self.current_page == RootPage::Now && !self.apps_open {
@@ -10584,7 +10622,11 @@ impl Shell {
                     self.appd.is_connected(),
                     archived,
                 ),
+                header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                 apps: apps_paint_cards(&view, &self.installed_apps),
+                empty_slot: self.installed_apps.is_empty().then(|| {
+                    v2_named_rect(&view, "apps.empty", "ADR-437 apps empty")
+                }),
                 empty_pattern: apps_grid_empty_pattern(
                     self.appd.is_connected(),
                     self.installed_apps.len(),
@@ -10608,6 +10650,7 @@ impl Shell {
                     connected,
                     archived,
                 ),
+                header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                 rows: self.inbox_content_cards_from(&view),
             }
         } else if self.current_page == RootPage::Search {
@@ -10628,6 +10671,7 @@ impl Shell {
                     connected,
                     archived,
                 ),
+                header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                 rows: self.search_content_cards_from(&view),
             }
         } else if self.current_page == RootPage::Spaces {
@@ -10649,6 +10693,7 @@ impl Shell {
                         connected,
                         archived,
                     ),
+                    header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                     rows: self.space_detail_content_cards_from(&view),
                 }
             } else {
@@ -10666,6 +10711,7 @@ impl Shell {
                         connected,
                         archived,
                     ),
+                    header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                     rows: self.spaces_content_cards_from(&view),
                 }
             }
@@ -10693,6 +10739,7 @@ impl Shell {
                     self.entityd.is_connected(),
                     archived,
                 ),
+                header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                 rows: me_paint_cards(&view, &all),
                 paint_navigation: !content_only,
             }
@@ -10888,6 +10935,7 @@ impl Shell {
                 Frame::IntentInput {
                     content_rect,
                     header,
+                    header_rect,
                     field,
                     field_rect,
                     keys,
@@ -10896,6 +10944,7 @@ impl Shell {
                         &mut render::Canvas::new(canvas, width, height),
                         content_rect,
                         &header,
+                        header_rect,
                         &field,
                         field_rect,
                         &keys,
@@ -10907,6 +10956,7 @@ impl Shell {
                 Frame::PinSetup {
                     content_rect,
                     header,
+                    header_rect,
                     field,
                     field_rect,
                     keys,
@@ -10915,6 +10965,7 @@ impl Shell {
                         &mut render::Canvas::new(canvas, width, height),
                         content_rect,
                         &header,
+                        header_rect,
                         &field,
                         field_rect,
                         &keys,
@@ -10926,6 +10977,7 @@ impl Shell {
                 Frame::WifiPasswordInput {
                     content_rect,
                     header,
+                    header_rect,
                     field,
                     field_rect,
                     keys,
@@ -10934,6 +10986,7 @@ impl Shell {
                         &mut render::Canvas::new(canvas, width, height),
                         content_rect,
                         &header,
+                        header_rect,
                         &field,
                         field_rect,
                         &keys,
@@ -10945,6 +10998,7 @@ impl Shell {
                 Frame::WifiList {
                     content_rect,
                     header,
+                    header_rect,
                     rows,
                 } => {
                     render::draw_context_row_list(
@@ -10952,6 +11006,7 @@ impl Shell {
                         content_rect,
                         &[],
                         &header,
+                        header_rect,
                         &rows,
                         false,
                         fonts,
@@ -10960,6 +11015,7 @@ impl Shell {
                 Frame::BluetoothList {
                     content_rect,
                     header,
+                    header_rect,
                     rows,
                 } => {
                     render::draw_context_row_list(
@@ -10967,6 +11023,7 @@ impl Shell {
                         content_rect,
                         &[],
                         &header,
+                        header_rect,
                         &rows,
                         false,
                         fonts,
@@ -10975,6 +11032,7 @@ impl Shell {
                 Frame::TrustedClients {
                     content_rect,
                     header,
+                    header_rect,
                     rows,
                 } => {
                     render::draw_context_row_list(
@@ -10982,6 +11040,7 @@ impl Shell {
                         content_rect,
                         &[],
                         &header,
+                        header_rect,
                         &rows,
                         false,
                         fonts,
@@ -10990,6 +11049,7 @@ impl Shell {
                 Frame::DevSurface {
                     content_rect,
                     header,
+                    header_rect,
                     rows,
                 } => {
                     render::draw_context_row_list(
@@ -10997,6 +11057,7 @@ impl Shell {
                         content_rect,
                         &[],
                         &header,
+                        header_rect,
                         &rows,
                         false,
                         fonts,
@@ -11046,7 +11107,9 @@ impl Shell {
                     content_rect,
                     tabs,
                     header,
+                    header_rect,
                     apps,
+                    empty_slot,
                     empty_pattern,
                 } => {
                     render::draw_apps_grid(
@@ -11054,7 +11117,9 @@ impl Shell {
                         content_rect,
                         &tabs,
                         &header,
+                        header_rect,
                         &apps,
+                        empty_slot,
                         empty_pattern.as_ref(),
                         fonts,
                     );
@@ -11063,6 +11128,7 @@ impl Shell {
                     content_rect,
                     tabs,
                     header,
+                    header_rect,
                     rows,
                 } => {
                     render::draw_context_row_list(
@@ -11070,6 +11136,7 @@ impl Shell {
                         content_rect,
                         &tabs,
                         &header,
+                        header_rect,
                         &rows,
                         true,
                         fonts,
@@ -11079,6 +11146,7 @@ impl Shell {
                     content_rect,
                     tabs,
                     header,
+                    header_rect,
                     rows,
                 } => {
                     render::draw_context_row_list(
@@ -11086,6 +11154,7 @@ impl Shell {
                         content_rect,
                         &tabs,
                         &header,
+                        header_rect,
                         &rows,
                         true,
                         fonts,
@@ -11095,6 +11164,7 @@ impl Shell {
                     content_rect,
                     tabs,
                     header,
+                    header_rect,
                     rows,
                 } => {
                     render::draw_context_row_list(
@@ -11102,6 +11172,7 @@ impl Shell {
                         content_rect,
                         &tabs,
                         &header,
+                        header_rect,
                         &rows,
                         true,
                         fonts,
@@ -11111,6 +11182,7 @@ impl Shell {
                     content_rect,
                     tabs,
                     header,
+                    header_rect,
                     rows,
                     paint_navigation,
                 } => {
@@ -11119,6 +11191,7 @@ impl Shell {
                         content_rect,
                         &tabs,
                         &header,
+                        header_rect,
                         &rows,
                         paint_navigation,
                         fonts,
@@ -15335,11 +15408,12 @@ mod tests {
         let chrome = super::now_paint_chrome_from(&view);
         let header = saai_ui_compiler::layout_v1_find(&view, "ContextHeader").expect("header");
         let object = saai_ui_compiler::layout_v1_find(&view, "ObjectSummary").expect("object");
-        let empty = saai_ui_compiler::layout_v1_find(&view, "SurfacePattern").expect("empty");
+        let empty = saai_ui_compiler::layout_v1_find(&view, "now.empty").expect("now.empty");
         let nav = saai_ui_compiler::layout_v1_find(&view, "BottomNavigation").expect("tabs");
         assert_eq!(chrome.header, header.rect);
         assert_eq!(chrome.object, object.rect);
         assert_eq!(chrome.empty, empty.rect);
+        assert!(empty.action.is_none());
         assert_eq!(chrome.header.y, 0);
         assert_eq!(chrome.object.y, 263);
         assert_eq!(chrome.object.height, 144);
@@ -15356,6 +15430,7 @@ mod tests {
         assert_eq!(footer[1].0, super::now_node_rect(&view, "intent"));
         let main = include_str!("main.rs");
         assert!(main.contains("now_paint_chrome_from"));
+        assert!(main.contains("now.empty"));
         assert!(main.contains("navigation_items_from"));
         let draw_now = include_str!("render.rs")
             .split("pub fn draw_now(")
@@ -15380,6 +15455,10 @@ mod tests {
             width,
             height,
         );
+        let header = super::v2_named_rect(&inbox, "ContextHeader", "ADR-435 list header");
+        assert_eq!(header.y, 0);
+        assert_eq!(header.height, 430);
+        assert_eq!(header.x, width / 22);
         assert_eq!(
             super::v2_named_rect(&inbox, "inbox.empty", "empty"),
             stacked_row_rect(0, width, height)
@@ -15421,6 +15500,7 @@ mod tests {
         assert!(main.contains("ADR-226 wifi paint"));
         assert!(main.contains("ADR-226 bluetooth paint"));
         assert!(main.contains("ADR-226 trusted paint"));
+        assert!(main.contains("ADR-435 list header"));
     }
 
     #[test]
@@ -15521,12 +15601,22 @@ mod tests {
             width,
             height,
         );
-        assert!(saai_ui_compiler::layout_v1_find(&empty, "SurfacePattern").is_some());
+        assert!(saai_ui_compiler::layout_v1_find(&empty, "SurfacePattern").is_none());
+        let header = super::v2_named_rect(&empty, "ContextHeader", "ADR-437 apps empty");
+        assert_eq!(header.y, 0);
+        assert_eq!(header.height, 430);
+        assert_eq!(header.x, width / 22);
+        let pattern = saai_ui_compiler::layout_v1_find(&empty, "apps.empty").expect("apps.empty");
+        assert_eq!(pattern.rect.x, width / 22);
+        assert_eq!(pattern.rect.y, 430);
+        assert_eq!(pattern.rect.width, width - 2 * (width / 22));
+        assert!(pattern.action.is_none());
         assert!(super::apps_v2_source(&empty_apps).contains("apps.empty"));
         let nav = saai_ui_compiler::layout_v1_find(&tree, "BottomNavigation").expect("tabs");
         assert_eq!(nav.children.len(), 4);
         let main = include_str!("main.rs");
         assert!(main.contains("ADR-228 apps paint"));
+        assert!(main.contains("ADR-437 apps empty"));
         assert!(main.contains("apps_paint_cards"));
     }
 
@@ -15557,13 +15647,20 @@ mod tests {
         );
         assert_eq!(pair.1[0].y, buttons[0].y);
         assert_eq!(pair.1[0].height, 300);
-        let field =
-            super::overlay_field_rect_with("intent", super::INTENT_FIELD_ID, width, height, true);
+        let (compose_header, field) = super::overlay_field_paint(
+            "intent",
+            super::INTENT_FIELD_ID,
+            true,
+            width,
+            height,
+        );
+        assert_eq!(compose_header.y, 0);
+        assert_eq!(compose_header.x, field.x);
         assert!(field.height > 0);
         let main = include_str!("main.rs");
         assert!(main.contains("ADR-229 overlay paint"));
         assert!(main.contains("overlay_decision_paint"));
-        assert!(main.contains("overlay_field_rect_with"));
+        assert!(main.contains("overlay_field_paint"));
     }
 
     #[test]
@@ -17648,7 +17745,7 @@ mod tests {
         assert!(facts.is_empty());
         assert!(permission.is_none());
         assert_eq!(header, saai_ui_core::Rect::new(0, 0, width, height));
-        assert_eq!(summary, saai_ui_core::Rect::new(0, 140, width, 144));
+        assert_eq!(summary, saai_ui_core::Rect::new(49, 140, 982, 144));
         let with_fact = super::object_overlay_paint(
             &[],
             &["object.related"],
@@ -17658,9 +17755,14 @@ mod tests {
             height,
         );
         assert_eq!(with_fact.2.len(), 1);
-        assert_eq!(with_fact.2[0].y, 284);
+        assert_eq!(
+            with_fact.2[0],
+            saai_ui_core::Rect::new(49, 284, 982, with_fact.2[0].height)
+        );
         assert!(with_fact.2[0].height > 0);
         let perm = with_fact.3.expect("permission");
+        assert_eq!(perm.x, 49);
+        assert_eq!(perm.width, 982);
         assert_eq!(perm.y, with_fact.2[0].y + with_fact.2[0].height);
         assert!(perm.height > 0);
         let two = super::object_overlay_paint(

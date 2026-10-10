@@ -363,6 +363,7 @@ pub fn draw_intent_input(
     canvas: &mut Canvas<'_>,
     content: Rect,
     header: &ContextHeader,
+    header_rect: Rect,
     field: &Field,
     field_rect: Rect,
     keys: &[(Rect, String)],
@@ -373,7 +374,7 @@ pub fn draw_intent_input(
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
-        paint_context_header(canvas, fonts, content, header);
+        paint_overlay_context_header(canvas, fonts, header_rect, canvas.height, header);
         draw_gallery_field(canvas, fonts, field, field_rect, field_focused);
     }
     canvas.set_clip(None);
@@ -386,6 +387,7 @@ pub fn draw_wifi_password(
     canvas: &mut Canvas<'_>,
     content: Rect,
     header: &ContextHeader,
+    header_rect: Rect,
     field: &Field,
     field_rect: Rect,
     keys: &[(Rect, String)],
@@ -397,6 +399,7 @@ pub fn draw_wifi_password(
         canvas,
         content,
         header,
+        header_rect,
         field,
         field_rect,
         keys,
@@ -498,7 +501,7 @@ pub fn draw_object_view(
     facts: &[(Rect, &str)],
     decision: Option<&DecisionOverlay>,
     permission: Option<&SurfacePattern>,
-    header: Rect,
+    _header: Rect,
     summary_rect: Rect,
     permission_rect: Option<Rect>,
     actions: &[(Rect, &str)],
@@ -524,15 +527,13 @@ pub fn draw_object_view(
         return;
     };
 
-    let margin = header.width / 22;
-    let content_width = header.width.saturating_sub(margin.saturating_mul(2));
     let _ = draw_object_summary(
         canvas,
         fonts,
         summary,
-        header.x + margin,
+        summary_rect.x,
         summary_rect.y,
-        content_width,
+        summary_rect.width,
     );
     for (rect, text) in facts {
         draw_text(
@@ -540,7 +541,7 @@ pub fn draw_object_view(
             &fonts.regular,
             text,
             role_px(TextRole::Caption),
-            header.x + margin,
+            rect.x,
             rect.y,
             theme_color(ColorRole::TextSecondary),
         );
@@ -550,7 +551,7 @@ pub fn draw_object_view(
             let mark_size = physical(IconSize::Medium.value());
             draw_calibration_mark(
                 canvas,
-                Rect::new(header.x + margin, rect.y, mark_size, mark_size),
+                Rect::new(rect.x, rect.y, mark_size, mark_size),
                 pattern.state.style().mark,
                 theme_color(pattern.state.style().color),
             );
@@ -559,9 +560,9 @@ pub fn draw_object_view(
             canvas,
             fonts,
             &pattern.message_text(),
-            header.x + margin,
+            rect.x,
             rect.y,
-            content_width,
+            rect.width,
         );
     }
 
@@ -922,6 +923,7 @@ pub fn draw_pin_setup(
     canvas: &mut Canvas<'_>,
     content: Rect,
     header: &ContextHeader,
+    header_rect: Rect,
     field: &Field,
     field_rect: Rect,
     keys: &[(Rect, String)],
@@ -932,7 +934,7 @@ pub fn draw_pin_setup(
     canvas.fill(theme_color(ColorRole::Canvas));
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
-        paint_context_header(canvas, fonts, content, header);
+        paint_overlay_context_header(canvas, fonts, header_rect, canvas.height, header);
         draw_gallery_field(canvas, fonts, field, field_rect, field_focused);
     }
     canvas.set_clip(None);
@@ -2332,6 +2334,7 @@ fn paint_overlay_context_header(
     }
 }
 
+#[allow(dead_code)]
 fn paint_context_header(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -2411,7 +2414,9 @@ pub fn draw_apps_grid(
     content: Rect,
     tabs: &[(Rect, NavigationItem)],
     header: &ContextHeader,
+    header_rect: Rect,
     apps: &[(Rect, ActionCardView)],
+    empty_slot: Option<Rect>,
     empty_pattern: Option<&SurfacePattern>,
     fonts: Option<&Fonts>,
 ) {
@@ -2419,14 +2424,14 @@ pub fn draw_apps_grid(
     canvas.set_clip(Some(content));
 
     if let Some(fonts) = fonts {
-        paint_context_header(canvas, fonts, content, header);
+        paint_overlay_context_header(canvas, fonts, header_rect, canvas.height, header);
     }
 
     draw_app_icon_grid(canvas, fonts, apps);
 
     if apps.is_empty() {
-        if let Some(pattern) = empty_pattern {
-            draw_surface_pattern(canvas, fonts, content, pattern);
+        if let (Some(pattern), Some(slot)) = (empty_pattern, empty_slot) {
+            draw_surface_pattern(canvas, fonts, slot, pattern);
         }
     }
 
@@ -2444,6 +2449,7 @@ pub fn draw_context_row_list(
     content: Rect,
     tabs: &[(Rect, NavigationItem)],
     header: &ContextHeader,
+    header_rect: Rect,
     rows: &[(Rect, ActionCardView)],
     paint_navigation: bool,
     fonts: Option<&Fonts>,
@@ -2456,7 +2462,7 @@ pub fn draw_context_row_list(
     }
     canvas.set_clip(Some(content));
     if let Some(fonts) = fonts {
-        paint_context_header(canvas, fonts, content, header);
+        paint_overlay_context_header(canvas, fonts, header_rect, canvas.height, header);
     }
     for (rect, card) in rows {
         draw_action_card(canvas, *rect, card, fonts);
@@ -3601,7 +3607,17 @@ mod tests {
         let header = ContextHeader::new("Дом").with_section_title("Приложения");
         let cell = Rect::new(49, 430, 310, 300);
         let apps = vec![(cell, ActionCardView::new("Saai Demo", "", "Запустить"))];
-        draw_apps_grid(canvas, content, &[], &header, &apps, None, None);
+        draw_apps_grid(
+            canvas,
+            content,
+            &[],
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &apps,
+            None,
+            None,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(cell.x + cell.width / 2, cell.y + 40),
@@ -3622,7 +3638,9 @@ mod tests {
             content,
             &[],
             &header,
+            Rect::new(49, 0, 982, 430),
             &[],
+            Some(Rect::new(49, 430, 982, 1730)),
             Some(&SurfacePattern::empty("Нет приложений")),
             None,
         );
@@ -3702,7 +3720,16 @@ mod tests {
             row,
             ActionCardView::new("Нет новых задач и уведомлений", "", ""),
         )];
-        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
+        draw_context_row_list(
+            canvas,
+            content,
+            &[],
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &rows,
+            true,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
@@ -3723,7 +3750,16 @@ mod tests {
             row,
             ActionCardView::new("Дом", "Объектов: 1", "").selected(true),
         )];
-        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
+        draw_context_row_list(
+            canvas,
+            content,
+            &[],
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &rows,
+            true,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
@@ -3741,7 +3777,16 @@ mod tests {
         let header = ContextHeader::new("Работа").with_section_title("Система");
         let row = Rect::new(49, 430, 982, 190);
         let rows = vec![(row, ActionCardView::new("Pixel 7", "Это устройство", ""))];
-        draw_context_row_list(canvas, content, &[], &header, &rows, true, None);
+        draw_context_row_list(
+            canvas,
+            content,
+            &[],
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &rows,
+            true,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
@@ -3763,6 +3808,7 @@ mod tests {
             Rect::new(0, 0, 1080, 2100),
             &tabs,
             &header,
+            Rect::new(49, 0, 982, 430),
             &[],
             false,
             None,
@@ -3815,7 +3861,16 @@ mod tests {
         let field_rect = Rect::new(49, 430, 982, 190);
         let keys = vec![(Rect::new(108, 900, 264, 240), "1".to_string())];
         draw_pin_setup(
-            canvas, content, &header, &field, field_rect, &keys, None, false, None,
+            canvas,
+            content,
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &field,
+            field_rect,
+            &keys,
+            None,
+            false,
+            None,
         );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(240, 1020), theme_color(ColorRole::Elevated));
@@ -3834,7 +3889,16 @@ mod tests {
         let field_rect = Rect::new(49, 1490, 982, 190);
         let keys = vec![(Rect::new(108, 1700, 96, 144), "Q".to_string())];
         draw_intent_input(
-            canvas, content, &header, &field, field_rect, &keys, None, false, None,
+            canvas,
+            content,
+            &header,
+            Rect::new(49, 0, 982, 1490),
+            &field,
+            field_rect,
+            &keys,
+            None,
+            false,
+            None,
         );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(canvas.pixel(156, 1772), theme_color(ColorRole::Elevated));
@@ -3881,7 +3945,16 @@ mod tests {
         let header = ContextHeader::new("Дом").with_section_title("Bluetooth");
         let row = Rect::new(49, 430, 982, 190);
         let rows = vec![(row, ActionCardView::new("Нет устройств", "", ""))];
-        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        draw_context_row_list(
+            canvas,
+            content,
+            &[],
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &rows,
+            false,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
@@ -3899,7 +3972,16 @@ mod tests {
         let header = ContextHeader::new("Дом").with_section_title("Wi-Fi");
         let row = Rect::new(49, 430, 982, 190);
         let rows = vec![(row, ActionCardView::new("Нет сетей", "", ""))];
-        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        draw_context_row_list(
+            canvas,
+            content,
+            &[],
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &rows,
+            false,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
@@ -3917,7 +3999,16 @@ mod tests {
         let header = ContextHeader::new("Дом").with_section_title("Ключи");
         let row = Rect::new(49, 430, 982, 190);
         let rows = vec![(row, ActionCardView::new("Нет клиентов", "", ""))];
-        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        draw_context_row_list(
+            canvas,
+            content,
+            &[],
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &rows,
+            false,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),
@@ -3935,7 +4026,16 @@ mod tests {
         let header = ContextHeader::new("Дом").with_section_title("Диагностика");
         let row = Rect::new(49, 430, 982, 190);
         let rows = vec![(row, ActionCardView::new("Сборка", "abc123", ""))];
-        draw_context_row_list(canvas, content, &[], &header, &rows, false, None);
+        draw_context_row_list(
+            canvas,
+            content,
+            &[],
+            &header,
+            Rect::new(49, 0, 982, 430),
+            &rows,
+            false,
+            None,
+        );
         assert_eq!(canvas.pixel(540, 210), theme_color(ColorRole::Canvas));
         assert_eq!(
             canvas.pixel(row.x + 40, row.y + 40),

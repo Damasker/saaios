@@ -1,0 +1,15 @@
+sui 2
+screen intent {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = intent.header
+    focus = 0
+    inset = safe
+  }
+  component Field {
+    text = Body
+    a11y = Status
+    loc = intent-field
+  }
+}

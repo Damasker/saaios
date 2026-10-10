@@ -37,9 +37,15 @@ Fact `DataRow`s read that tree (ADR-429).
 Permission `SurfacePattern` and decision facts read that tree
 (ADR-430). Consent / pair Status cards read that tree (ADR-431).
 Pair fingerprint reads that tree (ADR-432). Overlay
-`ContextHeader` paint reads that tree (ADR-433). Public
-`object-public.sui`, `consent-public.sui`, and
-`remote-pair-public.sui` stay Experimental.
+`ContextHeader` paint reads that tree (ADR-433). Compose
+`ContextHeader` paint reads that tree (ADR-434). List / apps
+`ContextHeader` paint reads that tree (ADR-435). Object View
+identity / facts share the `width/22` margin (ADR-436). Apps empty
+`SurfacePattern` reads that tree (ADR-437). NOW empty keeps loc
+`now.empty` (ADR-438). Public
+`object-public.sui`, `consent-public.sui`,
+`remote-pair-public.sui`, `intent-public.sui`, and `apps-public.sui`
+stay Experimental.
 
 The verification ledger stays in
 [`vui09-verification.md`](vui09-verification.md).

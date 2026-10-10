@@ -1,0 +1,26 @@
+sui 2
+screen apps {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = apps.header
+    focus = 0
+    inset = safe
+  }
+  component SurfacePattern {
+    text = Body
+    color = TextSecondary
+    a11y = Status
+    loc = apps.empty
+  }
+  component BottomNavigation {
+    a11y = Button
+    focus = 1
+    scroll = none
+    inset = safe
+    tab now { loc = now }
+    tab spaces { loc = spaces }
+    tab search { loc = search }
+    tab me { loc = me }
+  }
+}
