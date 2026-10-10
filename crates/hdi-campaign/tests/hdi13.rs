@@ -42,7 +42,11 @@ fn wrong_model_stays_insufficient() {
     std::fs::copy(pixel().join("drm.txt"), dir.path().join("drm.txt")).unwrap();
     std::fs::copy(pixel().join("modules.txt"), dir.path().join("modules.txt")).unwrap();
     std::fs::copy(pixel().join("pci.txt"), dir.path().join("pci.txt")).unwrap();
-    let report = verify(dir.path(), &pixel().join("key.txt")).unwrap();
+    let report = verify(
+        dir.path(),
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pixel-key.txt"),
+    )
+    .unwrap();
     assert_eq!(report.verdict, StandVerdict::IdentityInsufficient);
     let confirmed = report.confirmed_for("pixel-7");
     assert!(confirmed.iter().any(|claim| {
