@@ -3395,8 +3395,7 @@ static int camp_dereg_reply(struct camp_driver *c, unsigned id, unsigned error)
     if (id == REG_MANUAL_SEL && c->drg_manual_sent && !c->drg_manual_ack) {
         c->drg_manual_ack = 1;
         c->drg_done = 1;
-        printf("camp_dereg manual_select plmn=%s response=yes error_raw=%u\n",
-               c->manual_plmn, error);
+        printf("camp_dereg manual_select response=yes error_raw=%u\n", error);
         return 1;
     }
     return 0;
@@ -4305,8 +4304,8 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     } else if (id == REG_SEL_AUTO_SET) {
         printf("camp_reg set=selection_auto response=yes error_raw=%u\n", error);
     } else if (id == REG_MANUAL_SEL) {
-        printf("camp_reg set=network_selection_manual plmn=%s response=yes "
-               "error_raw=%u\n", c->manual_plmn, error);
+        printf("camp_reg set=network_selection_manual response=yes "
+               "error_raw=%u\n", error);
     } else if (id == REG_PREF_SET) {
         printf("camp_reg set=preferred_lte_wcdma response=yes error_raw=%u\n",
                error);
@@ -4333,7 +4332,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
             c->drg_target_visible = seen;
             if (!(c->manual_plmn[0] && seen)) c->drg_done = 1;
             printf("camp_dereg scan_done target=%s visible=%d\n",
-                   c->manual_plmn[0] ? c->manual_plmn : "(none)", seen);
+                   c->manual_plmn[0] ? "armed" : "none", seen);
         }
     } else if (id == REG_RADIO_GET) {
         if (n >= 16) {
@@ -4741,6 +4740,7 @@ static void camp_probe_advance(struct owner *o, int64_t now)
             uint8_t f[REG_MANUAL_LEN];
             make_manual_select_request(f, c->manual_plmn, c->probe_token);
             c->manual_sel_sent = 1;
+            long_wait = 1;
             wrote = camp_send_once(o->ipc, f, sizeof f);
             rname = "set_network_selection_manual";
         } else if (reg == REG_ALLOW_DATA) {
@@ -6369,7 +6369,7 @@ static int run_owner(int ipc, int rfs, int ready)
     printf("camp_scan734=%s\n",
            o.camp.scan734 ? "armed-precamp-lte-scan" : "off");
     if (read_manual_plmn(o.camp.manual_plmn, sizeof o.camp.manual_plmn))
-        printf("camp_manual_plmn=%s\n", o.camp.manual_plmn);
+        printf("camp_manual_plmn=armed len=%zu\n", strlen(o.camp.manual_plmn));
     else
         puts("camp_manual_plmn=none");
     /* VERDICT 16: PIN1 unlock + one-shot activation call. The PIN is loaded but
