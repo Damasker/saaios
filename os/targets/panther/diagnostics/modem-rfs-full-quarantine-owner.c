@@ -294,7 +294,18 @@ enum { SEQ_CONFIG_COMMAND = 0x093f, SEQ_CONFIG_LEN = 13,
        CALL_HANGUP_INDEX_OFF = 12, CALL_HANGUP_FLAG_OFF = 16,
        CALL_POLL_MAX = 6, CALL_POLL_REPLY_MS = 5000,
        /* call sub-sequence internal step markers (NOT wire opcodes) */
-       CLL_NONE = 0, CLL_DIAL, CLL_POLL, CLL_HANGUP };
+       CLL_NONE = 0, CLL_DIAL, CLL_POLL, CLL_HANGUP,
+       /* ProtocolSmsBuilder::BuildSendSms. Opcode 0x0100 (0x0101 only when
+        * the more-messages flag is set; this one-shot leaves it clear).
+        * InitRequestHeader writes a 271-byte frame: opcode at +2, length at
+        * +4, token at +6. Body: +12 is the 0..3 property byte (stock clamps
+        * a missing property to 0), +13/+14 is the empty-SMSC fallback stock
+        * writes when the SMSC string is absent (halfword 1), +26 is the raw
+        * TPDU length, +27 is the TPDU (max 244). The TPDU is the public
+        * SMS-SUBMIT of 3GPP TS 23.040; stock copies it in unchanged. */
+       SMS_SEND = 0x0100, SMS_SEND_LEN = 271,
+       SMS_PROP_OFF = 12, SMS_SMSC_OFF = 13, SMS_PDU_LEN_OFF = 26,
+       SMS_PDU_OFF = 27, SMS_PDU_MAX = 244, SMS_DIGITS_MAX = 20 };
 
 /* Active camp dispatcher. Isolated from the passive SIT observer: it keeps its
  * own streaming framer and token, never a SET on the RFS channel. It arms on
@@ -461,6 +472,12 @@ struct camp_driver {
     int call_poll_count, call_seen_count, call_index;
     unsigned call_last_state;
     int call_hangup_sent, call_done;
+    /* One SMS-SUBMIT, armed by /data/saaios/etc/sms_number. The number is
+     * loaded at start and written only into the TPDU. The log records the
+     * length and error_raw. One attempt per boot. */
+    int sms_enabled;
+    char sms_number[SMS_DIGITS_MAX + 2];
+    int sms_sent, sms_done;
     /* VERDICT 17: len-16 scanType sweep (config /data/saaios/etc/scan16). After
      * bring-up completes, fire BuildQueryAvailableNetwork(int) once per distinct
      * accepted scanType 0..5, stopping early if any returns a result list. */
@@ -2986,6 +3003,59 @@ static void make_dial_request(uint8_t request[CALL_DIAL_LEN],
     request[CALL_DIAL_ARG6_OFF] = 0;
 }
 
+/* SMS-SUBMIT TPDU (3GPP TS 23.040): MTI submit, no validity period, GSM 7-bit
+ * alphabet, two septets. Destination digits are BCD. Returns the TPDU length,
+ * or 0 when the number is not a short digit string. */
+static int gsm_submit_pdu(uint8_t *dst, size_t cap, const char *number)
+{
+    const char *digits = number ? number : "";
+    int intl = 0;
+    size_t n = 0, bcd, len, i, p;
+    if (*digits == '+') { intl = 1; digits++; }
+    while (digits[n] >= '0' && digits[n] <= '9') n++;
+    if (n < 1 || n > SMS_DIGITS_MAX || digits[n] != 0) return 0;
+    bcd = (n + 1u) / 2u;
+    len = 7u + bcd + 2u;
+    if (len > cap || len > SMS_PDU_MAX) return 0;
+    dst[0] = 0x01;
+    dst[1] = 0x00;
+    dst[2] = (uint8_t)n;
+    dst[3] = intl ? 0x91 : 0x81;
+    for (i = 0; i < bcd; i++) {
+        unsigned lo = (unsigned)(digits[i * 2u] - '0');
+        unsigned hi = 0xfu;
+        if (i * 2u + 1u < n) hi = (unsigned)(digits[i * 2u + 1u] - '0');
+        dst[4u + i] = (uint8_t)(lo | (hi << 4));
+    }
+    p = 4u + bcd;
+    dst[p++] = 0x00;
+    dst[p++] = 0x00;
+    dst[p++] = 2;
+    dst[p++] = 0xef;
+    dst[p++] = 0x35;
+    return (int)p;
+}
+
+/* One SMS (ProtocolSmsBuilder::BuildSendSms). Empty SMSC uses the stock
+ * fallback so the modem keeps the SMSC already on the card. */
+static int make_sms_request(uint8_t request[SMS_SEND_LEN],
+                            const char *number, uint32_t token)
+{
+    int plen;
+    memset(request, 0, SMS_SEND_LEN);
+    request[2] = (uint8_t)SMS_SEND;
+    request[3] = (uint8_t)(SMS_SEND >> 8);
+    request[4] = (uint8_t)SMS_SEND_LEN;
+    request[5] = (uint8_t)(SMS_SEND_LEN >> 8);
+    put_little32(request + 6, token);
+    request[SMS_PROP_OFF] = 0;
+    request[SMS_SMSC_OFF] = 1;
+    plen = gsm_submit_pdu(request + SMS_PDU_OFF, SMS_PDU_MAX, number);
+    if (plen <= 0) return 0;
+    request[SMS_PDU_LEN_OFF] = (uint8_t)plen;
+    return 1;
+}
+
 /* Hang up one call by index (ProtocolCallBuilder::BuildHangup, opcode 0x0008,
  * len 20). [12]=call index int32, [16]=1. */
 static void make_hangup_request(uint8_t request[CALL_HANGUP_LEN],
@@ -3332,6 +3402,26 @@ static unsigned camp_call_next(const struct camp_driver *c)
     if (c->call_poll_count < CALL_POLL_MAX) return CLL_POLL;
     if (!c->call_hangup_sent) return CLL_HANGUP;
     return CLL_NONE;
+}
+
+/* One SMS after CS registration. Absent file, a read-only capability boot,
+ * or a finished attempt stays idle. */
+static unsigned camp_sms_next(const struct camp_driver *c)
+{
+    if (!c->reg_complete || c->capquery || !c->sms_enabled ||
+        !c->sms_number[0] || c->sms_done || c->sms_sent)
+        return 0;
+    if (!c->voice_reg_known) return 0;
+    if (!(c->voice_reg_state == 1 || c->voice_reg_state == 5)) return 0;
+    return SMS_SEND;
+}
+
+static int camp_sms_reply(struct camp_driver *c, unsigned id, unsigned error)
+{
+    if (id != SMS_SEND || !c->sms_sent || c->sms_done) return 0;
+    c->sms_done = 1;
+    printf("camp_sms response=yes error_raw=%u\n", error);
+    return 1;
 }
 
 /* Advance the PIN-unlock and activation-call sequences on a matching reply.
@@ -3947,6 +4037,7 @@ static void camp_probe_match(struct camp_driver *c, const uint8_t *p, size_t n,
     if (camp_bbver_reply(c, p, n, id, error)) return;
     if (camp_scan734_reply(c, id, error)) return;
     if (camp_ratbm_reply(c, p, n, id, error)) return;
+    if (camp_sms_reply(c, id, error)) return;
     if (camp_call_reply(c, p, n, id, error)) return;
     if (id == 0x073e || id == 0x0954 || id == 0x0718) {
         const char *step = id == 0x073e ? "endc" :
@@ -5765,6 +5856,29 @@ static void camp_probe_advance(struct owner *o, int64_t now)
                (long long)(now - c->owner_start_ms));
         return;
     }
+    if (camp_sms_next(c) == SMS_SEND) {
+        uint8_t f[SMS_SEND_LEN];
+        ++c->probe_token;
+        if (!make_sms_request(f, c->sms_number, c->probe_token)) {
+            c->sms_done = 1;
+            puts("camp_sms=skipped");
+            zero_bytes(f, sizeof f);
+            return;
+        }
+        c->sms_sent = 1;
+        int wrote = camp_send_once(o->ipc, f, sizeof f);
+        zero_bytes(f, sizeof f);
+        if (wrote) { c->probe_next_ms = now + PROBE_GAP_MS; return; }
+        c->probe_pending = 1;
+        c->probe_id = SMS_SEND;
+        c->probe_name = "send_sms";
+        c->probe_deadline_ms = now + PROBE_REPLY_MS;
+        c->probe_next_ms = now + PROBE_GAP_MS;
+        c->probe_sent++;
+        printf("camp_sms=sent step=send elapsed_ms=%lld\n",
+               (long long)(now - c->owner_start_ms));
+        return;
+    }
     unsigned pick;
     const char *name;
     if (c->sim_change_pending && !c->sim_ready) {
@@ -5989,6 +6103,29 @@ static int read_call_number(char *out, size_t cap)
     out[n] = 0;
     return 1;
 }
+
+/* One-shot SMS destination. Same file shape as the dial string, digits only,
+ * and never written to the log. */
+static int read_sms_number(char *out, size_t cap)
+{
+    if (cap) out[0] = 0;
+    int fd = open("/data/saaios/etc/sms_number", O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return 0;
+    char buf[SMS_DIGITS_MAX + 3] = {0};
+    ssize_t r = read(fd, buf, sizeof buf - 1);
+    close(fd);
+    if (r <= 0) return 0;
+    size_t n = 0;
+    if (buf[0] == '+') n = 1;
+    while (n < sizeof buf && buf[n] >= '0' && buf[n] <= '9') n++;
+    if (n < 2 || n >= cap) return 0;
+    if (n == 1 || (buf[0] == '+' && n - 1 > SMS_DIGITS_MAX) ||
+        (buf[0] != '+' && n > SMS_DIGITS_MAX))
+        return 0;
+    memcpy(out, buf, n);
+    out[n] = 0;
+    return 1;
+}
 #endif /* SAAIOS_RFS_CAMP */
 
 static void request_stop(int signal_number)
@@ -6142,6 +6279,12 @@ static int run_owner(int ipc, int rfs, int ready)
         printf("camp_call_number=armed len=%zu\n", strlen(o.camp.call_number));
     } else {
         puts("camp_call_number=none");
+    }
+    if (read_sms_number(o.camp.sms_number, sizeof o.camp.sms_number)) {
+        o.camp.sms_enabled = 1;
+        printf("camp_sms_number=armed len=%zu\n", strlen(o.camp.sms_number));
+    } else {
+        puts("camp_sms_number=none");
     }
 #endif
     for (;;) {
@@ -8708,6 +8851,43 @@ static int test_camp_reg(void)
         if (!camp_bbver_reply(&bb, br, sizeof br, BBVER_GET, 0) ||
             !bb.bbver_done) return 253;
         if (camp_bbver_next(&bb) != 0) return 253;          /* done */
+    }
+    /* SMS-SUBMIT: recovered 271-byte 0x0100, empty-SMSC fallback, TPDU of a
+     * short test number that is not a live destination. */
+    {
+        uint8_t sm[SMS_SEND_LEN];
+        if (!make_sms_request(sm, "+100", 0x12345678u)) return 260;
+        if (sm[2] != 0x00 || sm[3] != 0x01 || sm[4] != 0x0f || sm[5] != 0x01)
+            return 261;
+        if (little32(sm + 6) != 0x12345678u || sm[SMS_PROP_OFF] != 0 ||
+            sm[SMS_SMSC_OFF] != 1 || sm[SMS_SMSC_OFF + 1] != 0)
+            return 262;
+        if (sm[SMS_PDU_LEN_OFF] != 11 || sm[SMS_PDU_OFF] != 0x01 ||
+            sm[SMS_PDU_OFF + 1] != 0x00 || sm[SMS_PDU_OFF + 2] != 3 ||
+            sm[SMS_PDU_OFF + 3] != 0x91 || sm[SMS_PDU_OFF + 4] != 0x01 ||
+            sm[SMS_PDU_OFF + 5] != 0xf0 || sm[SMS_PDU_OFF + 8] != 2 ||
+            sm[SMS_PDU_OFF + 9] != 0xef || sm[SMS_PDU_OFF + 10] != 0x35)
+            return 263;
+        if (sm[SMS_PDU_OFF + 11] != 0) return 264;
+        if (make_sms_request(sm, "", 1) || make_sms_request(sm, "+12a", 1))
+            return 265;
+        struct camp_driver sx;
+        memset(&sx, 0, sizeof sx);
+        sx.reg_complete = 1;
+        if (camp_sms_next(&sx) != 0) return 266;
+        memcpy(sx.sms_number, "+100", 4);
+        sx.sms_enabled = 1;
+        if (camp_sms_next(&sx) != 0) return 267;
+        sx.voice_reg_known = 1; sx.voice_reg_state = 3;
+        if (camp_sms_next(&sx) != 0) return 268;
+        sx.voice_reg_state = 1;
+        if (camp_sms_next(&sx) != SMS_SEND) return 269;
+        sx.capquery = 1;
+        if (camp_sms_next(&sx) != 0) return 270;
+        sx.capquery = 0; sx.sms_sent = 1;
+        if (camp_sms_next(&sx) != 0) return 271;
+        if (!camp_sms_reply(&sx, SMS_SEND, 0) || !sx.sms_done) return 272;
+        if (camp_sms_next(&sx) != 0) return 273;
     }
     return 0;
 }
