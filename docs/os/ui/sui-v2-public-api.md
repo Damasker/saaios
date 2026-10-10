@@ -50,10 +50,11 @@ labelled Inbox sample: `ContextHeader`, `EventRow` with
 
 [`examples/object-public.sui`](examples/object-public.sui) is the
 labelled Object View sample: `ContextHeader` plus Status
-`ObjectSummary` (ADR-427/428) and a Status `DataRow` (ADR-429).
-No nested tabs. Status invents no `open_object` and no action
-Buttons. `layout_v2` docks the summary at `y=140` and the fact
-row at `y=284`.
+`ObjectSummary` (ADR-427/428), a Status `DataRow` (ADR-429), and
+a Status `SurfacePattern` (ADR-430). No nested tabs. Status
+invents no `open_object` and no action Buttons. `layout_v2` docks
+the summary at `y=140`, the fact row at `y=284`, and permission
+below that.
 
 [`examples/spaces-public.sui`](examples/spaces-public.sui) is the
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
@@ -130,7 +131,8 @@ review. Copying them into an app document fails `compile_v2_public()`.
   formulas stay Keyboard keys, gallery page, and lock idle/wake
   (ADR-232). Empty Object View header reads the same overlay tree
   (ADR-427). Object View `ObjectSummary` reads that tree (ADR-428).
-  Fact `DataRow`s read that tree (ADR-429).
+  Fact `DataRow`s read that tree (ADR-429). Permission
+  `SurfacePattern` reads that tree (ADR-430).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.

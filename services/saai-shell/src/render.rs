@@ -499,6 +499,7 @@ pub fn draw_object_view(
     permission: Option<&SurfacePattern>,
     header: Rect,
     summary_rect: Rect,
+    permission_rect: Option<Rect>,
     actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
@@ -524,7 +525,7 @@ pub fn draw_object_view(
 
     let margin = header.width / 22;
     let content_width = header.width.saturating_sub(margin.saturating_mul(2));
-    let mut y = draw_object_summary(
+    let _ = draw_object_summary(
         canvas,
         fonts,
         summary,
@@ -542,44 +543,25 @@ pub fn draw_object_view(
             rect.y,
             theme_color(ColorRole::TextSecondary),
         );
-        y = rect.y.saturating_add(rect.height);
     }
-    if let Some(overlay) = decision {
-        for fact in overlay.fact_lines() {
-            if y + 40 >= header.y + header.height {
-                break;
-            }
-            draw_semantic_text(
+    if let (Some(pattern), Some(rect)) = (permission, permission_rect) {
+        if pattern.paints_mark() {
+            let mark_size = physical(IconSize::Medium.value());
+            draw_calibration_mark(
                 canvas,
-                fonts,
-                &SemanticText::new(fact, TextRole::Body, ColorRole::TextPrimary),
-                header.x + margin,
-                y,
-                content_width,
-            );
-            y = y.saturating_add(scaled_line_height(TextRole::Body));
-        }
-    }
-    if let Some(pattern) = permission {
-        if y + 40 < header.y + header.height {
-            if pattern.paints_mark() {
-                let mark_size = physical(IconSize::Medium.value());
-                draw_calibration_mark(
-                    canvas,
-                    Rect::new(header.x + margin, y, mark_size, mark_size),
-                    pattern.state.style().mark,
-                    theme_color(pattern.state.style().color),
-                );
-            }
-            draw_semantic_text(
-                canvas,
-                fonts,
-                &pattern.message_text(),
-                header.x + margin,
-                y,
-                content_width,
+                Rect::new(header.x + margin, rect.y, mark_size, mark_size),
+                pattern.state.style().mark,
+                theme_color(pattern.state.style().color),
             );
         }
+        draw_semantic_text(
+            canvas,
+            fonts,
+            &pattern.message_text(),
+            header.x + margin,
+            rect.y,
+            content_width,
+        );
     }
 
     let overlay_labels: Option<[&str; 2]> = decision.map(|overlay| {
@@ -4201,6 +4183,7 @@ mod tests {
             None,
             Rect::new(0, 0, width, 2200),
             Rect::new(0, 140, width, 144),
+            None,
             &[(accept, "Подтвердить"), (decline, "Отклонить")],
             None,
         );

@@ -47,6 +47,9 @@
 //! it does not invent `open_object`.
 //! ADR-429: Object View fact `DataRow`s dock below that summary as
 //! Status; they invent no actions.
+//! ADR-430: Object View `SurfacePattern` docks the OAM permission
+//! band. Decision fact lines are Status `DataRow`s. Neither invents
+//! an action.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -480,6 +483,7 @@ fn v2_decision_node(
     buttons: &[&crate::SuiV2Component],
     object: Option<&crate::SuiV2Component>,
     facts: &[&crate::SuiV2Component],
+    pattern: Option<&crate::SuiV2Component>,
 ) -> Node {
     let mut children = Vec::new();
     if object.is_some() {
@@ -499,6 +503,16 @@ fn v2_decision_node(
                 .loc
                 .clone()
                 .unwrap_or_else(|| format!("object.fact.{index}"));
+            children.push(
+                Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())),
+            );
+        }
+        if let Some(pattern) = pattern {
+            let id = pattern
+                .props
+                .loc
+                .clone()
+                .unwrap_or_else(|| "SurfacePattern".to_string());
             children.push(
                 Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())),
             );
@@ -670,7 +684,11 @@ fn v2_content_node(
             || object.is_some()
             || (header.is_some() && stacked.is_empty() && grid.is_empty() && fields.is_empty()))
     {
-        return v2_decision_node(screen, &overlay_buttons, object, &stacked);
+        let overlay_pattern = rest
+            .iter()
+            .find(|component| component.type_name == "SurfacePattern")
+            .copied();
+        return v2_decision_node(screen, &overlay_buttons, object, &stacked, overlay_pattern);
     }
     if v2_named_tabs(screen).is_empty() && screen.id == "lock" {
         if let Some(field) = fields.first() {
@@ -1872,7 +1890,11 @@ mod tests {
         let related = layout_v1_find(&tree, "object.related").expect("related");
         assert_eq!(related.rect.y, 284);
         assert!(related.action.is_none());
+        let permission = layout_v1_find(&tree, "object.permission").expect("permission");
+        assert_eq!(permission.rect.y, related.rect.y + related.rect.height);
+        assert!(permission.action.is_none());
         assert!(tree.hit_test(540.0, (related.rect.y + 8) as f64).is_none());
+        assert!(tree.hit_test(540.0, (permission.rect.y + 8) as f64).is_none());
         assert!(tree.hit_test(270.0, 2250.0).is_none());
         assert!(tree.hit_test(540.0, 335.0).is_none());
     }

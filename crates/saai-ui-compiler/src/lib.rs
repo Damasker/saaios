@@ -1105,6 +1105,8 @@ mod tests {
         assert_eq!(object.components[1].props.a11y.as_deref(), Some("Status"));
         assert_eq!(object.components[2].type_name, "DataRow");
         assert_eq!(object.components[2].props.a11y.as_deref(), Some("Status"));
+        assert_eq!(object.components[3].type_name, "SurfacePattern");
+        assert_eq!(object.components[3].props.a11y.as_deref(), Some("Status"));
         assert!(object.rows.is_empty());
         assert!(guide.contains("object-public.sui"));
         const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");

@@ -3206,6 +3206,7 @@ enum Frame {
         header: Rect,
         summary_rect: Rect,
         fact_rows: Vec<(Rect, String)>,
+        permission_rect: Option<Rect>,
         actions: Vec<(Rect, &'static str)>,
     },
     /// ADR-144: SSH pairing is no longer a free-floating title.
@@ -3412,7 +3413,7 @@ fn object_view_action_at(
         .collect();
     let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
     live_v2_hit(
-        &object_overlay_v2_source(&loc_refs, &[]),
+        &object_overlay_v2_source(&loc_refs, &[], false),
         "ADR-429 object overlay",
         pos,
         width,
@@ -8001,12 +8002,19 @@ fn overlay_buttons_v2_source(screen_id: &str, locs: &[&str]) -> String {
     src
 }
 
-fn object_overlay_v2_source(locs: &[&str], facts: &[&str]) -> String {
+fn object_overlay_v2_source(locs: &[&str], facts: &[&str], permission: bool) -> String {
     let mut src = String::from("sui 2\nscreen object {\n");
     src.push_str(&v2_header_block("object.header"));
     src.push_str(&v2_stacked_block("ObjectSummary", "Status", "object.summary"));
     for fact in facts {
         src.push_str(&v2_stacked_block("DataRow", "Status", fact));
+    }
+    if permission {
+        src.push_str(&v2_stacked_block(
+            "SurfacePattern",
+            "Status",
+            "object.permission",
+        ));
     }
     for loc in locs {
         src.push_str(&v2_stacked_block("Button", "Button", loc));
@@ -8015,13 +8023,20 @@ fn object_overlay_v2_source(locs: &[&str], facts: &[&str]) -> String {
     src
 }
 
-fn object_overlay_fact_locs(related: bool, detail_count: usize) -> Vec<String> {
+fn object_overlay_fact_locs(
+    related: bool,
+    detail_count: usize,
+    decision_count: usize,
+) -> Vec<String> {
     let mut facts = Vec::new();
     if related {
         facts.push("object.related".to_string());
     }
     for index in 0..detail_count {
         facts.push(format!("object.detail.{index}"));
+    }
+    for index in 0..decision_count {
+        facts.push(format!("object.decision.{index}"));
     }
     facts
 }
@@ -8048,21 +8063,28 @@ fn overlay_decision_paint(
     (header, buttons)
 }
 
-/// ADR-429: Object View identity, Status facts, and decision Buttons
-/// share one tree.
+/// ADR-430: Object View identity, Status facts, permission, and
+/// decision Buttons share one tree.
 fn object_overlay_paint(
     locs: &[&str],
     facts: &[&str],
+    permission: bool,
     why: &'static str,
     width: u32,
     height: u32,
-) -> (Rect, Rect, Vec<Rect>, Vec<Rect>) {
-    let tree = layout_live_v2(&object_overlay_v2_source(locs, facts), why, width, height);
+) -> (Rect, Rect, Vec<Rect>, Option<Rect>, Vec<Rect>) {
+    let tree = layout_live_v2(
+        &object_overlay_v2_source(locs, facts, permission),
+        why,
+        width,
+        height,
+    );
     let summary = v2_named_rect(&tree, "object.summary", why);
     let fact_rects = facts
         .iter()
         .map(|id| v2_named_rect(&tree, id, why))
         .collect::<Vec<_>>();
+    let permission_rect = permission.then(|| v2_named_rect(&tree, "object.permission", why));
     let buttons = locs
         .iter()
         .map(|id| v2_named_rect(&tree, id, why))
@@ -8072,7 +8094,7 @@ fn object_overlay_paint(
     } else {
         Rect::new(0, 0, width, height)
     };
-    (body, summary, fact_rects, buttons)
+    (body, summary, fact_rects, permission_rect, buttons)
 }
 
 fn overlay_field_v2_source(screen_id: &str, field_id: &str) -> String {
@@ -10156,12 +10178,23 @@ impl Shell {
                 .collect();
             let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
             let details = object_view_details(&content);
-            let fact_locs = object_overlay_fact_locs(content.related.is_some(), details.len());
+            let decision_facts = content
+                .decision
+                .as_ref()
+                .map(DecisionOverlay::fact_lines)
+                .unwrap_or_default();
+            let fact_locs = object_overlay_fact_locs(
+                content.related.is_some(),
+                details.len(),
+                decision_facts.len(),
+            );
             let fact_refs: Vec<&str> = fact_locs.iter().map(String::as_str).collect();
-            let (header, summary_rect, fact_rects, rects) = object_overlay_paint(
+            let permission = object_view_permission_pattern(&content);
+            let (header, summary_rect, fact_rects, permission_rect, rects) = object_overlay_paint(
                 &loc_refs,
                 &fact_refs,
-                "ADR-429 object overlay",
+                permission.is_some(),
+                "ADR-430 object overlay",
                 width,
                 height,
             );
@@ -10169,18 +10202,15 @@ impl Shell {
             if let Some(related) = content.related.clone() {
                 fact_texts.push(related);
             }
-            fact_texts.extend(details.iter().cloned());
-            let fact_rows = fact_rects
-                .into_iter()
-                .zip(fact_texts)
-                .collect();
+            fact_texts.extend(details);
+            fact_texts.extend(decision_facts);
+            let fact_rows = fact_rects.into_iter().zip(fact_texts).collect();
             let actions = content
                 .actions
                 .iter()
                 .zip(rects)
                 .map(|(label, rect)| (rect, *label))
                 .collect();
-            let permission = object_view_permission_pattern(&content);
             Frame::ObjectView {
                 summary: object_view_summary(entity, &content),
                 decision: content.decision,
@@ -10188,6 +10218,7 @@ impl Shell {
                 header,
                 summary_rect,
                 fact_rows,
+                permission_rect,
                 actions,
             }
         } else if let Some(pending) = &self.pending_pair_request {
@@ -10711,6 +10742,7 @@ impl Shell {
                     header,
                     summary_rect,
                     fact_rows,
+                    permission_rect,
                     actions,
                 } => {
                     let facts: Vec<(Rect, &str)> = fact_rows
@@ -10725,6 +10757,7 @@ impl Shell {
                         permission.as_ref(),
                         header,
                         summary_rect,
+                        permission_rect,
                         &actions,
                         fonts,
                     );
@@ -17485,40 +17518,47 @@ mod tests {
     fn empty_object_view_header_comes_from_layout_v2() {
         let width = 1080;
         let height = 2400;
-        let (header, summary, facts, buttons) = super::object_overlay_paint(
+        let (header, summary, facts, permission, buttons) = super::object_overlay_paint(
             &[],
             &[],
-            "ADR-429 object overlay",
+            false,
+            "ADR-430 object overlay",
             width,
             height,
         );
         assert!(buttons.is_empty());
         assert!(facts.is_empty());
+        assert!(permission.is_none());
         assert_eq!(header, saai_ui_core::Rect::new(0, 0, width, height));
         assert_eq!(summary, saai_ui_core::Rect::new(0, 140, width, 144));
         let with_fact = super::object_overlay_paint(
             &[],
             &["object.related"],
-            "ADR-429 object overlay",
+            true,
+            "ADR-430 object overlay",
             width,
             height,
         );
         assert_eq!(with_fact.2.len(), 1);
         assert_eq!(with_fact.2[0].y, 284);
         assert!(with_fact.2[0].height > 0);
+        let perm = with_fact.3.expect("permission");
+        assert_eq!(perm.y, with_fact.2[0].y + with_fact.2[0].height);
+        assert!(perm.height > 0);
         let two = super::object_overlay_paint(
             &["object-view-action:0", "object-view-action:1"],
             &["object.related"],
-            "ADR-429 object overlay",
+            true,
+            "ADR-430 object overlay",
             width,
             height,
         );
-        assert_eq!(two.3.len(), 2);
+        assert_eq!(two.4.len(), 2);
         assert_eq!(two.1, summary);
         assert_eq!(two.2[0].y, with_fact.2[0].y);
         assert_eq!(two.0.y, header.y);
         assert!(two.0.height < header.height);
-        assert!(include_str!("main.rs").contains("ADR-429 object overlay"));
+        assert!(include_str!("main.rs").contains("ADR-430 object overlay"));
     }
 
     #[test]

@@ -30,7 +30,7 @@ NOW content hits are compiled `now.sui` (ADR-217).
 Inbox/Spaces/list hits are generated `compile_v2()` documents (ADR-218).
 Me scroll hits are `layout_v2_scrolled` (ADR-219).
 Privileged `Keyboard` is the Field-bound IME (ADR-222).
-OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are generated `layout_v2` (ADR-224). NOW chrome paint reads `now_view()` (ADR-225). List paint reads generated `layout_v2` (ADR-226). Me scroll paint reads `layout_v2_scrolled` (ADR-227). Apps grid paint reads generated `layout_v2` (ADR-228). Overlay paint reads generated `layout_v2` (ADR-229). OrbHost paint reads generated `layout_v2` (ADR-230). Diagnostic paint reads `layout_v2_scrolled` (ADR-231). Leftover formulas stay Keyboard keys, gallery page, and lock idle/wake (ADR-232). Empty Object View header reads the same generated overlay tree; `object-public.sui` lays out through `compile_v2_public` (ADR-427). Object View `ObjectSummary` docks on that tree (ADR-428). Fact `DataRow`s dock below the summary (ADR-429).
+OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are generated `layout_v2` (ADR-224). NOW chrome paint reads `now_view()` (ADR-225). List paint reads generated `layout_v2` (ADR-226). Me scroll paint reads `layout_v2_scrolled` (ADR-227). Apps grid paint reads generated `layout_v2` (ADR-228). Overlay paint reads generated `layout_v2` (ADR-229). OrbHost paint reads generated `layout_v2` (ADR-230). Diagnostic paint reads `layout_v2_scrolled` (ADR-231). Leftover formulas stay Keyboard keys, gallery page, and lock idle/wake (ADR-232). Empty Object View header reads the same generated overlay tree; `object-public.sui` lays out through `compile_v2_public` (ADR-427). Object View `ObjectSummary` docks on that tree (ADR-428). Fact `DataRow`s dock below the summary (ADR-429). Permission `SurfacePattern` and decision facts dock on that tree (ADR-430).
 
 ## Matrix
 
@@ -80,7 +80,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Leftover formulas stay Keyboard keys, gallery page, and lock
   idle/wake (ADR-232). Empty Object View header reads generated
   `layout_v2` (ADR-427). Object View `ObjectSummary` reads that
-  tree (ADR-428). Fact `DataRow`s read that tree (ADR-429).
+  tree (ADR-428).   Fact `DataRow`s read that tree (ADR-429). Permission
+  `SurfacePattern` and decision facts read that tree (ADR-430).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

@@ -18,4 +18,10 @@ screen object {
     a11y = Status
     loc = object.related
   }
+  component SurfacePattern {
+    text = Body
+    color = TextSecondary
+    a11y = Status
+    loc = object.permission
+  }
 }
