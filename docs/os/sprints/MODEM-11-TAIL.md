@@ -124,6 +124,15 @@ Camp 564 на прежнем образе, `saai-displayd` 391 не остана
 звонков. `smscb=accepted` остаётся. `bearer=rmnet1`, `ipv4=yes`.
 Camp 564 на прежнем образе, `saai-displayd` 391 не останавливался.
 
+### 11g на этой загрузке
+
+`camp_gpslock`: одна строка `error_raw=0`. Status печатает
+`gpslock=accepted`, кэш — `cellular.gpslock=accepted`. В
+«Наблюдениях» это «GPS / дано», в строке — «gps дано».
+Координаты не публикуются. `calllist=accepted` остаётся.
+`bearer=rmnet1`, `ipv4=yes`. Camp 564 на прежнем образе,
+`saai-displayd` 391 не останавливался.
+
 ## Сверка RFS
 
 Отдельный шаг 11j, после 11c. Не на той же установке, что новый факт.

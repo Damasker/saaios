@@ -53,6 +53,7 @@ pub const KEY_SMSACT: &str = "cellular.smsact";
 pub const KEY_LINKCRIT: &str = "cellular.linkcrit";
 pub const KEY_SMSCB: &str = "cellular.smscb";
 pub const KEY_CALLLIST: &str = "cellular.calllist";
+pub const KEY_GPSLOCK: &str = "cellular.gpslock";
 pub const KEY_SIM_APP: &str = "cellular.sim_app";
 pub const KEY_OWNER: &str = "cellular.owner";
 pub const KEY_BOOT_EPOCH: &str = "cellular.boot_epoch";
@@ -491,6 +492,15 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if let Some(token) = log.and_then(last_gpslock) {
+        out.push(text_observation(
+            KEY_GPSLOCK,
+            token,
+            "camp.owner.gpslock",
+            observed_at,
+            sequence,
+        ));
+    }
     if let Some(token) = log.and_then(last_sim_presence) {
         out.push(text_observation(
             KEY_SIM_APP,
@@ -707,6 +717,7 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut linkcrit = None;
     let mut smscb = None;
     let mut calllist = None;
+    let mut gpslock = None;
     let mut sim = None;
     for line in log.lines() {
         if line.contains("field=data registration_raw=") {
@@ -789,6 +800,8 @@ pub fn owner_fact_lines(log: &str) -> String {
             smscb = Some(line);
         } else if line.contains("camp_calllist response=yes ") {
             calllist = Some(line);
+        } else if line.contains("camp_gpslock response=yes ") {
+            gpslock = Some(line);
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
             sim = Some(line);
         }
@@ -835,6 +848,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         linkcrit,
         smscb,
         calllist,
+        gpslock,
         sim,
     ]
         .into_iter()
@@ -891,6 +905,21 @@ fn cp_state_token(text: &str) -> Option<&str> {
         return None;
     }
     Some(word)
+}
+
+/// Last GPS-lock acknowledgement. Stock error `0` is accepted.
+/// Coordinates stay out of the published word.
+pub fn last_gpslock(log: &str) -> Option<&'static str> {
+    for line in log.lines().rev() {
+        if let Some((_, rest)) = line.split_once("camp_gpslock response=yes error_raw=") {
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            return match digits.parse::<u32>().ok() {
+                Some(0) => Some("accepted"),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 /// Last call-list acknowledgement. Stock error `0` is accepted.
@@ -1601,7 +1630,8 @@ mod tests {
                  camp_smsact response=yes error_raw=0 len=16\n\
                  camp_linkcrit response=yes error_raw=0 len=16\n\
                  camp_smscb response=yes error_raw=0 len=16\n\
-                 camp_calllist response=yes error_raw=0 count=4 len=16\n"
+                 camp_calllist response=yes error_raw=0 count=4 len=16\n\
+                 camp_gpslock response=yes error_raw=0 lat=0 lon=0 len=16\n"
                     .into(),
             ),
             supervisor_log: None,
@@ -1617,7 +1647,7 @@ mod tests {
             ],
         };
         let rows = observations_from_cellular(&reading, Utc::now(), 4);
-        assert_eq!(rows.len(), 44);
+        assert_eq!(rows.len(), 45);
         let cp = rows.iter().find(|row| row.key == KEY_CP_STATE).unwrap();
         assert_eq!(cp.value, json!("ONLINE"));
         assert_eq!(cp.source.source_id, "sysfs.cpif.modem_state");
@@ -1743,6 +1773,11 @@ mod tests {
         assert_eq!(calllist.value, json!("accepted"));
         assert_eq!(calllist.source.source_id, "camp.owner.calllist");
         assert!(!calllist.value.to_string().contains("count"));
+        let gpslock = rows.iter().find(|row| row.key == KEY_GPSLOCK).unwrap();
+        assert_eq!(gpslock.value, json!("accepted"));
+        assert_eq!(gpslock.source.source_id, "camp.owner.gpslock");
+        assert!(!gpslock.value.to_string().contains("lat"));
+        assert!(!gpslock.value.to_string().contains("lon"));
         assert!(rows.iter().all(|row| !row.value.to_string().contains("lac")));
         let bearer = rows.iter().find(|row| row.key == KEY_BEARER).unwrap();
         assert_eq!(bearer.value, json!("rmnet1"));
@@ -2808,6 +2843,33 @@ mod tests {
         assert_eq!(last_calllist("camp_calllist=sent elapsed_ms=12\n"), None);
         assert_eq!(
             last_calllist("camp_smscb response=yes error_raw=0 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_gpslock("camp_gpslock response=yes error_raw=0 lat=0 lon=0 len=16\n"),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_gpslock("camp_gpslock response=yes error_raw=2 lat=0 lon=0 len=16\n"),
+            None
+        );
+        assert_eq!(last_gpslock("camp_gpslock=sent elapsed_ms=12\n"), None);
+        assert_eq!(
+            last_gpslock("camp_calllist response=yes error_raw=0 count=4 len=16\n"),
+            None
+        );
+        assert_eq!(
+            last_gpslock(
+                "camp_gpslock response=yes error_raw=2 lat=0 lon=0 len=16\n\
+                 camp_gpslock response=yes error_raw=0 lat=0 lon=0 len=16\n"
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            last_gpslock(
+                "camp_gpslock response=yes error_raw=0 lat=0 lon=0 len=16\n\
+                 camp_gpslock response=yes error_raw=2 lat=0 lon=0 len=16\n"
+            ),
             None
         );
         assert_eq!(
