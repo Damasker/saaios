@@ -115,6 +115,15 @@ Status печатает `smscb=accepted`, кэш —
 `linkcrit=accepted` остаётся. `bearer=rmnet1`, `ipv4=yes`.
 Camp 564 на прежнем образе, `saai-displayd` 391 не останавливался.
 
+### 11f на этой загрузке
+
+`camp_calllist`: одна строка `error_raw=0`. Status печатает
+`calllist=accepted`, кэш — `cellular.calllist=accepted`. В
+«Наблюдениях» это «Список / дано», в строке — «список дано».
+Число вызовов не публикуется. Это принятие кадра, не служба
+звонков. `smscb=accepted` остаётся. `bearer=rmnet1`, `ipv4=yes`.
+Camp 564 на прежнем образе, `saai-displayd` 391 не останавливался.
+
 ## Сверка RFS
 
 Отдельный шаг 11j, после 11c. Не на той же установке, что новый факт.

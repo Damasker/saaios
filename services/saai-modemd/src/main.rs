@@ -297,6 +297,7 @@ fn run() -> Result<()> {
             let smsact = camp_smsact(&state, owner_running, owner_log.as_deref());
             let linkcrit = camp_linkcrit(&state, owner_running, owner_log.as_deref());
             let smscb = camp_smscb(&state, owner_running, owner_log.as_deref());
+            let calllist = camp_calllist(&state, owner_running, owner_log.as_deref());
             let sim = camp_sim(&state, owner_running, owner_log.as_deref());
             for line in status_lines(
                 &state,
@@ -341,6 +342,7 @@ fn run() -> Result<()> {
                 smsact,
                 linkcrit,
                 smscb,
+                calllist,
                 sim,
                 epoch,
                 endpoint_holder_at(Path::new("/proc")),
@@ -1037,6 +1039,7 @@ fn status_lines(
     smsact: Option<&str>,
     linkcrit: Option<&str>,
     smscb: Option<&str>,
+    calllist: Option<&str>,
     sim: Option<&str>,
     epoch: Option<u64>,
     holder: Option<&str>,
@@ -1170,6 +1173,9 @@ fn status_lines(
     if smscb == Some("accepted") {
         lines.push("smscb=accepted".to_string());
     }
+    if calllist == Some("accepted") {
+        lines.push("calllist=accepted".to_string());
+    }
     if let Some(token) = sim_word(sim) {
         lines.push(format!("sim={token}"));
     }
@@ -1265,6 +1271,14 @@ fn dns_word(token: Option<&str>) -> Option<&str> {
         Some("yes") | Some("no") => token,
         _ => None,
     }
+}
+
+fn camp_calllist(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
+    if !owner_running || state.trim() != "ONLINE" {
+        return None;
+    }
+    let facts = saai_observation::owner_fact_lines(log?);
+    saai_observation::last_calllist(&facts)
 }
 
 fn camp_smscb(state: &str, owner_running: bool, log: Option<&str>) -> Option<&'static str> {
@@ -1798,6 +1812,7 @@ mod tests {
             Some("accepted"),
             Some("accepted"),
             Some("accepted"),
+            Some("accepted"),
             Some("present"),
             Some(250),
             Some("owner"),
@@ -1850,6 +1865,7 @@ mod tests {
                 "smsact=accepted".to_string(),
                 "linkcrit=accepted".to_string(),
                 "smscb=accepted".to_string(),
+                "calllist=accepted".to_string(),
                 "sim=present".to_string(),
                 "epoch=250".to_string(),
                 "endpoint=owner".to_string(),
@@ -1866,6 +1882,7 @@ mod tests {
             &[],
             None,
             None,
+            Some("pin"),
             Some("pin"),
             Some("pin"),
             Some("pin"),
@@ -1964,6 +1981,7 @@ mod tests {
         assert!(!absent.iter().any(|line| line.starts_with("smsact=")));
         assert!(!absent.iter().any(|line| line.starts_with("linkcrit=")));
         assert!(!absent.iter().any(|line| line.starts_with("smscb=")));
+        assert!(!absent.iter().any(|line| line.starts_with("calllist=")));
         assert!(!absent.iter().any(|line| line.starts_with("sim=")));
         assert!(!absent.iter().any(|line| line.contains("pin")));
     }
@@ -3016,6 +3034,38 @@ mod tests {
                 "OFFLINE",
                 true,
                 Some("camp_smscb response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_calllist(
+                "ONLINE",
+                true,
+                Some("camp_calllist response=yes error_raw=0 count=4 len=16\n")
+            ),
+            Some("accepted")
+        );
+        assert_eq!(
+            camp_calllist(
+                "ONLINE",
+                true,
+                Some("camp_calllist response=yes error_raw=2 count=4 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_calllist(
+                "ONLINE",
+                true,
+                Some("camp_smscb response=yes error_raw=0 len=16\n")
+            ),
+            None
+        );
+        assert_eq!(
+            camp_calllist(
+                "OFFLINE",
+                true,
+                Some("camp_calllist response=yes error_raw=0 count=4 len=16\n")
             ),
             None
         );
