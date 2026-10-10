@@ -35,6 +35,9 @@ pub const KEY_DCALL_CID: &str = "cellular.dcall_cid";
 pub const KEY_DCALL_ACTIVE: &str = "cellular.dcall_active";
 pub const KEY_DCALL_PDP: &str = "cellular.dcall_pdp";
 pub const KEY_TRAFFIC: &str = "cellular.traffic";
+pub const KEY_SIGNAL: &str = "cellular.signal";
+pub const KEY_LINK_DOWN: &str = "cellular.link_down";
+pub const KEY_LINK_UP: &str = "cellular.link_up";
 pub const KEY_SETUP: &str = "cellular.setup";
 pub const KEY_PROFILE: &str = "cellular.profile";
 pub const KEY_ACTIVITY: &str = "cellular.activity";
@@ -637,6 +640,31 @@ pub fn observations_from_cellular(
             sequence,
         ));
     }
+    if log.and_then(last_signal_mask).is_some_and(|mask| mask > 0) {
+        out.push(text_observation(
+            KEY_SIGNAL,
+            "yes",
+            "camp.owner.signal",
+            observed_at,
+            sequence,
+        ));
+    }
+    if let Some(link) = log.and_then(last_link_estimate) {
+        out.push(number_observation(
+            KEY_LINK_DOWN,
+            link.down_kbps,
+            "camp.owner.linkcap",
+            observed_at,
+            sequence,
+        ));
+        out.push(number_observation(
+            KEY_LINK_UP,
+            link.up_kbps,
+            "camp.owner.linkcap",
+            observed_at,
+            sequence,
+        ));
+    }
     out
 }
 
@@ -766,6 +794,8 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut ipv6 = None;
     let mut setup = None;
     let mut dcall = None;
+    let mut signal = None;
+    let mut linkcap = None;
     let mut profile = None;
     let mut activity = None;
     let mut fastdorm = None;
@@ -831,6 +861,10 @@ pub fn owner_fact_lines(log: &str) -> String {
             setup = Some(line);
         } else if line.contains("camp_dcall response=yes ") {
             dcall = Some(line);
+        } else if line.contains("camp_ind signal ") {
+            signal = Some(line);
+        } else if line.contains("camp_ind linkcap ") {
+            linkcap = Some(line);
         } else if line.contains("camp_profile response=yes ") {
             profile = Some(line);
         } else if line.contains("camp_activity response=yes ") {
@@ -906,6 +940,8 @@ pub fn owner_fact_lines(log: &str) -> String {
         ipv6,
         setup,
         dcall,
+        signal,
+        linkcap,
         profile,
         activity,
         fastdorm,
@@ -1435,6 +1471,71 @@ pub fn last_data_call(log: &str) -> Option<DataCallList> {
         });
     }
     None
+}
+
+/// Last signal indication. The low seven presence bits only.
+/// A zero mask publishes nothing.
+pub fn last_signal_mask(log: &str) -> Option<u32> {
+    for line in log.lines().rev() {
+        let Some((_, rest)) = line.split_once("camp_ind signal ") else {
+            continue;
+        };
+        let Some((_, rest)) = rest.split_once("mask_low7=") else {
+            return None;
+        };
+        let (mask, _) = take_u32(rest)?;
+        if mask > 0x7f {
+            return None;
+        }
+        return Some(mask);
+    }
+    None
+}
+
+/// Primary link-capacity estimate in kbps. A negative word is absent.
+/// The secondary pair stays off this fact.
+pub struct LinkEstimate {
+    pub down_kbps: u32,
+    pub up_kbps: u32,
+}
+
+pub fn last_link_estimate(log: &str) -> Option<LinkEstimate> {
+    for line in log.lines().rev() {
+        let Some((_, rest)) = line.split_once("camp_ind linkcap ") else {
+            continue;
+        };
+        let Some((_, rest)) = rest.split_once("dl=") else {
+            return None;
+        };
+        let (down, rest) = take_i32(rest)?;
+        let Some((_, rest)) = rest.split_once("ul=") else {
+            return None;
+        };
+        let (up, _) = take_i32(rest)?;
+        let (Ok(down_kbps), Ok(up_kbps)) = (u32::try_from(down), u32::try_from(up)) else {
+            return None;
+        };
+        return Some(LinkEstimate { down_kbps, up_kbps });
+    }
+    None
+}
+
+fn take_i32(text: &str) -> Option<(i32, &str)> {
+    let text = text.trim_start();
+    let (negative, rest) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let (value, rest) = take_u32(rest)?;
+    if value > 2_000_000 {
+        return None;
+    }
+    let signed = if negative {
+        -(value as i32)
+    } else {
+        value as i32
+    };
+    Some((signed, rest))
 }
 
 /// `both` when a live cellular iface has moved receive and transmit.
@@ -2448,6 +2549,25 @@ mod tests {
             ),
             "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n"
         );
+        assert_eq!(last_signal_mask("camp_ind signal id=0x0906 len=206 mask_low7=4\n"), Some(4));
+        assert_eq!(last_signal_mask("camp_ind signal id=0x0906 len=206 mask_low7=0\n"), Some(0));
+        assert_eq!(last_signal_mask("camp_ind signal id=0x0906 len=206 mask_low7=128\n"), None);
+        let link = last_link_estimate(
+            "camp_ind linkcap id=0x0945 len=24 dl=41579 ul=3600 dl2=0 ul2=0\n",
+        )
+        .unwrap();
+        assert_eq!(link.down_kbps, 41579);
+        assert_eq!(link.up_kbps, 3600);
+        assert!(last_link_estimate("camp_ind linkcap id=0x0945 len=24 dl=-1 ul=3600\n").is_none());
+        assert_eq!(
+            owner_fact_lines(
+                "pad\n\
+                 camp_ind signal id=0x0906 len=206 mask_low7=4\n\
+                 camp_ind linkcap id=0x0945 len=24 dl=41579 ul=3600 dl2=0 ul2=0\n"
+            ),
+            "camp_ind signal id=0x0906 len=206 mask_low7=4\n\
+             camp_ind linkcap id=0x0945 len=24 dl=41579 ul=3600 dl2=0 ul2=0\n"
+        );
         assert_eq!(
             last_data_call("camp_dcall response=yes error_raw=0 count=0\n"),
             Some(DataCallList {
@@ -2509,6 +2629,28 @@ mod tests {
         assert_eq!(
             rows.iter().find(|row| row.key == KEY_TRAFFIC).unwrap().value,
             json!("both")
+        );
+        reading.owner_log = Some(
+            "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n\
+             camp_ind signal id=0x0906 len=206 mask_low7=4\n\
+             camp_ind linkcap id=0x0945 len=24 dl=41579 ul=3600 dl2=0 ul2=0\n"
+                .into(),
+        );
+        let with_radio = observations_from_cellular(&reading, Utc::now(), 13);
+        assert_eq!(
+            with_radio.iter().find(|row| row.key == KEY_SIGNAL).unwrap().value,
+            json!("yes")
+        );
+        assert_eq!(
+            with_radio.iter().find(|row| row.key == KEY_LINK_DOWN).unwrap().value,
+            json!(41579)
+        );
+        assert_eq!(
+            with_radio.iter().find(|row| row.key == KEY_LINK_UP).unwrap().value,
+            json!(3600)
+        );
+        reading.owner_log = Some(
+            "camp_dcall response=yes error_raw=0 count=1 cid=2 active=2 pdp=3\n".into(),
         );
         reading.ifaces = vec![sample("rmnet1", true, 0, 0)];
         let idle = observations_from_cellular(&reading, Utc::now(), 12);

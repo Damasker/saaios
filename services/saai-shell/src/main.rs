@@ -1764,6 +1764,8 @@ fn traffic_phrase(token: &str) -> Option<&'static str> {
 fn data_session_suffix(
     call: Option<saai_observation::DataCallList>,
     traffic: Option<&str>,
+    signal: Option<&str>,
+    link: Option<(u32, u32)>,
 ) -> String {
     let mut parts = Vec::new();
     if let Some(call) = call {
@@ -1776,6 +1778,13 @@ fn data_session_suffix(
     }
     if let Some(phrase) = traffic.and_then(traffic_phrase) {
         parts.push(phrase.to_string());
+    }
+    if signal == Some("yes") {
+        parts.push("сигнал есть".to_string());
+    }
+    if let Some((down, up)) = link {
+        parts.push(format!("вниз {down}"));
+        parts.push(format!("вверх {up}"));
     }
     parts.join(" · ")
 }
@@ -1798,6 +1807,16 @@ fn live_traffic_token() -> Option<&'static str> {
 
 fn read_data_call() -> Option<saai_observation::DataCallList> {
     saai_observation::last_data_call(&read_camp_owner_log()?)
+}
+
+fn read_signal_token() -> Option<&'static str> {
+    let mask = saai_observation::last_signal_mask(&read_camp_owner_log()?)?;
+    (mask > 0).then_some("yes")
+}
+
+fn read_link_estimate() -> Option<(u32, u32)> {
+    let link = saai_observation::last_link_estimate(&read_camp_owner_log()?)?;
+    Some((link.down_kbps, link.up_kbps))
 }
 
 fn read_radio_token() -> Option<String> {
@@ -2122,6 +2141,8 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
     let suffix = data_session_suffix(
         camp_log_is_current().then(read_data_call).flatten(),
         live_traffic_token(),
+        camp_log_is_current().then(read_signal_token).flatten(),
+        camp_log_is_current().then(read_link_estimate).flatten(),
     );
     if suffix.is_empty() {
         base
@@ -7131,6 +7152,9 @@ fn observation_row_label(key: &str) -> String {
         "cellular.dcall_active" => "Флаг канала".into(),
         "cellular.dcall_pdp" => "Тип канала".into(),
         "cellular.traffic" => "Трафик".into(),
+        "cellular.signal" => "Сигнал".into(),
+        "cellular.link_down" => "Вниз".into(),
+        "cellular.link_up" => "Вверх".into(),
         "cellular.setup" => "Сессия".into(),
         "cellular.profile" => "Профиль".into(),
         "cellular.activity" => "Активность".into(),
@@ -7214,7 +7238,7 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.initial_attach" {
         return initial_attach_phrase(value.as_str()?.trim()).map(str::to_string);
     }
-    if key == "cellular.dns" || key == "cellular.dns6" || key == "cellular.ipv4" || key == "cellular.ipv6" {
+    if key == "cellular.dns" || key == "cellular.dns6" || key == "cellular.ipv4" || key == "cellular.ipv6" || key == "cellular.signal" {
         return dns_phrase(value.as_str()?.trim()).map(str::to_string);
     }
     if key == "cellular.traffic" {
@@ -15615,9 +15639,14 @@ mod tests {
                 pdp: Some(3),
             }),
             Some("both"),
+            Some("yes"),
+            Some((41579, 3600)),
         );
-        assert_eq!(text, "список 1 · cid 2 · active 2 · pdp 3 · трафик");
-        assert_eq!(super::data_session_suffix(None, None), "");
+        assert_eq!(
+            text,
+            "список 1 · cid 2 · active 2 · pdp 3 · трафик · сигнал есть · вниз 41579 · вверх 3600"
+        );
+        assert_eq!(super::data_session_suffix(None, None, None, None), "");
         assert_eq!(super::traffic_phrase("both"), Some("трафик"));
         assert_eq!(super::traffic_phrase("out"), Some("только исходящий"));
         assert_eq!(super::traffic_phrase("nope"), None);
