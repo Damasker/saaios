@@ -27,6 +27,22 @@ impl LockWidgetPolicy {
         }
     }
 
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hidden => "Скрыты",
+            Self::Device => "Только устройство",
+            Self::Summary => "Сводка",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Summary => Self::Hidden,
+            Self::Hidden => Self::Device,
+            Self::Device => Self::Summary,
+        }
+    }
+
     pub fn project(
         self,
         sleeping: bool,
@@ -76,6 +92,16 @@ mod tests {
                 LockWidgetPolicy::Hidden
             );
         }
+    }
+
+    #[test]
+    fn cycle_visits_every_policy_once() {
+        assert_eq!(LockWidgetPolicy::Summary.next(), LockWidgetPolicy::Hidden);
+        assert_eq!(LockWidgetPolicy::Hidden.next(), LockWidgetPolicy::Device);
+        assert_eq!(LockWidgetPolicy::Device.next(), LockWidgetPolicy::Summary);
+        assert_eq!(LockWidgetPolicy::Summary.label(), "Сводка");
+        assert_eq!(LockWidgetPolicy::Hidden.label(), "Скрыты");
+        assert_eq!(LockWidgetPolicy::Device.label(), "Только устройство");
     }
 
     #[test]

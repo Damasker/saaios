@@ -28,11 +28,14 @@ omits widget. Host success moves to Verify, not Done.
 
 ## Sprint LW-02 — owner controls and physical acceptance
 
-Status: Backlog. Add an unlocked System settings selector, immediate policy
-re-evaluation and persistence tests. Test actual Pixel typography at 100/150%,
-wake/unlock, settings restart, cold reboot, both render paths where available,
-and rollback during a coordinated device-testing window. No PIN enrollment
-is required or authorized by this plan. Record binary hash and owner feedback.
+Status: Host selector done (ADR-494). Physical acceptance pending.
+Unlocked Система cycles `lock_widgets` (Сводка → Скрыты → Только
+устройство). Persist and re-evaluation use the existing settings
+file and lock projection. Test actual Pixel typography at 100/150%,
+wake/unlock, settings restart, cold reboot, both render paths where
+available, and rollback during a coordinated device-testing window.
+No PIN enrollment is required or authorized by this plan. Record
+binary hash and owner feedback.
 
 ## Sprint LW-03 — extensibility only after policy review
 
@@ -65,8 +68,9 @@ reload or full notification content. Host verification recorded with code.
 `cargo clippy -p saai-shell --all-targets` exits successfully with warnings
 (not a warning-free workspace). Targeted rustfmt check passes. Shared
 projection is used before both render backends and before refresh keys.
-`lock_widgets` is saved in existing shell settings and read on startup;
-no owner-facing selector yet. The default deliberately preserves appearance.
+`lock_widgets` is saved in existing shell settings and read on startup.
+ADR-494 adds the unlocked Система cycle row. The default remains
+`summary` so appearance is unchanged until the owner cycles.
 Documentation commit: `0c0a47d`. No phone binaries or settings changed.
 `cargo check -p saai-shell --target aarch64-unknown-linux-musl` passes
 with warnings. This checks the target code, not final linking, an installable

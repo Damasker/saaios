@@ -8760,6 +8760,7 @@ struct MeFacts {
     cellular_open: Option<String>,
     camera_nodes: Vec<String>,
     pin_set: bool,
+    lock_widgets_label: String,
     text_scale_pct: u8,
     contrast_pct: u8,
     remote_access: bool,
@@ -8947,7 +8948,15 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         ),
         me_section_data(
             "Приватность",
-            vec![SettingRow::open("PIN-код", pin_status, "open_pin_setup").row],
+            vec![
+                SettingRow::open("PIN-код", pin_status, "open_pin_setup").row,
+                SettingRow::cycle(
+                    "Виджеты блокировки",
+                    facts.lock_widgets_label.to_string(),
+                    "cycle_lock_widgets",
+                )
+                .row,
+            ],
         ),
         me_section_data(
             "Пространство",
@@ -9023,6 +9032,7 @@ fn intern_me_action(action: Option<&str>) -> Option<&'static str> {
         Some("open_wifi_list") => Some("open_wifi_list"),
         Some("open_bluetooth_list") => Some("open_bluetooth_list"),
         Some("open_pin_setup") => Some("open_pin_setup"),
+        Some("cycle_lock_widgets") => Some("cycle_lock_widgets"),
         Some("cycle_text_scale") => Some("cycle_text_scale"),
         Some("cycle_contrast") => Some("cycle_contrast"),
         Some("toggle_remote_access") => Some("toggle_remote_access"),
@@ -9508,6 +9518,7 @@ fn me_fixture_facts() -> MeFacts {
         cellular_open: None,
         camera_nodes: Vec::new(),
         pin_set: false,
+        lock_widgets_label: lock_widgets::LockWidgetPolicy::default().label().into(),
         text_scale_pct: 100,
         contrast_pct: 0,
         remote_access: false,
@@ -13135,6 +13146,9 @@ impl Shell {
                 self.settings.utc_offset_minutes =
                     next_in_cycle(&TIMEZONE_PRESETS_MINUTES, self.settings.utc_offset_minutes);
             }
+            "cycle_lock_widgets" => {
+                self.settings.lock_widgets = self.settings.lock_widgets.next();
+            }
             "cycle_volume" => {
                 self.settings.volume_pct =
                     next_in_cycle(&VOLUME_LEVELS_PCT, self.settings.volume_pct);
@@ -14020,6 +14034,7 @@ impl Shell {
             ),
             camera_nodes: capture_nodes(),
             pin_set: self.settings.pin_code.is_some(),
+            lock_widgets_label: self.settings.lock_widgets.label().to_string(),
             text_scale_pct: self.settings.text_scale_pct,
             contrast_pct: self.settings.contrast_pct,
             remote_access: self.settings.remote_access_enabled,
@@ -24028,6 +24043,12 @@ mod tests {
         assert!(!rows
             .iter()
             .any(|row| row.card.status.contains("попыток загрузки")));
+        let lock_widgets = rows
+            .iter()
+            .find(|row| row.dispatch == Some("cycle_lock_widgets"))
+            .expect("lock widget policy cycle");
+        assert_eq!(lock_widgets.card.label, "Виджеты блокировки");
+        assert_eq!(lock_widgets.card.status, "Сводка");
         assert!(rows
             .iter()
             .any(|row| row.dispatch == Some("toggle_reduced_motion")));

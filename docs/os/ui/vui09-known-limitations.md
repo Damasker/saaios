@@ -96,7 +96,8 @@ pinned Назад (ADR-489). Object View hides workers/queue
 without an Action (ADR-490). Search overflow results scroll
 above the tab strip (ADR-491). Inbox overflow EventRows scroll
 above the tab strip (ADR-492). Space switcher overflow scrolls
-above the tab strip (ADR-493). Public
+above the tab strip (ADR-493). Система
+cycles lock widget disclosure (ADR-494). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`

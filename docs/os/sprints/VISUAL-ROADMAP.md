@@ -1611,7 +1611,8 @@ After each completed task group, report:
 ## Next action
 
 VUI-09 concept-board chrome is open (ADR-470). Space switcher
-overflow scrolls above the tab strip (ADR-493). Keyboard keys,
+overflow scrolls above the tab strip (ADR-493). LW-02 host
+selector cycles lock widgets (ADR-494). Keyboard keys,
 gallery page, and lock idle/wake stay formulas until a board
 names them. Public subset stays Experimental. Acceptance stays
 unchecked until panther evidence. Do not fake weather / voice /
