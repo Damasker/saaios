@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–460; production `compile_v2()`; named chrome paint from `layout_v2`; leftover unused chrome closed; public Search hits, list/overlay headers, and compose-without-Keyboard host-locked; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–469; production `compile_v2()`; named chrome paint from `layout_v2`; leftover unused chrome closed; public Search hits, list/overlay/NOW headers, compose-without-Keyboard, privileged/deferred/unknown rejects, public summaries/primitives, public examples omit privileged chrome, and NOW empty Fill leftover host-locked; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
 
 ---
 
@@ -1212,7 +1212,16 @@ leftover named chrome closed (ADR-456);
 public Search hits host-locked (ADR-457);
 public list headers host-locked (ADR-458);
 public compose omits `Keyboard` (ADR-459);
-public overlay headers host-locked (ADR-460).
+public overlay headers host-locked (ADR-460);
+public NOW header is not list stacked top (ADR-461);
+public subset rejects remaining privileged names (ADR-462);
+public subset rejects deferred names (ADR-463);
+public summaries dock stacked rows (ADR-464);
+public primitives dock stacked rows (ADR-465);
+public paint primitives are not stacked rows (ADR-466);
+public examples omit privileged chrome (ADR-467);
+public subset rejects unknown names (ADR-468);
+public NOW empty stays Fill leftover (ADR-469).
 Release
 gate remains. Not Visual v1 sign-off.
 
@@ -1402,6 +1411,35 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Host-lock public overlay headers (ADR-460). Consent /
   remote-pair match Inbox stacked top. Status invents no heading
   hit. Still Experimental. Not Visual v1 sign-off.
+- [x] Host-lock public NOW header (ADR-461). Heading is NOW
+  height, not Inbox stacked top. `open_object` stays on
+  `ObjectSummary`. Still Experimental. Not Visual v1 sign-off.
+- [x] Host-lock remaining privileged rejects (ADR-462).
+  `compile_v2_public` rejects `DecisionOverlay`, `SystemStatus`,
+  and `gallery`. Do not 7-tap. Still Experimental. Not Visual v1
+  sign-off.
+- [x] Host-lock deferred rejects (ADR-463). `compile_v2_public`
+  rejects `SpaceDetail`, `MemoryReview`, `ChatThread`, and
+  `Widget`. Still Experimental. Not Visual v1 sign-off.
+- [x] Dock public `IntentSummary` / `TaskSummary` / `AgentSummary`
+  on `stacked_row_rect` (ADR-464). Status invents no action.
+  Still Experimental. Not Visual v1 sign-off.
+- [x] Dock public `Metric` / `Disclosure` / `StatusIndicator` /
+  `Progress` on `stacked_row_rect` (ADR-465). Status invents no
+  action. Still Experimental. Not Visual v1 sign-off.
+- [x] Host-lock public paint primitives (ADR-466). `SemanticText` /
+  `Icon` / `Divider` are not stacked rows. Status invents no
+  action. Still Experimental. Not Visual v1 sign-off.
+- [x] Host-lock public examples omit privileged chrome (ADR-467).
+  Fourteen `*-public.sui` omit `OrbHost` / lock / gallery.
+  Still Experimental. Not Visual v1 sign-off.
+- [x] Host-lock unknown-name public rejects (ADR-468).
+  `compile_v2_public` rejects `WidgetCard` and surface `home`.
+  Still Experimental. Not Visual v1 sign-off.
+- [x] Host-lock public NOW empty geometry (ADR-469). `now.empty`
+  stays Fill leftover behind `ObjectSummary`, not stacked row 0.
+  Status invents no action. Still Experimental. Not Visual v1
+  sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1514,9 +1552,12 @@ After each completed task group, report:
 ## Next action
 
 VUI-09 host release gate remains: leftover named chrome is closed
-(ADR-456); public Search hits, list/overlay headers, and
-compose-without-Keyboard are host-locked (ADR-457–460); public
-subset stays Experimental (ADR-185/265/427–460); leftover formulas
-stay Keyboard keys, gallery page, lock idle/wake (ADR-232); do not
-promote Stable; do not flash for sign-off. Space detail still
-deferred. MEM-08 stays omitted. Thin tuning stays last (ADR-213).
+(ADR-456); public Search hits, list/overlay/NOW headers,
+compose-without-Keyboard, privileged/deferred/unknown rejects,
+public summaries/primitives, public examples omit privileged
+chrome, and NOW empty Fill leftover are host-locked
+(ADR-457–469); public subset stays Experimental
+(ADR-185/265/427–469); leftover formulas stay Keyboard keys,
+gallery page, lock idle/wake (ADR-232); do not promote Stable; do
+not flash for sign-off. Space detail still deferred. MEM-08 stays
+omitted. Thin tuning stays last (ADR-213).

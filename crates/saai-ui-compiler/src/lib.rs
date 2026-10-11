@@ -622,7 +622,10 @@ fn error(offset: usize, message: impl Into<String>) -> CompileError {
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, compile_v2, compile_v2_public, sui_v2_stability, SuiV2Stability};
+    use super::{
+        compile, compile_v2, compile_v2_public, sui_v2_is_privileged, sui_v2_privileged,
+        sui_v2_stability, SuiV2Stability,
+    };
 
     const VALID: &str = r#"
         sui 1
@@ -1197,6 +1200,241 @@ mod tests {
         }
         for name in saai_ui_core::privileged_gallery_type_names() {
             assert_eq!(sui_v2_stability(name), Some(SuiV2Stability::Privileged));
+        }
+    }
+
+    #[test]
+    fn compile_v2_public_rejects_remaining_privileged_names() {
+        let object = include_str!("../../../docs/os/ui/examples/object-public.sui");
+        assert!(!object.contains("DecisionOverlay"));
+        let overlay = compile_v2_public(
+            r#"
+            sui 2
+            screen object {
+              component ContextHeader {}
+              component DecisionOverlay {}
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(overlay
+            .to_string()
+            .contains("privileged SUI v2 component `DecisionOverlay`"));
+        let status = compile_v2_public(
+            r#"
+            sui 2
+            screen now {
+              component SystemStatus {}
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(status
+            .to_string()
+            .contains("privileged SUI v2 component `SystemStatus`"));
+        let gallery = compile_v2_public(
+            r#"
+            sui 2
+            screen gallery {
+              component ContextHeader {}
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(gallery
+            .to_string()
+            .contains("privileged SUI v2 surface `gallery`"));
+        assert!(compile_v2(
+            r#"
+            sui 2
+            screen object {
+              component ContextHeader {}
+              component DecisionOverlay {}
+            }
+            "#,
+        )
+        .unwrap()
+        .is_privileged());
+    }
+
+    #[test]
+    fn compile_v2_public_rejects_deferred_names() {
+        for name in ["SpaceDetail", "MemoryReview", "ChatThread", "Widget"] {
+            let error = compile_v2_public(&format!(
+                "sui 2\nscreen now {{\n  component {name} {{}}\n}}\n"
+            ))
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("deferred SUI v2 name `{name}`")),
+                "{name}: {error}"
+            );
+            assert_eq!(
+                sui_v2_stability(name),
+                Some(SuiV2Stability::Deferred),
+                "{name}"
+            );
+        }
+        for (label, source) in [
+            (
+                "now",
+                include_str!("../../../docs/os/ui/examples/now-public.sui"),
+            ),
+            (
+                "spaces",
+                include_str!("../../../docs/os/ui/examples/spaces-public.sui"),
+            ),
+            (
+                "object",
+                include_str!("../../../docs/os/ui/examples/object-public.sui"),
+            ),
+        ] {
+            assert!(!source.contains("SpaceDetail"), "{label}");
+            assert!(!source.contains("MemoryReview"), "{label}");
+            assert!(!source.contains("ChatThread"), "{label}");
+            assert!(!source.contains("Widget"), "{label}");
+        }
+    }
+
+    #[test]
+    fn compile_v2_public_rejects_unknown_names() {
+        let component = compile_v2_public(
+            r#"
+            sui 2
+            screen now {
+              component WidgetCard {}
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(component
+            .to_string()
+            .contains("unknown SUI v2 component `WidgetCard`"));
+        assert_eq!(sui_v2_stability("WidgetCard"), None);
+        let surface = compile_v2_public(
+            r#"
+            sui 2
+            screen home {
+              component ContextHeader {}
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(surface
+            .to_string()
+            .contains("unknown SUI v2 surface `home`"));
+        assert_eq!(sui_v2_stability("home"), None);
+        for (label, source) in [
+            (
+                "now",
+                include_str!("../../../docs/os/ui/examples/now-public.sui"),
+            ),
+            (
+                "spaces",
+                include_str!("../../../docs/os/ui/examples/spaces-public.sui"),
+            ),
+            (
+                "object",
+                include_str!("../../../docs/os/ui/examples/object-public.sui"),
+            ),
+        ] {
+            assert!(!source.contains("WidgetCard"), "{label}");
+            assert!(!source.contains("screen home"), "{label}");
+        }
+    }
+
+    #[test]
+    fn compile_v2_public_examples_omit_privileged_names() {
+        let examples = [
+            (
+                "now",
+                include_str!("../../../docs/os/ui/examples/now-public.sui"),
+            ),
+            (
+                "search",
+                include_str!("../../../docs/os/ui/examples/search-public.sui"),
+            ),
+            (
+                "inbox",
+                include_str!("../../../docs/os/ui/examples/inbox-public.sui"),
+            ),
+            (
+                "object",
+                include_str!("../../../docs/os/ui/examples/object-public.sui"),
+            ),
+            (
+                "consent",
+                include_str!("../../../docs/os/ui/examples/consent-public.sui"),
+            ),
+            (
+                "remote-pair",
+                include_str!("../../../docs/os/ui/examples/remote-pair-public.sui"),
+            ),
+            (
+                "intent",
+                include_str!("../../../docs/os/ui/examples/intent-public.sui"),
+            ),
+            (
+                "apps",
+                include_str!("../../../docs/os/ui/examples/apps-public.sui"),
+            ),
+            (
+                "wifi-password",
+                include_str!("../../../docs/os/ui/examples/wifi-password-public.sui"),
+            ),
+            (
+                "pin-setup",
+                include_str!("../../../docs/os/ui/examples/pin-setup-public.sui"),
+            ),
+            (
+                "spaces",
+                include_str!("../../../docs/os/ui/examples/spaces-public.sui"),
+            ),
+            (
+                "me",
+                include_str!("../../../docs/os/ui/examples/me-public.sui"),
+            ),
+            (
+                "wifi",
+                include_str!("../../../docs/os/ui/examples/wifi-public.sui"),
+            ),
+            (
+                "bluetooth",
+                include_str!("../../../docs/os/ui/examples/bluetooth-public.sui"),
+            ),
+        ];
+        assert_eq!(examples.len(), 14);
+        for (label, source) in examples {
+            let screen = compile_v2_public(source).unwrap_or_else(|error| {
+                panic!("{label} must compile public: {error}");
+            });
+            assert!(!screen.is_privileged(), "{label}");
+            assert!(
+                !sui_v2_is_privileged(&screen.id),
+                "{label} surface `{}`",
+                screen.id
+            );
+            for component in &screen.components {
+                assert!(
+                    !sui_v2_is_privileged(&component.type_name),
+                    "{label} component `{}`",
+                    component.type_name
+                );
+            }
+            for name in sui_v2_privileged() {
+                if *name == "lock" || *name == "diagnostic" || *name == "gallery" {
+                    assert!(
+                        !source.contains(&format!("screen {name}")),
+                        "{label} names privileged surface `{name}`"
+                    );
+                } else {
+                    assert!(
+                        !source.contains(name),
+                        "{label} names privileged `{name}`"
+                    );
+                }
+            }
         }
     }
 

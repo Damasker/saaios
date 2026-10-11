@@ -231,6 +231,15 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 public list headers | Search/Spaces/Me/Wi-Fi/Bluetooth `ContextHeader` matches Inbox stacked top **host** (ADR-458; Experimental; leave Сейчас) |
 | VUI-09 public compose Keyboard | intent/wifi-password/pin-setup omit `Keyboard` **host** (ADR-459; Experimental; leave Сейчас) |
 | VUI-09 public overlay headers | consent/remote-pair `ContextHeader` matches Inbox stacked top **host** (ADR-460; Experimental; leave Сейчас) |
+| VUI-09 public NOW header | `now-public.sui` heading is NOW height, not Inbox stacked top **host** (ADR-461; Experimental; leave Сейчас) |
+| VUI-09 public privileged reject | `compile_v2_public` rejects `DecisionOverlay` / `SystemStatus` / `gallery` **host** (ADR-462; Experimental; do not 7-tap; leave Сейчас) |
+| VUI-09 public deferred reject | `compile_v2_public` rejects `SpaceDetail` / `MemoryReview` / `ChatThread` / `Widget` **host** (ADR-463; Experimental; leave Сейчас) |
+| VUI-09 public summaries | `IntentSummary` / `TaskSummary` / `AgentSummary` dock `stacked_row_rect` **host** (ADR-464; Experimental; leave Сейчас) |
+| VUI-09 public primitives | `Metric` / `Disclosure` / `StatusIndicator` / `Progress` dock `stacked_row_rect` **host** (ADR-465; Experimental; leave Сейчас) |
+| VUI-09 public paint primitives | `SemanticText` / `Icon` / `Divider` are not stacked rows **host** (ADR-466; Experimental; leave Сейчас) |
+| VUI-09 public examples omit privileged | fourteen `*-public.sui` omit `OrbHost` / lock / gallery **host** (ADR-467; Experimental; leave Сейчас) |
+| VUI-09 public unknown reject | `compile_v2_public` rejects `WidgetCard` / surface `home` **host** (ADR-468; Experimental; leave Сейчас) |
+| VUI-09 public NOW empty | `now.empty` stays Fill leftover, not stacked row **host** (ADR-469; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

@@ -32,11 +32,19 @@ sample: `ContextHeader`, `ObjectSummary`, `SurfacePattern`,
 `BottomNavigation` with nested `tab now/spaces/search/me` (ADR-240),
 and nested `row apps` / `row intent` (ADR-199). It matches the live
 Сейчас composition (header, object, empty pattern, footer, tabs)
-without leftover v1 NOW cards and without `OrbHost`. Empty
+without leftover v1 NOW cards and without `OrbHost`. The heading
+is `(49, 0, 982, 263)`, not Inbox stacked top (ADR-461). Empty
 `BottomNavigation` invents no v1 hits. Empty screens invent no
 footer hits. A screen without `ObjectSummary` invents no object
 hit (ADR-200). The empty `SurfacePattern` is loc `now.empty`
-(ADR-438); Status invents no action.
+(ADR-438); it stays Fill leftover behind `ObjectSummary`, not
+stacked row 0 (ADR-469). Status invents no action. Public `Metric` /
+`Disclosure` / `StatusIndicator` / `Progress` dock on
+`stacked_row_rect` (ADR-465). `SemanticText` / `Icon` / `Divider`
+are not stacked rows (ADR-466). Status invents no action. This
+example does not name them. All fourteen `*-public.sui` samples
+omit privileged chrome (ADR-467). `WidgetCard` and surface `home`
+fail as unknown (ADR-468).
 
 [`examples/search-public.sui`](examples/search-public.sui) is the
 labelled Search sample: `ContextHeader`, `DataRow` with
@@ -58,7 +66,9 @@ a Status `SurfacePattern` (ADR-430). No nested tabs. Status
 invents no `open_object` and no action Buttons. `layout_v2` docks
 the summary at `(49, 140, 982, 144)`, the fact row at `y=284`,
 and permission below that, all with the `width/22` margin
-(ADR-436).
+(ADR-436). Public `IntentSummary` / `TaskSummary` / `AgentSummary`
+dock on `stacked_row_rect` (ADR-464). Status invents no action.
+This example does not name them.
 
 [`examples/consent-public.sui`](examples/consent-public.sui) is the
 labelled consent sample: `ContextHeader`, Status `DataRow`s for the
@@ -144,7 +154,8 @@ does not invent a second palette or a second layout engine.
 `saai-ui-core::public_gallery_type_names()` lists public fixture types.
 `privileged_gallery_type_names()` is `DecisionOverlay` and
 `TrustedClientRow`. The device gallery may show privileged rows for
-review. Copying them into an app document fails `compile_v2_public()`.
+review. Copying `DecisionOverlay`, `SystemStatus`, or `gallery`
+into an app document fails `compile_v2_public()` (ADR-462).
 
 ## Deprecation
 
@@ -203,6 +214,15 @@ review. Copying them into an app document fails `compile_v2_public()`.
   Public list headers match Inbox stacked top (ADR-458).
   Public compose omits `Keyboard` (ADR-459).
   Public overlay headers match Inbox stacked top (ADR-460).
+  Public NOW header is not list stacked top (ADR-461).
+  Public subset rejects remaining privileged names (ADR-462).
+  Public subset rejects deferred names (ADR-463).
+  Public summaries dock stacked rows (ADR-464).
+  Public primitives dock stacked rows (ADR-465).
+  Public paint primitives are not stacked rows (ADR-466).
+  Public examples omit privileged chrome (ADR-467).
+  Public subset rejects unknown names (ADR-468).
+  Public NOW empty stays Fill leftover (ADR-469).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.
@@ -258,6 +278,7 @@ review. Copying them into an app document fails `compile_v2_public()`.
 | `CapabilityRow` in a public document | compile error; privileged |
 | Wanting a Field-bound IME | privileged `Keyboard`; not a public app API |
 | `Keyboard` in a public document | compile error; privileged |
+| `WidgetCard` / surface `home` in a public document | compile error; unknown (ADR-468) |
 
 Space detail, Memory review, chat, and widgets stay deferred.
 Known limitations: [`vui09-known-limitations.md`](vui09-known-limitations.md).

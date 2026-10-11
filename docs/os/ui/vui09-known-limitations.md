@@ -65,6 +65,15 @@ Search hits are host-locked (ADR-457). Public
 list headers match Inbox stacked top (ADR-458). Public
 compose omits `Keyboard` (ADR-459). Public
 overlay headers match Inbox stacked top (ADR-460). Public
+NOW header is not list stacked top (ADR-461). Public
+subset rejects remaining privileged names (ADR-462). Public
+subset rejects deferred names (ADR-463). Public
+summaries dock stacked rows (ADR-464). Public
+primitives dock stacked rows (ADR-465). Public
+paint primitives are not stacked rows (ADR-466). Public
+examples omit privileged chrome (ADR-467). Public
+subset rejects unknown names (ADR-468). Public
+NOW empty stays Fill leftover (ADR-469). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`
@@ -135,8 +144,11 @@ ADR-211. 7-tap gallery is ADR-212.
 ## Deferred surfaces
 
 `SpaceDetail`, `MemoryReview`, `ChatThread`, and `Widget` stay outside
-the `.sui` v2 vocabulary. Widgets may show time and charge only when a
-later sprint names a legal consumer; they are not NOW chrome.
+the `.sui` v2 vocabulary. `compile_v2_public` rejects them (ADR-463).
+`WidgetCard` and surface `home` stay unknown, not deferred
+(ADR-468).
+Widgets may show time and charge only when a later sprint names a
+legal consumer; they are not NOW chrome.
 
 ## Visual v2 backlog
 

@@ -65,6 +65,8 @@
 //! invents no tile.
 //! ADR-438: NOW empty `SurfacePattern` keeps loc `now.empty`. Status
 //! invents no action.
+//! ADR-469: public NOW empty stays Fill leftover behind
+//! `ObjectSummary`. It is not stacked row 0. Status invents no action.
 //! ADR-439: wifi-password compose uses its own surface, not `intent`.
 //! pin-setup stays its own surface. Keyboard keys stay a formula.
 
@@ -696,8 +698,18 @@ fn v2_lock_field_node(
 }
 
 fn v2_stacked_action(row: &crate::SuiV2Component) -> Option<String> {
-    if matches!(row.type_name.as_str(), "SystemSection" | "CapabilityRow")
-        || row.props.a11y.as_deref() != Some("Button")
+    if matches!(
+        row.type_name.as_str(),
+        "SystemSection"
+            | "CapabilityRow"
+            | "IntentSummary"
+            | "TaskSummary"
+            | "AgentSummary"
+            | "Metric"
+            | "Disclosure"
+            | "StatusIndicator"
+            | "Progress"
+    ) || row.props.a11y.as_deref() != Some("Button")
     {
         return None;
     }
@@ -742,7 +754,9 @@ fn v2_content_node(
             "Keyboard" => keyboards.push(component),
             "OrbHost" => orbs.push(component),
             "EventRow" | "SpaceRow" | "SettingRow" | "DataRow" | "SystemSection" | "WifiRow"
-            | "BluetoothRow" | "TrustedClientRow" | "CapabilityRow" => stacked.push(component),
+            | "BluetoothRow" | "TrustedClientRow" | "CapabilityRow" | "IntentSummary"
+            | "TaskSummary" | "AgentSummary" | "Metric" | "Disclosure" | "StatusIndicator"
+            | "Progress" => stacked.push(component),
             _ if v2_is_grid_button(component) => grid.push(component),
             _ if v2_is_orb_menu_button(component) => orb_menus.push(component),
             _ if v2_is_overlay_button(component) => overlay_buttons.push(component),
@@ -1144,6 +1158,45 @@ mod tests {
         assert_eq!(object.rect.y, 263);
         assert_eq!(object.rect.height, 144);
         assert!(v2.hit_test(540.0, 525.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_public_now_header_is_not_list_stacked_top() {
+        let source = include_str!("../../../docs/os/ui/examples/now-public.sui");
+        let screen = compile_v2_public(source).expect("public NOW");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        let object = layout_v1_find(&tree, "ObjectSummary").expect("object");
+        assert_eq!(header.rect, saai_ui_core::Rect::new(49, 0, 982, 263));
+        assert_eq!(object.rect.y, header.rect.height);
+        assert_ne!(header.rect, saai_ui_core::Rect::new(49, 0, 982, 430));
+        assert!(header.action.is_none());
+        assert!(tree.hit_test(540.0, 250.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_public_now_empty_is_fill_leftover_not_stacked_row() {
+        let source = include_str!("../../../docs/os/ui/examples/now-public.sui");
+        let screen = compile_v2_public(source).expect("public NOW");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        let object = layout_v1_find(&tree, "ObjectSummary").expect("object");
+        let empty = layout_v1_find(&tree, "now.empty").expect("now.empty");
+        let stacked = saai_ui_core::Rect::new(49, 430, 982, 190);
+        assert_eq!(empty.rect.x, header.rect.x);
+        assert_eq!(empty.rect.y, header.rect.y);
+        assert!(empty.rect.height > object.rect.y + object.rect.height);
+        assert_ne!(empty.rect, stacked);
+        assert_ne!(empty.rect, object.rect);
+        assert!(empty.action.is_none());
+        assert_eq!(
+            tree.hit_test(540.0, 335.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("open_object")
+        );
+        assert!(tree.hit_test(540.0, 525.0).is_none());
     }
 
     #[test]
@@ -1762,6 +1815,162 @@ mod tests {
             assert!(header.action.is_none(), "{name}");
             assert!(tree.hit_test(540.0, 250.0).is_none(), "{name}");
         }
+    }
+
+    #[test]
+    fn layout_v2_public_summaries_match_stacked_row() {
+        let source = r#"
+            sui 2
+            screen object {
+              component ContextHeader {}
+              component IntentSummary {
+                a11y = Status
+                loc = object.intent
+              }
+              component TaskSummary {
+                a11y = Status
+                loc = object.task
+              }
+              component AgentSummary {
+                a11y = Status
+                loc = object.agent
+              }
+            }
+        "#;
+        let screen = compile_v2_public(source).expect("public summaries");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        assert_eq!(header.rect, saai_ui_core::Rect::new(49, 0, 982, 430));
+        assert!(header.action.is_none());
+        let intent = layout_v1_find(&tree, "object.intent").expect("intent");
+        assert_eq!(intent.rect, saai_ui_core::Rect::new(49, 430, 982, 190));
+        assert!(intent.action.is_none());
+        let task = layout_v1_find(&tree, "object.task").expect("task");
+        assert_eq!(task.rect.y, 650);
+        assert!(task.action.is_none());
+        let agent = layout_v1_find(&tree, "object.agent").expect("agent");
+        assert_eq!(agent.rect.y, 870);
+        assert!(agent.action.is_none());
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert!(tree.hit_test(540.0, 745.0).is_none());
+        assert!(tree.hit_test(540.0, 965.0).is_none());
+        let pushed = compile_v2_public(
+            r#"
+            sui 2
+            screen object {
+              component ContextHeader {}
+              component IntentSummary {
+                a11y = Button
+                loc = object.intent
+              }
+            }
+            "#,
+        )
+        .expect("button summary");
+        let pushed_tree = layout_v2(&pushed, 1080, 2400);
+        assert!(pushed_tree.hit_test(540.0, 525.0).is_none());
+        assert!(layout_v1_find(&pushed_tree, "object.intent")
+            .expect("intent")
+            .action
+            .is_none());
+    }
+
+    #[test]
+    fn layout_v2_public_primitives_match_stacked_row() {
+        let source = r#"
+            sui 2
+            screen now {
+              component ContextHeader {}
+              component Metric {
+                a11y = Status
+                loc = now.metric
+              }
+              component Disclosure {
+                a11y = Status
+                loc = now.disclosure
+              }
+              component StatusIndicator {
+                a11y = Status
+                loc = now.status
+              }
+              component Progress {
+                a11y = Status
+                loc = now.progress
+              }
+              component BottomNavigation {
+                tab now {}
+                tab spaces {}
+                tab search {}
+                tab me {}
+              }
+            }
+        "#;
+        let screen = compile_v2_public(source).expect("public primitives");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        assert_eq!(header.rect, saai_ui_core::Rect::new(49, 0, 982, 430));
+        assert!(header.action.is_none());
+        let metric = layout_v1_find(&tree, "now.metric").expect("metric");
+        assert_eq!(metric.rect, saai_ui_core::Rect::new(49, 430, 982, 190));
+        assert!(metric.action.is_none());
+        let disclosure = layout_v1_find(&tree, "now.disclosure").expect("disclosure");
+        assert_eq!(disclosure.rect.y, 650);
+        assert!(disclosure.action.is_none());
+        let status = layout_v1_find(&tree, "now.status").expect("status");
+        assert_eq!(status.rect.y, 870);
+        assert!(status.action.is_none());
+        let progress = layout_v1_find(&tree, "now.progress").expect("progress");
+        assert_eq!(progress.rect.y, 1090);
+        assert!(progress.action.is_none());
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert_eq!(
+            tree.hit_test(135.0, 2250.0).map(|node| node.id.as_str()),
+            Some("now")
+        );
+    }
+
+    #[test]
+    fn layout_v2_public_paint_primitives_are_not_stacked_rows() {
+        let source = r#"
+            sui 2
+            screen now {
+              component ContextHeader {}
+              component SemanticText {
+                a11y = Status
+                loc = now.text
+              }
+              component Icon {
+                a11y = Status
+                loc = now.icon
+              }
+              component Divider {
+                a11y = Status
+                loc = now.divider
+              }
+              component BottomNavigation {
+                tab now {}
+                tab spaces {}
+                tab search {}
+                tab me {}
+              }
+            }
+        "#;
+        let screen = compile_v2_public(source).expect("public paint primitives");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let stacked = saai_ui_core::Rect::new(49, 430, 982, 190);
+        for id in ["now.text", "now.icon", "now.divider"] {
+            let node = layout_v1_find(&tree, id).unwrap_or_else(|| panic!("{id}"));
+            assert_ne!(node.rect, stacked, "{id}");
+            assert!(node.action.is_none(), "{id}");
+        }
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert_eq!(
+            tree.hit_test(135.0, 2250.0).map(|node| node.id.as_str()),
+            Some("now")
+        );
     }
 
     #[test]

@@ -134,6 +134,15 @@ ADR-457 public Search hits through `compile_v2_public`; Status invents no action
 ADR-458 public list headers match Inbox stacked top.
 ADR-459 public compose omits `Keyboard`; PIN setup matches Intent field margin.
 ADR-460 public overlay headers match Inbox stacked top.
+ADR-461 public NOW header is not list stacked top.
+ADR-462 public subset rejects remaining privileged names.
+ADR-463 public subset rejects deferred names.
+ADR-464 public IntentSummary / TaskSummary / AgentSummary dock stacked rows.
+ADR-465 public Metric / Disclosure / StatusIndicator / Progress dock stacked rows.
+ADR-466 public SemanticText / Icon / Divider are not stacked rows.
+ADR-467 public examples omit privileged chrome.
+ADR-468 public subset rejects unknown names.
+ADR-469 public NOW empty stays Fill leftover, not a stacked row.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.
