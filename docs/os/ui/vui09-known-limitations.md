@@ -102,7 +102,8 @@ networks scroll above pinned Обновить (ADR-495). Bluetooth
 overflow devices scroll above pinned Искать (ADR-496). Trusted-client
 overflow scrolls above pinned Назад (ADR-497). Apps grid overflow
 tiles scroll above the tab strip (ADR-498). Object View
-history stays behind Disclosure (ADR-499). Public
+history stays behind Disclosure (ADR-499). Intent
+Confirm only when AskUser exists (ADR-500). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`

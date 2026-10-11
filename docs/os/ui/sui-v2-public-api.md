@@ -88,7 +88,8 @@ Store-down related with no cached peers is «Связи недоступны»
 (ADR-487), not an empty peer list. Workers/queue stay hidden
 without a live Action (ADR-490); this example does not name them.
 Live activity sits behind `object.history` Disclosure (ADR-499);
-this example does not name it. Public `IntentSummary` /
+this example does not name it. Confirm/Decline appear only
+when a live AskUser Task exists (ADR-500). Public `IntentSummary` /
 `TaskSummary` / `AgentSummary`
 dock on `stacked_row_rect` (ADR-464). Status invents no action.
 This example does not name them.

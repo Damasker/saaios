@@ -3612,12 +3612,7 @@ fn object_view_content_with(
     match entity.entity_type.as_str() {
         "saaios.task" => {
             let lineage = workflow_lineage_for(entity, selected_entities, relationships);
-            let waiting = workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION);
-            let actions = if waiting {
-                vec!["Подтвердить", "Отклонить"]
-            } else {
-                workflow_follow_actions(entity, &lineage, selected_entities)
-            };
+            let actions = object_view_workflow_actions(entity, &lineage, selected_entities);
             finish_workflow_view(
                 entity,
                 selected_entities,
@@ -3650,7 +3645,7 @@ fn object_view_content_with(
                 ),
                 None => (UniversalState::Idle, "Нет задачи".to_string()),
             };
-            let actions = workflow_follow_actions(entity, &lineage, selected_entities);
+            let actions = object_view_workflow_actions(entity, &lineage, selected_entities);
             let mut content =
                 finish_workflow_view(entity, selected_entities, lineage, state, status, actions);
             let steps = plan_steps_for_intent(entity, selected_entities, relationships);
@@ -3670,7 +3665,7 @@ fn object_view_content_with(
         }
         ACTION_ENTITY_TYPE => {
             let lineage = workflow_lineage_for(entity, selected_entities, relationships);
-            let actions = workflow_follow_actions(entity, &lineage, selected_entities);
+            let actions = object_view_workflow_actions(entity, &lineage, selected_entities);
             finish_workflow_view(
                 entity,
                 selected_entities,
@@ -5818,6 +5813,40 @@ fn workflow_path_caption(entity: &Entity, lineage: &WorkflowLineage<'_>) -> Opti
     }
 }
 
+/// Confirm/Decline only when a concrete AskUser Task exists
+/// (ADR-500). Never invent Confirm from the Intent board.
+fn waiting_confirmation_task<'a>(
+    entity: &'a Entity,
+    lineage: &WorkflowLineage<'a>,
+) -> Option<&'a Entity> {
+    match entity.entity_type.as_str() {
+        "saaios.task" if workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION) => {
+            Some(entity)
+        }
+        ACTION_ENTITY_TYPE
+            if workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION) =>
+        {
+            lineage.task
+        }
+        "saaios.intent" | ACTION_ENTITY_TYPE => lineage
+            .task
+            .filter(|task| workflow_status_of(task) == Some(TASK_STATUS_WAITING_CONFIRMATION)),
+        _ => None,
+    }
+}
+
+fn object_view_workflow_actions(
+    entity: &Entity,
+    lineage: &WorkflowLineage<'_>,
+    entities: &[Entity],
+) -> Vec<&'static str> {
+    if waiting_confirmation_task(entity, lineage).is_some() {
+        vec!["Подтвердить", "Отклонить"]
+    } else {
+        workflow_follow_actions(entity, lineage, entities)
+    }
+}
+
 fn workflow_follow_actions(
     entity: &Entity,
     lineage: &WorkflowLineage<'_>,
@@ -6036,20 +6065,7 @@ fn action_consequence_text(entity: &Entity) -> Option<String> {
 }
 
 fn decision_overlay_for(entity: &Entity, lineage: &WorkflowLineage<'_>) -> Option<DecisionOverlay> {
-    let waiting_task = match entity.entity_type.as_str() {
-        "saaios.task" if workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION) => {
-            Some(entity)
-        }
-        ACTION_ENTITY_TYPE
-            if workflow_status_of(entity) == Some(TASK_STATUS_WAITING_CONFIRMATION) =>
-        {
-            lineage.task
-        }
-        "saaios.intent" => lineage
-            .task
-            .filter(|task| workflow_status_of(task) == Some(TASK_STATUS_WAITING_CONFIRMATION)),
-        _ => None,
-    }?;
+    let waiting_task = waiting_confirmation_task(entity, lineage)?;
     let mut overlay = DecisionOverlay::new(waiting_task.title.clone())
         .with_actor("Система")
         .with_scope(waiting_task.space_id.clone());
@@ -14852,16 +14868,21 @@ impl Shell {
         };
         match label {
             "Подтвердить" | "Отклонить" => {
-                if workflow_status_of(&entity) != Some(TASK_STATUS_WAITING_CONFIRMATION) {
+                let lineage = workflow_lineage_for(
+                    &entity,
+                    &self.selected_entities,
+                    &self.relationships,
+                );
+                let Some(task) = waiting_confirmation_task(&entity, &lineage).cloned() else {
                     self.set_viewing_entity_id(None);
                     return;
-                }
+                };
                 if !store_write_ready(self.entityd.is_connected()) {
                     return;
                 }
                 self.set_viewing_entity_id(None);
                 let confirm = label == "Подтвердить";
-                let mut properties = entity.properties.clone();
+                let mut properties = task.properties.clone();
                 properties.insert(
                     "status".into(),
                     Value::String(
@@ -14875,10 +14896,10 @@ impl Shell {
                 );
                 println!(
                     "saai-shell: task {} {}",
-                    entity.id,
+                    task.id,
                     if confirm { "confirmed" } else { "cancelled" }
                 );
-                self.entityd.update_entity(&entity, properties);
+                self.entityd.update_entity(&task, properties);
             }
             "Скрыть" => {
                 if !store_write_ready(self.entityd.is_connected()) {
@@ -23217,7 +23238,34 @@ mod tests {
         let decision = content.decision.expect("waiting intent shows a decision");
         assert_eq!(decision.object, "Подтвердите: демо");
         assert_eq!(decision.actor.as_deref(), Some("Система"));
-        assert_eq!(content.actions, vec!["Открыть задачу"]);
+        assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+    }
+
+    #[test]
+    fn object_view_intent_confirm_only_when_ask_user() {
+        let intent = intent_entity("Подготовить демо");
+        let waiting = task_entity("Подтвердите: демо", Some(intent.id));
+        let waiting_view = object_view_content(&intent, &[intent.clone(), waiting.clone()], &[]);
+        assert!(waiting_view.decision.is_some());
+        assert_eq!(waiting_view.actions, vec!["Подтвердить", "Отклонить"]);
+
+        let mut running = task_entity("Собрать слайды", Some(intent.id));
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let running_view = object_view_content(&intent, &[intent.clone(), running.clone()], &[]);
+        assert!(running_view.decision.is_none());
+        assert_eq!(running_view.actions, vec!["Открыть задачу"]);
+        assert!(!running_view.actions.contains(&"Подтвердить"));
+
+        let empty = object_view_content(&intent, &[intent.clone()], &[]);
+        assert!(empty.decision.is_none());
+        assert!(empty.actions.is_empty());
+
+        let offline = object_view_content_with(&intent, &[intent.clone(), waiting], &[], false);
+        assert_eq!(offline.status, "План недоступен");
+        assert!(offline.decision.is_none());
+        assert!(offline.actions.is_empty());
     }
 
     #[test]
@@ -23421,6 +23469,7 @@ mod tests {
             Some("Черновик — Готово · Отправить — Ждёт подтверждения")
         );
         assert_eq!(content.status, "Ждёт подтверждения");
+        assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
     }
 
     #[test]

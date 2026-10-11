@@ -173,6 +173,7 @@ ADR-496 Bluetooth overflow devices scroll above pinned Искать.
 ADR-497 trusted-client overflow scrolls above pinned Назад.
 ADR-498 apps grid overflow tiles scroll above the tab strip.
 ADR-499 Object View history stays behind Disclosure.
+ADR-500 Intent Confirm only when AskUser exists.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.
