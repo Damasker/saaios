@@ -91,7 +91,8 @@ Live activity sits behind `object.history` Disclosure (ADR-499);
 this example does not name it. Confirm/Decline appear only
 when a live AskUser Task exists (ADR-500). Live Progress is
 sourced or Indeterminate (ADR-501); this example does not name
-it. Public `IntentSummary` /
+it. Long-RU board placeholders stay out of public samples
+(ADR-502). Public `IntentSummary` /
 `TaskSummary` / `AgentSummary`
 dock on `stacked_row_rect` (ADR-464). Status invents no action.
 This example does not name them.

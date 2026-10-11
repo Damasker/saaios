@@ -23351,6 +23351,71 @@ mod tests {
     }
 
     #[test]
+    fn vui09_long_ru_fixtures_stay_in_tests() {
+        const LONG_RU: &str =
+            "Проверка переноса очень длинного русского названия на увеличенном масштабе текста";
+        let live = include_str!("main.rs");
+        let production = live
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("tests");
+        assert!(!production.contains("Связанный объект 1"));
+        assert!(!production.contains(LONG_RU));
+        assert!(!include_str!("../../../docs/os/ui/examples/object-public.sui")
+            .contains("Связанный объект"));
+        assert!(!include_str!("../../../docs/os/ui/examples/intent-public.sui")
+            .contains("Связанный объект"));
+        assert!(!include_str!("../../../docs/os/ui/examples/now-public.sui")
+            .contains("Связанный объект"));
+        assert!(!include_str!("../../../docs/os/ui/examples/spaces-public.sui")
+            .contains("Связанный объект"));
+        assert!(!include_str!("../../../docs/os/ui/examples/me-public.sui")
+            .contains("Связанный объект"));
+
+        let mut object = test_entity("note.doc", serde_json::Map::new());
+        object.title = LONG_RU.to_string();
+        assert_eq!(
+            object_view_content(&object, &[object.clone()], &[]).title,
+            LONG_RU
+        );
+
+        let intent = intent_entity(LONG_RU);
+        assert_eq!(
+            object_view_content(&intent, &[intent.clone()], &[]).title,
+            LONG_RU
+        );
+
+        let mut running = task_entity(LONG_RU, None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let now_rows = now_task_paint_rows(
+            std::slice::from_ref(&running),
+            true,
+            false,
+            &[],
+            false,
+            1080,
+            2400,
+        );
+        assert_eq!(now_rows.len(), 1);
+        assert_eq!(now_rows[0].1.primary, LONG_RU);
+        assert!(now_rows[0].0.height >= 48);
+
+        let painted = super::object_overlay_paint(
+            &[],
+            &["object.detail.0"],
+            false,
+            "ADR-502 long ru",
+            1080,
+            2400,
+        );
+        let row = painted.2[0].expect("long fact");
+        assert!(row.height >= 48);
+        assert!(row.y + row.height < 2200);
+    }
+
+    #[test]
     fn object_view_content_for_an_intent_shows_related_task() {
         let intent = intent_entity("Подготовить демо");
         let task = task_entity("Подтвердите: демо", Some(intent.id));

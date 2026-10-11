@@ -3013,7 +3013,8 @@ mod tests {
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
         fingerprint_wrap_box, gallery_row_positions, now_empty_pattern, physical,
-        physical_line_height, role_px, state_color, theme_color, ActionCardView, Canvas,
+        physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
+        text_scale, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
         composite_gallery_fixtures, ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field,
@@ -3377,6 +3378,20 @@ mod tests {
         assert_eq!(role_px(TextRole::Label), 42.0);
         assert_eq!(role_px(TextRole::Caption), 36.0);
         assert_eq!(role_px(TextRole::MonoBody), 42.0);
+    }
+
+    #[test]
+    fn text_scale_150_grows_draw_size_and_keeps_role_px() {
+        let base = role_px(TextRole::Label);
+        set_text_scale(150);
+        assert!((text_scale() - 1.5).abs() < 1e-5);
+        assert_eq!(role_px(TextRole::Label), base);
+        assert_eq!(
+            scaled_line_height(TextRole::Body),
+            ((physical_line_height(TextRole::Body) as f32) * 1.5).round() as u32
+        );
+        set_text_scale(100);
+        assert!((text_scale() - 1.0).abs() < 1e-5);
     }
 
     #[test]

@@ -272,6 +272,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 object history | activity/execution sit behind `object.history` **host** (ADR-499; Experimental; leave Сейчас) |
 | VUI-09 intent confirm | Confirm/Decline only when AskUser exists **host** (ADR-500; Experimental; leave Сейчас) |
 | VUI-09 intent progress | sourced numeric or Indeterminate **host** (ADR-501; Experimental; leave Сейчас) |
+| VUI-09 long-RU fixtures | long Russian titles stay in tests; 150% is paint-only **host** (ADR-502; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
