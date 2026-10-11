@@ -3004,6 +3004,34 @@ fn bluetooth_v2_source(device_count: usize, status_rows: usize) -> String {
     src
 }
 
+fn bluetooth_list_scroll_content(
+    width: u32,
+    height: u32,
+    device_count: usize,
+    status_rows: usize,
+) -> Rect {
+    let first = stacked_row_rect(0, width, height);
+    let stacked = bluetooth_list_row_count(device_count, status_rows);
+    let back = stacked_control_rect(stacked + 2, width, height);
+    let pitch = stacked_row_rect(1, width, height).y.saturating_sub(first.y);
+    let floor = back.y.saturating_sub(pitch.saturating_mul(2)).max(first.y);
+    Rect::new(0, first.y, width, floor.saturating_sub(first.y))
+}
+
+fn bluetooth_list_scroll_max(
+    device_count: usize,
+    status_rows: usize,
+    width: u32,
+    height: u32,
+) -> i32 {
+    me_max_scroll_offset(
+        bluetooth_list_row_count(device_count, status_rows),
+        width,
+        height,
+        bluetooth_list_scroll_content(width, height, device_count, status_rows),
+    )
+}
+
 fn bluetooth_list_action_at(
     pos: (f64, f64),
     width: u32,
@@ -3011,12 +3039,24 @@ fn bluetooth_list_action_at(
     device_count: usize,
     status_rows: usize,
 ) -> Option<BluetoothListTap> {
-    let (id, action) = live_v2_hit(
+    bluetooth_list_action_at_scrolled(pos, width, height, device_count, status_rows, 0)
+}
+
+fn bluetooth_list_action_at_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    device_count: usize,
+    status_rows: usize,
+    scroll_offset: i32,
+) -> Option<BluetoothListTap> {
+    let (id, action) = live_v2_hit_scrolled(
         &bluetooth_v2_source(device_count, status_rows),
         "ADR-218 bluetooth",
         pos,
         width,
         height,
+        scroll_offset,
     )?;
     match action.as_deref() {
         Some("list_back") => Some(BluetoothListTap::Back),
@@ -9833,6 +9873,7 @@ fn main() {
         inbox_scroll_offset: 0,
         spaces_list_scroll_offset: 0,
         wifi_scroll_offset: 0,
+        bluetooth_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -10212,6 +10253,10 @@ struct Shell {
     /// and Назад stay at offset 0 (ADR-495). Reset when the list
     /// opens or closes.
     wifi_scroll_offset: i32,
+    /// Vertical drag-to-scroll for Bluetooth devices. Header, Искать,
+    /// Обновить, and Назад stay at offset 0 (ADR-496). Reset when the
+    /// list opens or closes.
+    bluetooth_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10697,6 +10742,23 @@ impl TouchHandler for Shell {
             .contains(position.0, position.1)
         {
             Some((position.1, self.wifi_scroll_offset))
+        } else if self.tab_touch_pending && self.bluetooth_list_open {
+            let (devices, done) = bluetooth_scan_results();
+            let pair_error = bluetooth_pair_error_reason();
+            let status_rows = bluetooth_list_pattern(devices.len(), done, pair_error.as_deref())
+                .is_some() as usize;
+            if bluetooth_list_scroll_content(
+                self.width,
+                self.height,
+                devices.len(),
+                status_rows,
+            )
+            .contains(position.0, position.1)
+            {
+                Some((position.1, self.bluetooth_scroll_offset))
+            } else {
+                None
+            }
         } else if self.tab_touch_pending && self.viewing_entity_id.is_some() {
             Some((position.1, self.object_scroll_offset))
         } else if self.tab_touch_pending
@@ -11055,12 +11117,13 @@ impl TouchHandler for Shell {
                 let pair_error = bluetooth_pair_error_reason();
                 let status_rows = bluetooth_list_pattern(device_count, done, pair_error.as_deref())
                     .is_some() as usize;
-                if let Some(tap) = bluetooth_list_action_at(
+                if let Some(tap) = bluetooth_list_action_at_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     device_count,
                     status_rows,
+                    self.bluetooth_scroll_offset,
                 ) {
                     self.handle_bluetooth_list_tap(tap, conn, qh);
                 }
@@ -11389,6 +11452,22 @@ impl TouchHandler for Shell {
                     self.wifi_scroll_offset = clamped;
                     self.me_scroll_dirty = true;
                 }
+            } else if self.bluetooth_list_open && !self.dev_surface_open {
+                let (devices, done) = bluetooth_scan_results();
+                let pair_error = bluetooth_pair_error_reason();
+                let status_rows = bluetooth_list_pattern(devices.len(), done, pair_error.as_deref())
+                    .is_some() as usize;
+                let max_offset = bluetooth_list_scroll_max(
+                    devices.len(),
+                    status_rows,
+                    self.width,
+                    self.height,
+                );
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.bluetooth_scroll_offset {
+                    self.bluetooth_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
             } else if self.viewing_entity_id.is_some() && !self.dev_surface_open {
                 let max_offset = self.object_view_scroll_max();
                 let clamped = new_offset.clamp(0, max_offset);
@@ -11669,7 +11748,19 @@ impl Shell {
             self.me_scroll_dirty = false;
             return;
         }
-        if !self.dev_surface_open && self.current_page != RootPage::Me {
+        if !self.dev_surface_open
+            && self.wifi_list.is_none()
+            && !self.bluetooth_list_open
+            && self.viewing_entity_id.is_none()
+            && !matches!(
+                self.current_page,
+                RootPage::Me
+                    | RootPage::Now
+                    | RootPage::Search
+                    | RootPage::Inbox
+                    | RootPage::Spaces
+            )
+        {
             self.me_scroll_dirty = false;
             return;
         }
@@ -11976,11 +12067,12 @@ impl Shell {
             let bluetooth_rows = bluetooth_list_rows(&devices, done, &saved, pair_error.as_deref());
             let status_rows = bluetooth_list_pattern(devices.len(), done, pair_error.as_deref())
                 .is_some() as usize;
-            let tree = layout_live_v2(
+            let tree = layout_live_v2_scrolled(
                 &bluetooth_v2_source(devices.len(), status_rows),
                 "ADR-226 bluetooth paint",
                 width,
                 height,
+                self.bluetooth_scroll_offset,
             );
             let mut ids: Vec<String> = (0..status_rows)
                 .map(|index| format!("bluetooth.status.{index}"))
@@ -13227,6 +13319,7 @@ impl Shell {
             "open_bluetooth_list" => {
                 // Same reasoning as "open_wifi_list" above.
                 bluetooth_trigger_scan();
+                self.bluetooth_scroll_offset = 0;
                 self.bluetooth_list_open = true;
                 self.draw(conn, qh);
                 return;
@@ -13512,6 +13605,7 @@ impl Shell {
             }
             BluetoothListTap::Refresh => {}
             BluetoothListTap::Back => {
+                self.bluetooth_scroll_offset = 0;
                 self.bluetooth_list_open = false;
             }
         }
@@ -14661,6 +14755,7 @@ impl Shell {
                 // on "Я" already triggers -- a fresh scan, not a
                 // stale one.
                 bluetooth_trigger_scan();
+                self.bluetooth_scroll_offset = 0;
                 self.bluetooth_list_open = true;
             }
         }
@@ -17554,6 +17649,74 @@ mod tests {
         assert!(matches!(
             bluetooth_list_action_at(center, width, height, device_count, 0),
             Some(BluetoothListTap::Back)
+        ));
+    }
+
+    #[test]
+    fn bluetooth_overflow_rows_scroll_above_pinned_scan() {
+        let width = 1080;
+        let height = 2400;
+        let device_count = 12;
+        let status_rows = 0;
+        let max = super::bluetooth_list_scroll_max(device_count, status_rows, width, height);
+        assert!(max > 0, "12 Bluetooth rows must cross pinned Искать");
+        let tree = super::layout_live_v2(
+            &super::bluetooth_v2_source(device_count, status_rows),
+            "ADR-496 bluetooth overflow",
+            width,
+            height,
+        );
+        let header = super::v2_named_rect(&tree, "ContextHeader", "bluetooth header");
+        let scan = super::v2_named_rect(&tree, "scan", "bluetooth scan");
+        let refresh = super::v2_named_rect(&tree, "refresh", "bluetooth refresh");
+        let back = super::v2_named_rect(&tree, "back", "bluetooth back");
+        assert!(saai_ui_compiler::layout_v1_find(&tree, "bluetooth.11").is_none());
+        let last_slot = stacked_row_rect(11, width, height);
+        let last_point = (
+            (last_slot.x + last_slot.width / 2) as f64,
+            (last_slot.y + last_slot.height / 2) as f64,
+        );
+        assert!(bluetooth_list_action_at(last_point, width, height, device_count, status_rows).is_none());
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::bluetooth_v2_source(device_count, status_rows),
+            "ADR-496 bluetooth overflow",
+            width,
+            height,
+            max,
+        );
+        let found = saai_ui_compiler::layout_v1_find(&scrolled, "bluetooth.11")
+            .expect("scrolled last bluetooth");
+        assert!(found.rect.y + found.rect.height <= scan.y);
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "ContextHeader", "bluetooth header scrolled"),
+            header
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "scan", "bluetooth scan scrolled"),
+            scan
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "refresh", "bluetooth refresh scrolled"),
+            refresh
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "back", "bluetooth back scrolled"),
+            back
+        );
+        let hit = (
+            (found.rect.x + found.rect.width / 2) as f64,
+            (found.rect.y + 8) as f64,
+        );
+        assert!(matches!(
+            super::bluetooth_list_action_at_scrolled(
+                hit,
+                width,
+                height,
+                device_count,
+                status_rows,
+                max
+            ),
+            Some(BluetoothListTap::Device(11))
         ));
     }
 

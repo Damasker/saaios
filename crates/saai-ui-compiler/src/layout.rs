@@ -1448,6 +1448,53 @@ mod tests {
     }
 
     #[test]
+    fn layout_v2_bluetooth_overflow_rows_scroll_above_pinned_scan() {
+        let mut src = String::from(
+            r#"
+            sui 2
+            screen bluetooth {
+              component ContextHeader {
+                text = Title
+                a11y = Heading
+                loc = bluetooth.header
+                focus = 0
+                inset = safe
+              }
+            "#,
+        );
+        for index in 0..12 {
+            src.push_str(&format!(
+                "              component BluetoothRow {{\n                text = Body\n                a11y = Button\n                loc = bluetooth.{index}\n              }}\n"
+            ));
+        }
+        src.push_str(
+            r#"
+              row scan {}
+              row refresh {}
+              row back {}
+            }
+            "#,
+        );
+        let screen = compile_v2(&src).expect("bluetooth overflow");
+        let rest = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&rest, "ContextHeader").expect("header");
+        let scan = layout_v1_find(&rest, "scan").expect("scan");
+        let back = layout_v1_find(&rest, "back").expect("back");
+        assert!(layout_v1_find(&rest, "bluetooth.11").is_none());
+        assert!(layout_v1_find(&rest, "bluetooth.0").is_some());
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 1600);
+        let last = layout_v1_find(&scrolled, "bluetooth.11").expect("scrolled last");
+        assert!(last.rect.y >= header.rect.y + header.rect.height);
+        assert!(last.rect.y + last.rect.height <= scan.rect.y);
+        let header_scrolled = layout_v1_find(&scrolled, "ContextHeader").expect("header scrolled");
+        let scan_scrolled = layout_v1_find(&scrolled, "scan").expect("scan scrolled");
+        let back_scrolled = layout_v1_find(&scrolled, "back").expect("back scrolled");
+        assert_eq!(header_scrolled.rect, header.rect);
+        assert_eq!(scan_scrolled.rect, scan.rect);
+        assert_eq!(back_scrolled.rect, back.rect);
+    }
+
+    #[test]
     fn layout_v2_space_overflow_members_scroll_above_pinned_back() {
         let mut src = String::from(
             r#"

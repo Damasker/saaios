@@ -161,7 +161,8 @@ labelled Bluetooth sample: `ContextHeader`, `BluetoothRow` with
 `a11y = Button` (ADR-206), and nested `row scan` / `row refresh` /
 `row back` (ADR-214). The heading matches Inbox stacked top
 (ADR-458). Status `BluetoothRow` invents no `pair_bluetooth`. No
-nested tabs.
+nested tabs. Live overflow devices scroll above pinned Искать
+(ADR-496); this example does not name the offset.
 
 [`examples/trusted-privileged.sui`](examples/trusted-privileged.sui) is
 the labelled shell sample: `TrustedClientRow` with `a11y = Button`

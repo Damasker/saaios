@@ -149,6 +149,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Space switcher overflow scrolls above the tab strip (ADR-493).
   Система cycles lock widget disclosure (ADR-494).
   Wi-Fi overflow networks scroll above pinned Обновить (ADR-495).
+  Bluetooth overflow devices scroll above pinned Искать (ADR-496).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
