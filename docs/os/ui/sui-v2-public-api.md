@@ -38,7 +38,10 @@ is `(49, 0, 982, 263)`, not Inbox stacked top (ADR-461). Empty
 footer hits. A screen without `ObjectSummary` invents no object
 hit (ADR-200). The empty `SurfacePattern` is loc `now.empty`
 (ADR-438); it stays Fill leftover behind `ObjectSummary`, not
-stacked row 0 (ADR-469). Status invents no action. Public `Metric` /
+stacked row 0 (ADR-469). Live attention Buttons are interned
+`now.attention.{i}` (ADR-474) and `now.weather` (ADR-476); this
+example does not name them.
+Status invents no action. Public `Metric` /
 `Disclosure` / `StatusIndicator` / `Progress` dock on
 `stacked_row_rect` (ADR-465). `SemanticText` / `Icon` / `Divider`
 are not stacked rows (ADR-466). Status invents no action. This

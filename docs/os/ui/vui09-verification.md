@@ -125,6 +125,9 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Object related is a Button (ADR-471).
   Object related is one Button per SOM peer (ADR-472).
   Intent plan steps are live Task Buttons (ADR-473).
+  NOW attention rows are live projection Buttons (ADR-474).
+  Locality weather is Open-Meteo telemetry (ADR-475).
+  NOW weather is a live `now.weather` Button (ADR-476).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

@@ -448,6 +448,7 @@ use saai_object_actions::{
     display_inspect_spec, preflight, ActionAvailability, ActionResolution, ActionResolveContext,
     ObjectActionRegistry,
 };
+use saai_weather::{refresh_locality, widget_status as locality_me_status};
 use saai_ui_core::{
     frame_reason, frame_surface, layout, AgentSummary, Axis, BluetoothRow, CapabilityRow,
     ContextColor, ContextHeader, DataRow, DataRowVariant, DecisionOverlay, EdgeInsets, EventRow,
@@ -3262,6 +3263,8 @@ enum Frame {
         chrome: render::NowPaintChrome,
         sections: Vec<SystemSection>,
         object: Option<ObjectSummary>,
+        weather: Option<(Rect, DataRow)>,
+        attention_rows: Vec<(Rect, DataRow)>,
         footer_actions: Vec<(Rect, DataRow)>,
     },
 }
@@ -6379,15 +6382,18 @@ fn now_workflow_sections(
     entities: &[Entity],
     relationships: &[Relationship],
 ) -> Vec<SystemSection> {
-    now_workflow_sections_with(entities, relationships, None)
+    now_workflow_sections_with(entities, relationships, None, true)
 }
 
 fn now_workflow_sections_with(
     entities: &[Entity],
     relationships: &[Relationship],
     health: Option<&HealthReport>,
+    store_connected: bool,
 ) -> Vec<SystemSection> {
     let mut sections = Vec::new();
+    let pending_empty_attention =
+        now_attention_section_with(entities, health).is_none() && store_connected;
 
     if let Some(attention) = now_attention_section_with(entities, health) {
         sections.push(attention);
@@ -6429,7 +6435,164 @@ fn now_workflow_sections_with(
         sections.push(today);
     }
 
+    if pending_empty_attention && !sections.is_empty() {
+        sections.insert(0, now_attention_empty_section());
+    }
+
     sections
+}
+
+fn now_attention_empty_section() -> SystemSection {
+    SystemSection::new("Требует внимания").with_row(SystemSectionRow::Data(DataRow::new(
+        "Ничего не требует внимания",
+        DataRowVariant::Static,
+    )))
+}
+
+fn now_attention_follow_id(item: &AttentionItem) -> Option<Uuid> {
+    match item.source {
+        AttentionSource::WorkflowTask { task_id } => Some(task_id),
+        AttentionSource::Notification { notification_id } => Some(notification_id),
+        AttentionSource::Health { .. } => None,
+    }
+}
+
+fn now_attention_reason(item: &AttentionItem) -> String {
+    match item.actionability {
+        AttentionActionability::RequiresDecision => "Ждёт подтверждения".to_string(),
+        _ => item.summary.clone().unwrap_or_default(),
+    }
+}
+
+fn now_attention_v2_source(follow: &[bool], empty_caption: bool) -> String {
+    let mut src = String::from("sui 2\nscreen now {\n");
+    src.push_str(&v2_header_block("now.header"));
+    src.push_str(&v2_stacked_block("ObjectSummary", "Status", "now.object"));
+    src.push_str(&v2_stacked_block("DataRow", "Button", "now.weather"));
+    if empty_caption {
+        src.push_str(&v2_stacked_block(
+            "DataRow",
+            "Status",
+            "now.attention.empty",
+        ));
+    }
+    for (index, tappable) in follow.iter().enumerate() {
+        let a11y = if *tappable { "Button" } else { "Status" };
+        src.push_str(&v2_stacked_block(
+            "DataRow",
+            a11y,
+            &format!("now.attention.{index}"),
+        ));
+    }
+    src.push_str(V2_ROOT_TABS);
+    src.push_str("  row apps { loc = now.apps }\n  row intent { loc = now.intent }\n}\n");
+    src
+}
+
+fn now_weather_hit(pos: (f64, f64), width: u32, height: u32) -> bool {
+    if width == 0 || height == 0 {
+        return false;
+    }
+    live_v2_hit(
+        &now_attention_v2_source(&[], false),
+        "ADR-476 now weather",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(_, action)| action)
+    .as_deref()
+        == Some("now.weather")
+}
+
+fn now_weather_paint_row(width: u32, height: u32) -> Option<(Rect, DataRow)> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let tree = layout_live_v2(
+        &now_attention_v2_source(&[], false),
+        "ADR-476 now weather",
+        width,
+        height,
+    );
+    Some((
+        v2_named_rect(&tree, "now.weather", "ADR-476 now weather"),
+        DataRow::new("Местность", DataRowVariant::Navigation)
+            .with_secondary(locality_me_status())
+            .with_action("now.weather"),
+    ))
+}
+
+fn now_attention_hit(pos: (f64, f64), width: u32, height: u32, follow: &[bool]) -> Option<usize> {
+    if width == 0 || height == 0 || follow.is_empty() {
+        return None;
+    }
+    live_v2_hit(
+        &now_attention_v2_source(follow, false),
+        "ADR-474 now attention",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(id, action)| {
+        action
+            .filter(|value| value.starts_with("now.attention."))
+            .and_then(|_| {
+                id.strip_prefix("now.attention.")
+                    .and_then(|index| index.parse().ok())
+            })
+    })
+}
+
+fn now_attention_paint_rows(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+    store_connected: bool,
+    has_other_now_content: bool,
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, DataRow)> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let projection = project_with_health(entities, health);
+    let items: Vec<&AttentionItem> = projection.now_items().collect();
+    let empty_caption = items.is_empty() && store_connected && has_other_now_content;
+    if items.is_empty() && !empty_caption {
+        return Vec::new();
+    }
+    let follow: Vec<bool> = items
+        .iter()
+        .map(|item| now_attention_follow_id(item).is_some())
+        .collect();
+    let tree = layout_live_v2(
+        &now_attention_v2_source(&follow, empty_caption),
+        "ADR-474 now attention",
+        width,
+        height,
+    );
+    if empty_caption {
+        return vec![(
+            v2_named_rect(&tree, "now.attention.empty", "ADR-474 now attention"),
+            DataRow::new("Ничего не требует внимания", DataRowVariant::Static),
+        )];
+    }
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let loc = format!("now.attention.{index}");
+            let row = if now_attention_follow_id(item).is_some() {
+                DataRow::new(item.title.clone(), DataRowVariant::Navigation)
+                    .with_secondary(now_attention_reason(item))
+                    .with_action(loc.clone())
+            } else {
+                DataRow::new(item.title.clone(), DataRowVariant::Static)
+                    .with_secondary(now_attention_reason(item))
+            };
+            (v2_named_rect(&tree, &loc, "ADR-474 now attention"), row)
+        })
+        .collect()
 }
 
 fn attention_section_from_projection(projection: &AttentionProjection) -> Option<SystemSection> {
@@ -7156,6 +7319,15 @@ fn observation_row_label(key: &str) -> String {
         "cellular.gpsnfw" => "NFW".into(),
         "cellular.samode" => "SA".into(),
         "cellular.sim_app" => "SIM".into(),
+        "locality.name" => "Место".into(),
+        "locality.latitude" => "Широта".into(),
+        "locality.longitude" => "Долгота".into(),
+        "locality.weather.temperature" => "Температура".into(),
+        "locality.weather.humidity" => "Влажность".into(),
+        "locality.weather.wind_speed" => "Ветер".into(),
+        "locality.weather.code" => "Код".into(),
+        "locality.weather.condition" => "Погода".into(),
+        "locality.attribution" => "Источник".into(),
         other => other.to_string(),
     }
 }
@@ -7272,6 +7444,29 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.sim_app" {
         let text = value.as_str()?.trim();
         return sim_presence_phrase(text).map(str::to_string);
+    }
+    if key.starts_with("locality.") {
+        if let Some(text) = value
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        {
+            return Some(text.to_string());
+        }
+        let number = value.as_f64().filter(|n| n.is_finite())?;
+        return Some(if unit == Some("celsius") {
+            format!("{number:.1} °C")
+        } else if unit == Some("km/h") {
+            format!("{number:.1} км/ч")
+        } else if unit == Some("percent") {
+            format!("{number:.0}%")
+        } else if unit == Some("degree") {
+            format!("{number:.5}")
+        } else if number.fract() == 0.0 {
+            format!("{number:.0}")
+        } else {
+            format!("{number:.1}")
+        });
     }
     if key == "cellular.bearer" {
         let text = value.as_str()?.trim();
@@ -7801,6 +7996,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                     SettingRow::readout("Bluetooth", "Нет адаптера").row
                 },
                 SettingRow::readout("Сотовая сеть", cellular_row_with_session(&facts)).row,
+                SettingRow::open("Местность", locality_me_status(), "refresh_locality").row,
                 SettingRow::cycle(
                     "Удалённый доступ (SSH)",
                     remote_status,
@@ -7894,6 +8090,7 @@ fn intern_me_action(action: Option<&str>) -> Option<&'static str> {
         Some("toggle_orb") => Some("toggle_orb"),
         Some("toggle_reduced_motion") => Some("toggle_reduced_motion"),
         Some("toggle_haptics") => Some("toggle_haptics"),
+        Some("refresh_locality") => Some("refresh_locality"),
         _ => None,
     }
 }
@@ -7903,6 +8100,7 @@ fn me_button_label(action: Option<&str>) -> &'static str {
         Some("open_wifi_list") => "Сети",
         Some("open_bluetooth_list") => "Устройства",
         Some("open_trusted_clients") => "Открыть",
+        Some("refresh_locality") => "Ещё раз",
         Some("tap_build_info") | None => "",
         Some(_) => "Изменить",
     }
@@ -9860,7 +10058,30 @@ impl TouchHandler for Shell {
             } else if self.current_page == RootPage::Now && !self.apps_open {
                 // VUI-03 (ADR-113): footer rows stay tappable. ADR-217:
                 // ObjectSummary and footer hits come from compile_v2.
-                if now_object_tapped(
+                let attention = project_with_health(
+                    &self.selected_entities,
+                    read_runtime_live_facts().health.as_ref(),
+                );
+                let items: Vec<&AttentionItem> = attention.now_items().collect();
+                let follow: Vec<bool> = items
+                    .iter()
+                    .map(|item| now_attention_follow_id(item).is_some())
+                    .collect();
+                if now_weather_hit(self.last_touch_pos, self.width, self.height) {
+                    let _ = refresh_locality();
+                    self.me_row_cache = None;
+                    self.draw(conn, qh);
+                } else if let Some(index) =
+                    now_attention_hit(self.last_touch_pos, self.width, self.height, &follow)
+                {
+                    if let Some(id) = items
+                        .get(index)
+                        .and_then(|item| now_attention_follow_id(item))
+                    {
+                        self.viewing_entity_id = Some(id);
+                        self.draw(conn, qh);
+                    }
+                } else if now_object_tapped(
                     self.last_touch_pos,
                     self.width,
                     self.height,
@@ -10546,13 +10767,31 @@ impl Shell {
             }
         } else if self.current_page == RootPage::Now && !self.apps_open {
             let view = now_view(width, height);
+            let sections = self.now_sections();
+            let has_other = sections
+                .iter()
+                .any(|section| section.title != "Требует внимания");
+            let attention_rows = now_attention_paint_rows(
+                &self.selected_entities,
+                read_runtime_live_facts().health.as_ref(),
+                self.entityd.is_connected(),
+                has_other,
+                width,
+                height,
+            );
+            let sections = sections
+                .into_iter()
+                .filter(|section| section.title != "Требует внимания")
+                .collect();
             Frame::Now {
                 content_rect: view.children[0].rect,
                 tabs: self.navigation_items_from(&view),
                 header: self.now_context_header(),
                 chrome: now_paint_chrome_from(&view),
-                sections: self.now_sections(),
+                sections,
                 object: self.now_object_summary(),
+                weather: now_weather_paint_row(width, height),
+                attention_rows,
                 footer_actions: now_footer_action_views_from(&view),
             }
         } else if self.current_page == RootPage::Now && self.apps_open {
@@ -10998,6 +11237,8 @@ impl Shell {
                     chrome,
                     sections,
                     object,
+                    weather,
+                    attention_rows,
                     footer_actions,
                 } => {
                     render::draw_now(
@@ -11008,6 +11249,8 @@ impl Shell {
                         &chrome,
                         &sections,
                         object.as_ref(),
+                        weather.as_ref(),
+                        &attention_rows,
                         &footer_actions,
                         fonts,
                     );
@@ -11623,6 +11866,14 @@ impl Shell {
                 // Same reasoning as "open_wifi_list" above.
                 self.trusted_clients_open = true;
                 self.pending_revoke_trusted_client = None;
+                self.draw(conn, qh);
+                return;
+            }
+            "refresh_locality" => {
+                // Five fetch attempts, then the widget shows the reason.
+                // Tap starts the cycle again. No settings persist.
+                let _ = refresh_locality();
+                self.me_row_cache = None;
                 self.draw(conn, qh);
                 return;
             }
@@ -12593,12 +12844,14 @@ impl Shell {
 
     /// ADR-241: Сейчас is attention, current work, next, then any real
     /// schedule rows. Empty sections stay omitted. Orb + intent footer
-    /// remain the composer; this list does not invent weather.
+    /// remain the composer. Live locality weather is a separate
+    /// `now.weather` row (ADR-476), not invented chrome.
     fn now_sections(&self) -> Vec<SystemSection> {
         now_workflow_sections_with(
             &self.selected_entities,
             &self.relationships,
             read_runtime_live_facts().health.as_ref(),
+            self.entityd.is_connected(),
         )
     }
 
@@ -13717,8 +13970,9 @@ mod tests {
         lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
         lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
         me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
-        now_object_tapped, now_workflow_sections, object_view_action_at, object_view_content,
-        object_view_details, object_view_hit, object_view_permission_pattern,
+        now_attention_hit, now_object_tapped, now_weather_hit, now_weather_paint_row,
+        now_workflow_sections, object_view_action_at,
+        object_view_content, object_view_details, object_view_hit, object_view_permission_pattern,
         object_view_related_peer_lines, object_view_step_lines, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
@@ -21302,7 +21556,70 @@ mod tests {
             .iter()
             .map(|section| section.title.as_str())
             .collect();
-        assert_eq!(titles, ["Продолжается"]);
+        assert_eq!(titles, ["Требует внимания", "Продолжается"]);
+        match &sections[0].rows[0] {
+            SystemSectionRow::Data(row) => {
+                assert_eq!(row.primary, "Ничего не требует внимания");
+                assert!(!row.is_actionable());
+            }
+            other => panic!("expected empty attention caption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn now_attention_rows_hit_live_projection_sources() {
+        assert_eq!(
+            now_attention_hit((540.0, 658.0), 1080, 2400, &[true]),
+            Some(0)
+        );
+        assert_eq!(
+            now_attention_hit((540.0, 878.0), 1080, 2400, &[true, true, true]),
+            Some(1)
+        );
+        assert_eq!(
+            now_attention_hit((540.0, 1098.0), 1080, 2400, &[true, true, true]),
+            Some(2)
+        );
+        assert_eq!(now_attention_hit((540.0, 438.0), 1080, 2400, &[true]), None);
+        assert_eq!(now_attention_hit((540.0, 438.0), 1080, 2400, &[]), None);
+        assert_eq!(
+            now_attention_hit((540.0, 658.0), 1080, 2400, &[false]),
+            None
+        );
+        let waiting = task_entity("Подтвердите удаление", None);
+        let rows = super::now_attention_paint_rows(
+            std::slice::from_ref(&waiting),
+            None,
+            true,
+            false,
+            1080,
+            2400,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.primary, "Подтвердите удаление");
+        assert_eq!(rows[0].1.action.as_deref(), Some("now.attention.0"));
+        assert_eq!(rows[0].0, saai_ui_core::Rect::new(49, 650, 982, 190));
+    }
+
+    #[test]
+    fn now_weather_row_shows_live_status_and_retries() {
+        assert!(now_weather_hit((540.0, 438.0), 1080, 2400));
+        assert!(!now_weather_hit((540.0, 658.0), 1080, 2400));
+        let (rect, row) = now_weather_paint_row(1080, 2400).expect("weather");
+        assert_eq!(rect, saai_ui_core::Rect::new(49, 430, 982, 190));
+        assert_eq!(row.primary, "Местность");
+        assert_eq!(row.action.as_deref(), Some("now.weather"));
+        assert!(
+            row.secondary.as_deref() == Some("Нет наблюдения")
+                || row
+                    .secondary
+                    .as_deref()
+                    .is_some_and(|status| status.starts_with("Нет наблюдения · ")
+                        || status.contains('°')
+                        || status.contains("местность не задана")
+                        || status.contains("сеть:")
+                        || status.contains("Open-Meteo"))
+        );
     }
 
     #[test]
@@ -21745,6 +22062,38 @@ mod tests {
         assert_eq!(rows[1].label, "Нагрузка");
         assert_eq!(rows[1].value, "0.3");
         assert!(!rows.iter().any(|row| row.key.contains("weather")));
+        let locality = super::live_observations_from_status_json(&serde_json::json!({
+            "status": {
+                "observations": [
+                    {
+                        "key": "locality.weather.temperature",
+                        "value": 10.2,
+                        "unit": "celsius",
+                        "source": "open-meteo.forecast"
+                    },
+                    {
+                        "key": "locality.latitude",
+                        "value": 52.52,
+                        "unit": "degree",
+                        "source": "open-meteo.forecast"
+                    },
+                    {
+                        "key": "locality.longitude",
+                        "value": 13.41,
+                        "unit": "degree",
+                        "source": "open-meteo.forecast"
+                    }
+                ]
+            }
+        }));
+        assert_eq!(locality.len(), 3);
+        assert_eq!(locality[0].label, "Температура");
+        assert_eq!(locality[0].value, "10.2 °C");
+        assert_eq!(locality[0].source, "open-meteo.forecast");
+        assert_eq!(locality[1].label, "Широта");
+        assert_eq!(locality[1].value, "52.52000");
+        assert_eq!(locality[2].label, "Долгота");
+        assert_eq!(locality[2].value, "13.41000");
     }
 
     #[test]
@@ -22453,6 +22802,15 @@ mod tests {
         assert!(cpu.card.status.contains("procfs.cpu"));
         assert!(cpu.dispatch.is_none());
         assert!(!rows.iter().any(|row| row.card.label.contains("погод")));
+        let locality = rows
+            .iter()
+            .find(|row| row.card.label == "Местность")
+            .expect("locality");
+        assert!(
+            locality.card.status == "Нет наблюдения"
+                || locality.card.status.starts_with("Нет наблюдения · ")
+        );
+        assert_eq!(locality.dispatch, Some("refresh_locality"));
         assert!(!rows
             .iter()
             .any(|row| row.card.label.contains("Android") || row.card.status.contains("Android")));

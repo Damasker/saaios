@@ -2101,6 +2101,7 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",
@@ -2515,6 +2516,7 @@ dependencies = [
  "saai-portal-protocol",
  "saai-ui-compiler",
  "saai-ui-core",
+ "saai-weather",
  "serde_json",
  "sha2",
  "smithay-client-toolkit",
@@ -2553,6 +2555,17 @@ dependencies = [
 [[package]]
 name = "saai-ui-core"
 version = "0.1.0"
+
+[[package]]
+name = "saai-weather"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "saai-observation",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "saaios-runtime"

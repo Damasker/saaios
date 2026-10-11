@@ -2486,6 +2486,8 @@ pub fn draw_now(
     chrome: &NowPaintChrome,
     sections: &[SystemSection],
     object: Option<&ObjectSummary>,
+    weather: Option<&(Rect, DataRow)>,
+    attention_rows: &[(Rect, DataRow)],
     footer_actions: &[(Rect, DataRow)],
     fonts: Option<&Fonts>,
 ) {
@@ -2517,7 +2519,7 @@ pub fn draw_now(
             );
         }
 
-        if sections.is_empty() && object.is_none() {
+        if sections.is_empty() && object.is_none() && attention_rows.is_empty() {
             // HIA-13's own second mockup: "Ничего срочного", centered, no
             // section chrome at all -- an empty `Сейчас` is a normal, calm
             // state, not a broken one, and `SystemSection` itself never
@@ -2546,11 +2548,33 @@ pub fn draw_now(
             // Live SystemSection rows are not in now.sui. They paint below
             // the compiled object slot, or the header when there is no live
             // object, using the same inset as chrome.
-            let mut cursor_y = if object.is_some() {
+            let mut cursor_y = if let Some((rect, _)) = weather {
+                rect.y.saturating_add(rect.height)
+            } else if object.is_some() {
                 chrome.object.y.saturating_add(chrome.object.height)
             } else {
                 chrome.header.y.saturating_add(chrome.header.height)
             };
+            if !attention_rows.is_empty() {
+                cursor_y += physical(SpacingToken::Medium.value());
+                draw_semantic_text(
+                    canvas,
+                    fonts,
+                    &SemanticText::new(
+                        "Требует внимания",
+                        TextRole::Section,
+                        ColorRole::TextPrimary,
+                    ),
+                    left,
+                    cursor_y,
+                    content_width,
+                );
+                cursor_y += scaled_line_height(TextRole::Section);
+                for (rect, row) in attention_rows {
+                    draw_data_row(canvas, fonts, row, *rect);
+                    cursor_y = rect.y.saturating_add(rect.height);
+                }
+            }
             for section in sections {
                 cursor_y += physical(SpacingToken::Medium.value());
                 draw_semantic_text(
@@ -2682,6 +2706,12 @@ pub fn draw_now(
                     }
                 }
             }
+        }
+        if let Some((rect, row)) = weather {
+            // ADR-476: locality weather is compact NOW chrome, not
+            // workflow content. Paint after the empty Fill so the
+            // row stays visible.
+            draw_data_row(canvas, fonts, row, *rect);
         }
     }
 

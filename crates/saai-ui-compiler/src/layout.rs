@@ -53,6 +53,9 @@
 //! the block. Workflow captions stay Status.
 //! ADR-473: Intent plan Tasks are `object.step.{i}` Buttons. Empty
 //! stays «Нет задачи». Confirm stays AskUser on the waiting Task.
+//! ADR-474: NOW attention items are `now.attention.{i}` Buttons.
+//! Confirmed empty among other work is Status. `now.empty` stays
+//! Fill leftover.
 //! ADR-430: Object View `SurfacePattern` docks the OAM permission
 //! band. Decision fact lines are Status `DataRow`s. Neither invents
 //! an action.
@@ -1199,6 +1202,71 @@ mod tests {
             Some("open_object")
         );
         assert!(tree.hit_test(540.0, 525.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_now_attention_rows_dock_stacked_slots() {
+        let screen = compile_v2_public(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader {
+                text = Title
+                a11y = Heading
+                loc = now.header
+                focus = 0
+                inset = safe
+              }
+              component ObjectSummary {
+                text = Body
+                a11y = Status
+                loc = now.object
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = now.attention.0
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = now.attention.1
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = now.attention.2
+              }
+              component BottomNavigation {
+                a11y = Button
+                focus = 1
+                scroll = none
+                inset = safe
+                tab now { loc = now }
+                tab spaces { loc = spaces }
+                tab search { loc = search }
+                tab me { loc = me }
+              }
+            }
+            "#,
+        )
+        .expect("now attention");
+        let tree = layout_v2(&screen, 1080, 2400);
+        let first = layout_v1_find(&tree, "now.attention.0").expect("attention.0");
+        assert_eq!(first.rect, saai_ui_core::Rect::new(49, 430, 982, 190));
+        assert_eq!(first.action.as_deref(), Some("now.attention.0"));
+        let third = layout_v1_find(&tree, "now.attention.2").expect("attention.2");
+        assert_eq!(third.rect, saai_ui_core::Rect::new(49, 870, 982, 190));
+        assert_eq!(
+            tree.hit_test(540.0, 438.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("now.attention.0")
+        );
+        assert_eq!(
+            tree.hit_test(540.0, 878.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("now.attention.2")
+        );
     }
 
     #[test]

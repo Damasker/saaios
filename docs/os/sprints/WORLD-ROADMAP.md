@@ -39,6 +39,7 @@ Do not start with a monitoring product or HealthState.
 | WORLD-06 | One deterministic Health component | **Done** (host, ADR-287) | no |
 | WORLD-07 | Automation ObservationThreshold (legacy stays) | **Done** (host, ADR-290) | no |
 | WORLD-08 | NOW/Attention feed (deviced does not notify) | Backlog | **yes** |
+| WORLD-09 | Locality weather from Open-Meteo | **Host** (ADR-475/476) | no |
 
 ## WORLD-01
 
@@ -101,3 +102,21 @@ Approximate → Degraded. CPU percent is not a threshold. Runtime
 **Rollback:** drop `is_schedule_due_with` and the two properties.
 
 **Threat:** none — host gate, no phone binary.
+
+## WORLD-09
+
+**Goal:** locality weather as imported Observation; NOW shows that live row.
+
+**Change:** `observations_from_open_meteo_current` and `saai-weather`.
+Place is configured. Source is `open-meteo.forecast`. Attribution is
+CC BY 4.0. Query coordinates are `locality.latitude` /
+`locality.longitude` on the widget, not modem GNSS. Five failed
+fetches publish the reason; tap retries. Сейчас docks the same
+line as `now.weather` (ADR-476).
+
+**Test:** host `cargo test -p saai-observation locality`.
+
+**Rollback:** drop `locality.rs` and `saai-weather`.
+
+**Threat:** outbound HTTPS to api.open-meteo.com only when the user
+runs `saai-weather` with a configured place.

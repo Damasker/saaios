@@ -244,6 +244,9 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 object related Button | `object.related` Button follows first live peer **host** (ADR-471; Experimental; leave Сейчас) |
 | VUI-09 object related peers | one Button per SOM peer `object.related.{i}` **host** (ADR-472; Experimental; leave Сейчас) |
 | VUI-09 intent plan steps | one Button per live Task `object.step.{i}` **host** (ADR-473; Experimental; leave Сейчас) |
+| VUI-09 now attention rows | live `now.attention.{i}` Buttons; empty caption among other work **host** (ADR-474; Experimental; leave Сейчас) |
+| Locality weather telemetry | Open-Meteo `locality.weather.*` + query lat/lon; five attempts then reason; tap retries **host** (ADR-475; Experimental; leave Сейчас) |
+| VUI-09 now weather row | live `now.weather` Button; same status line as Местность **host** (ADR-476; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

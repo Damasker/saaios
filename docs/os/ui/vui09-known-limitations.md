@@ -77,7 +77,8 @@ NOW empty stays Fill leftover (ADR-469). Concept-board
 chrome reopened (ADR-470). Object related is a Button
 (ADR-471). Object related is one Button per SOM peer
 (ADR-472). Intent plan steps are live Task Buttons
-(ADR-473). Public
+(ADR-473). NOW attention rows are live projection Buttons
+(ADR-474). NOW locality weather is a live Button (ADR-476). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`

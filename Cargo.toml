@@ -40,6 +40,7 @@ members = [
     "services/saai-ota-write",
     "services/saai-ota-health",
     "services/saai-modemd",
+    "services/saai-weather",
 ]
 
 [workspace.package]
@@ -70,6 +71,7 @@ saai-entity-protocol = { path = "crates/saai-entity-protocol" }
 saai-object-actions = { path = "crates/saai-object-actions" }
 intent-resolution = { path = "crates/intent-resolution" }
 saai-observation = { path = "crates/saai-observation" }
+saai-weather = { path = "services/saai-weather" }
 saai-attention = { path = "crates/saai-attention" }
 saai-authority = { path = "crates/saai-authority" }
 saai-portal-protocol = { path = "crates/saai-portal-protocol" }

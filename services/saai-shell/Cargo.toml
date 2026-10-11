@@ -32,6 +32,7 @@ saai-ui-core.workspace = true
 saai-ui-compiler.workspace = true
 saai-attention.workspace = true
 saai-observation.workspace = true
+saai-weather.workspace = true
 saai-object-actions.workspace = true
 policy-engine.workspace = true
 saai-authority.workspace = true

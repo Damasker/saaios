@@ -147,6 +147,9 @@ ADR-470 reopen concept-board chrome; parks no longer block named regions.
 ADR-471 Object related row is a concept Button; first live peer follow.
 ADR-472 Object related is one Button per SOM peer.
 ADR-473 Intent plan steps are live Task Buttons.
+ADR-474 NOW attention rows are live projection Buttons.
+ADR-475 Locality weather is Open-Meteo forecast telemetry.
+ADR-476 NOW locality weather is a live `now.weather` Button.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

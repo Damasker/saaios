@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–473; concept-board chrome reopened; Object related peers; Intent plan steps; public subset Experimental; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–474; concept-board chrome reopened; Object related peers; Intent plan steps; NOW attention rows; public subset Experimental; not Visual v1 sign-off) |
 
 ---
 
@@ -1225,7 +1225,8 @@ public NOW empty stays Fill leftover (ADR-469);
 concept-board chrome reopened (ADR-470);
 Object related is a Button (ADR-471);
 Object related is one Button per SOM peer (ADR-472);
-Intent plan steps are live Task Buttons (ADR-473).
+Intent plan steps are live Task Buttons (ADR-473);
+NOW attention rows are live projection Buttons (ADR-474).
 Release
 gate remains. Not Visual v1 sign-off.
 
@@ -1454,6 +1455,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Intent plan steps are live Task Buttons (ADR-473). Confirm
   stays AskUser. Compose `intent-public.sui` stays header+Field.
   Still Experimental. Not Visual v1 sign-off.
+- [x] NOW attention rows are live projection Buttons (ADR-474).
+  Empty caption only among other work. `now.empty` leftover stays.
+  Still Experimental. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1566,8 +1570,10 @@ After each completed task group, report:
 ## Next action
 
 VUI-09 concept-board chrome is open (ADR-470). Next named board
-regions: Object quick actions that already exist in OAM, NOW
-attention rows, composer mic disabled. Public subset stays Experimental.
+regions: Object quick actions that already exist in OAM, composer
+mic disabled. Locality weather is Open-Meteo telemetry with query
+coordinates and tap-retry after five failures; Сейчас shows
+`now.weather` (ADR-475/476). Public subset stays Experimental.
 Acceptance stays unchecked until panther evidence. Do not fake
 weather / voice / Android VM. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them.
