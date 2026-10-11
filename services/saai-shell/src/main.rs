@@ -3473,8 +3473,8 @@ struct ObjectViewContent {
     consequence: Option<String>,
     permission: Option<String>,
     decision: Option<DecisionOverlay>,
-    /// Disposable execution from a real `saaios.action`, or unassigned.
-    /// None on types that are not workflow (notifications, unknown).
+    /// Disposable execution from a live `saaios.action`. Hidden when
+    /// no Action exists (ADR-490). Not a worker count.
     agent: Option<AgentSummary>,
     actions: Vec<&'static str>,
 }
@@ -5773,7 +5773,7 @@ fn finish_workflow_view(
         consequence,
         permission: object_view_permission(entity),
         decision,
-        agent: Some(agent_summary_from_lineage(&lineage, entities)),
+        agent: agent_summary_from_lineage(&lineage, entities),
         actions,
     }
 }
@@ -5843,15 +5843,17 @@ fn workflow_activity_or_observation(
 }
 
 /// 0–1 disposable execution from a real Action entity. No Action →
-/// unassigned. Does not invent a personality or a worker count.
-fn agent_summary_from_lineage(lineage: &WorkflowLineage<'_>, entities: &[Entity]) -> AgentSummary {
-    match lineage.action {
-        Some(action) => AgentSummary::from_execution(
+/// hidden, not «Нет исполнения» or a worker count (ADR-490).
+fn agent_summary_from_lineage(
+    lineage: &WorkflowLineage<'_>,
+    entities: &[Entity],
+) -> Option<AgentSummary> {
+    lineage.action.map(|action| {
+        AgentSummary::from_execution(
             action.title.clone(),
             task_universal_state(action, entities),
-        ),
-        None => AgentSummary::unassigned(),
-    }
+        )
+    })
 }
 
 fn unfinished_parent_task<'a>(entity: &Entity, entities: &'a [Entity]) -> Option<&'a Entity> {
@@ -22217,10 +22219,7 @@ mod tests {
         assert_eq!(content.blocker, None);
         assert_eq!(content.consequence, None);
         assert_eq!(content.permission, None);
-        assert_eq!(
-            content.agent.as_ref().map(AgentSummary::detail_line),
-            Some("Нет исполнения".into())
-        );
+        assert!(content.agent.is_none());
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
     }
 
@@ -22234,10 +22233,7 @@ mod tests {
         assert_eq!(content.status, "Выполняется");
         assert_eq!(content.activity, None);
         assert_eq!(content.observation, None);
-        assert_eq!(
-            content.agent.as_ref().map(AgentSummary::detail_line),
-            Some("Нет исполнения".into())
-        );
+        assert!(content.agent.is_none());
         assert!(content.decision.is_none());
         assert!(content.actions.is_empty());
     }
@@ -22267,10 +22263,7 @@ mod tests {
         assert_eq!(content.related, None);
         assert_eq!(content.activity, None);
         assert_eq!(content.observation, None);
-        assert_eq!(
-            content.agent.as_ref().map(AgentSummary::detail_line),
-            Some("Нет исполнения".into())
-        );
+        assert!(content.agent.is_none());
         assert!(content.decision.is_none());
         assert!(content.actions.is_empty());
     }
@@ -22502,6 +22495,22 @@ mod tests {
         assert!(!content.related.as_deref().unwrap().contains("Действие"));
         assert_eq!(content.activity, None);
         assert_eq!(content.observation, None);
+    }
+
+    #[test]
+    fn object_view_hides_workers_without_an_action() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        let intent = intent_entity("Пустое намерение");
+        let waiting_content = object_view_content(&waiting, &[waiting.clone()], &[]);
+        let intent_content = object_view_content(&intent, &[intent.clone()], &[]);
+        assert!(waiting_content.agent.is_none());
+        assert!(intent_content.agent.is_none());
+        assert!(!object_view_details(&waiting_content)
+            .iter()
+            .any(|line| line.contains("исполнен") || line.contains("Воркер")));
+        assert!(!object_view_details(&intent_content)
+            .iter()
+            .any(|line| line.contains("исполнен") || line.contains("Воркер")));
     }
 
     #[test]
