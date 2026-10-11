@@ -2914,18 +2914,46 @@ fn wifi_v2_source(network_count: usize) -> String {
     src
 }
 
+fn wifi_list_scroll_content(width: u32, height: u32, network_count: usize) -> Rect {
+    let first = stacked_row_rect(0, width, height);
+    let back = stacked_control_rect(wifi_list_row_count(network_count) + 1, width, height);
+    let pitch = stacked_row_rect(1, width, height).y.saturating_sub(first.y);
+    let floor = back.y.saturating_sub(pitch).max(first.y);
+    Rect::new(0, first.y, width, floor.saturating_sub(first.y))
+}
+
+fn wifi_list_scroll_max(network_count: usize, width: u32, height: u32) -> i32 {
+    me_max_scroll_offset(
+        wifi_list_row_count(network_count),
+        width,
+        height,
+        wifi_list_scroll_content(width, height, network_count),
+    )
+}
+
 fn wifi_list_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     network_count: usize,
 ) -> Option<WifiListTap> {
-    let (id, action) = live_v2_hit(
+    wifi_list_action_at_scrolled(pos, width, height, network_count, 0)
+}
+
+fn wifi_list_action_at_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    network_count: usize,
+    scroll_offset: i32,
+) -> Option<WifiListTap> {
+    let (id, action) = live_v2_hit_scrolled(
         &wifi_v2_source(network_count),
         "ADR-218 wifi",
         pos,
         width,
         height,
+        scroll_offset,
     )?;
     match action.as_deref() {
         Some("list_back") => Some(WifiListTap::Back),
@@ -9804,6 +9832,7 @@ fn main() {
         search_scroll_offset: 0,
         inbox_scroll_offset: 0,
         spaces_list_scroll_offset: 0,
+        wifi_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -10179,6 +10208,10 @@ struct Shell {
     /// Vertical drag-to-scroll for the Space switcher. Header and tabs
     /// stay at offset 0 (ADR-493). Reset when leaving the list.
     spaces_list_scroll_offset: i32,
+    /// Vertical drag-to-scroll for Wi-Fi networks. Header, Обновить,
+    /// and Назад stay at offset 0 (ADR-495). Reset when the list
+    /// opens or closes.
+    wifi_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10654,6 +10687,16 @@ impl TouchHandler for Shell {
         // apart from a tap.
         self.me_drag = if self.tab_touch_pending && self.dev_surface_open {
             Some((position.1, self.me_scroll_offset))
+        } else if self.tab_touch_pending
+            && self.wifi_list.is_some()
+            && wifi_list_scroll_content(
+                self.width,
+                self.height,
+                self.wifi_list.as_ref().map_or(0, Vec::len),
+            )
+            .contains(position.0, position.1)
+        {
+            Some((position.1, self.wifi_scroll_offset))
         } else if self.tab_touch_pending && self.viewing_entity_id.is_some() {
             Some((position.1, self.object_scroll_offset))
         } else if self.tab_touch_pending
@@ -10993,9 +11036,13 @@ impl TouchHandler for Shell {
                 // S19: modal, same as the others -- owns every touch
                 // while "Wi-Fi сети" is open.
                 let network_count = self.wifi_list.as_ref().map_or(0, Vec::len);
-                if let Some(tap) =
-                    wifi_list_action_at(self.last_touch_pos, self.width, self.height, network_count)
-                {
+                if let Some(tap) = wifi_list_action_at_scrolled(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    network_count,
+                    self.wifi_scroll_offset,
+                ) {
                     self.handle_wifi_list_tap(tap, conn, qh);
                 }
             } else if self.bluetooth_list_open {
@@ -11331,7 +11378,18 @@ impl TouchHandler for Shell {
         if let Some((start_y, start_offset)) = self.me_drag {
             let delta = start_y - position.1;
             let new_offset = (start_offset as f64 + delta).round() as i32;
-            if self.viewing_entity_id.is_some() && !self.dev_surface_open {
+            if self.wifi_list.is_some() && !self.dev_surface_open {
+                let max_offset = wifi_list_scroll_max(
+                    self.wifi_list.as_ref().map_or(0, Vec::len),
+                    self.width,
+                    self.height,
+                );
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.wifi_scroll_offset {
+                    self.wifi_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
+            } else if self.viewing_entity_id.is_some() && !self.dev_surface_open {
                 let max_offset = self.object_view_scroll_max();
                 let clamped = new_offset.clamp(0, max_offset);
                 if clamped != self.object_scroll_offset {
@@ -11881,11 +11939,12 @@ impl Shell {
             // strip. ADR-226: paint rects from the same tree as hits.
             let connected = wifi_connected_ssid();
             let wifi_rows = wifi_list_rows(networks, connected.as_deref());
-            let tree = layout_live_v2(
+            let tree = layout_live_v2_scrolled(
                 &wifi_v2_source(networks.len()),
                 "ADR-226 wifi paint",
                 width,
                 height,
+                self.wifi_scroll_offset,
             );
             let mut ids: Vec<String> = if networks.is_empty() {
                 vec!["wifi.empty".into()]
@@ -13160,6 +13219,7 @@ impl Shell {
                 // persisted value, so this returns before the
                 // `settings.save()` common tail.
                 wifi_trigger_scan();
+                self.wifi_scroll_offset = 0;
                 self.wifi_list = Some(wifi_scan_results());
                 self.draw(conn, qh);
                 return;
@@ -13374,6 +13434,7 @@ impl Shell {
                     println!("saai-shell: connecting to \"{ssid}\" (WPA)");
                 }
                 self.wifi_password = None;
+                self.wifi_scroll_offset = 0;
                 self.wifi_list = None;
                 self.end_compose_context();
             }
@@ -13415,6 +13476,7 @@ impl Shell {
                     let ssid = network.ssid.clone();
                     wifi_connect_open(&ssid);
                     println!("saai-shell: connecting to \"{ssid}\" (open)");
+                    self.wifi_scroll_offset = 0;
                     self.wifi_list = None;
                 }
             }
@@ -13423,6 +13485,7 @@ impl Shell {
                 self.wifi_list = Some(wifi_scan_results());
             }
             WifiListTap::Back => {
+                self.wifi_scroll_offset = 0;
                 self.wifi_list = None;
             }
         }
@@ -16042,6 +16105,82 @@ mod tests {
         assert!(matches!(
             wifi_list_action_at(center, width, height, network_count),
             Some(WifiListTap::Back)
+        ));
+    }
+
+    #[test]
+    fn wifi_overflow_rows_scroll_above_pinned_back() {
+        let width = 1080;
+        let height = 2400;
+        let networks: Vec<_> = (0..12)
+            .map(|index| WifiNetwork {
+                ssid: format!("Сеть {index:02}"),
+                secured: false,
+                signal_dbm: -50,
+            })
+            .collect();
+        let network_count = networks.len();
+        let max = super::wifi_list_scroll_max(network_count, width, height);
+        assert!(max > 0, "12 Wi-Fi rows must cross pinned Обновить");
+        let tree = super::layout_live_v2(
+            &super::wifi_v2_source(network_count),
+            "ADR-495 wifi overflow",
+            width,
+            height,
+        );
+        let header = super::v2_named_rect(&tree, "ContextHeader", "wifi header");
+        let refresh = super::v2_named_rect(&tree, "refresh", "wifi refresh");
+        let back = super::v2_named_rect(&tree, "back", "wifi back");
+        assert!(saai_ui_compiler::layout_v1_find(&tree, "wifi.11").is_none());
+        let last_slot = stacked_row_rect(11, width, height);
+        let last_point = (
+            (last_slot.x + last_slot.width / 2) as f64,
+            (last_slot.y + last_slot.height / 2) as f64,
+        );
+        assert!(wifi_list_action_at(last_point, width, height, network_count).is_none());
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::wifi_v2_source(network_count),
+            "ADR-495 wifi overflow",
+            width,
+            height,
+            max,
+        );
+        let found =
+            saai_ui_compiler::layout_v1_find(&scrolled, "wifi.11").expect("scrolled last wifi");
+        assert!(found.rect.y + found.rect.height <= refresh.y);
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "ContextHeader", "wifi header scrolled"),
+            header
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "refresh", "wifi refresh scrolled"),
+            refresh
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "back", "wifi back scrolled"),
+            back
+        );
+        let hit = (
+            (found.rect.x + found.rect.width / 2) as f64,
+            (found.rect.y + 8) as f64,
+        );
+        assert!(matches!(
+            super::wifi_list_action_at_scrolled(hit, width, height, network_count, max),
+            Some(WifiListTap::Network(11))
+        ));
+        let refresh_center = (
+            (refresh.x + refresh.width / 2) as f64,
+            (refresh.y + refresh.height / 2) as f64,
+        );
+        assert!(matches!(
+            super::wifi_list_action_at_scrolled(
+                refresh_center,
+                width,
+                height,
+                network_count,
+                max
+            ),
+            Some(WifiListTap::Refresh)
         ));
     }
 

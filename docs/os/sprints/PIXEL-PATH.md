@@ -265,6 +265,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 inbox overflow scroll | Inbox EventRows scroll above the tab strip **host** (ADR-492; Experimental; leave Сейчас) |
 | VUI-09 spaces list overflow | Space switcher scrolls above the tab strip **host** (ADR-493; Experimental; leave Сейчас) |
 | LW-02 lock widget selector | Система cycles `lock_widgets` disclosure **host** (ADR-494; physical pending; leave Сейчас) |
+| VUI-09 wifi overflow scroll | Wi-Fi networks scroll above pinned Обновить **host** (ADR-495; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

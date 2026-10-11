@@ -153,6 +153,8 @@ Status `WifiRow` invents no `connect_wifi`. Live Система Wi-Fi
 names «Нет адаптера» / «Не подключено» / «Нет статуса»
 (ADR-485); this example does not name them. No nested tabs: live
 «Wi-Fi сети» has trailing controls, not `BottomNavigation`.
+Live overflow networks scroll above pinned Обновить (ADR-495);
+this example does not name the offset.
 
 [`examples/bluetooth-public.sui`](examples/bluetooth-public.sui) is the
 labelled Bluetooth sample: `ContextHeader`, `BluetoothRow` with

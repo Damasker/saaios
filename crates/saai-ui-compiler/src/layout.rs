@@ -892,7 +892,7 @@ fn v2_content_node(
     let stacked_height = v2_stacked_row_height(height);
     let clip_to_content = v2_me_scroll_clip(screen);
     let clip_to_first_slot = v2_diagnostic_scroll_clip(screen);
-    let scroll = if clip_to_content || clip_to_first_slot {
+    let scroll = if clip_to_content || clip_to_first_slot || trailing_first_top.is_some() {
         scroll_offset.max(0)
     } else {
         0
@@ -1399,6 +1399,52 @@ mod tests {
         let object = layout_v1_find(&rest, "ObjectSummary").expect("object");
         let object_scrolled = layout_v1_find(&scrolled, "ObjectSummary").expect("object scrolled");
         assert_eq!(object_scrolled.rect, object.rect);
+    }
+
+    #[test]
+    fn layout_v2_wifi_overflow_rows_scroll_above_pinned_back() {
+        let mut src = String::from(
+            r#"
+            sui 2
+            screen wifi {
+              component ContextHeader {
+                text = Title
+                a11y = Heading
+                loc = wifi.header
+                focus = 0
+                inset = safe
+              }
+            "#,
+        );
+        for index in 0..12 {
+            src.push_str(&format!(
+                "              component WifiRow {{\n                text = Body\n                a11y = Button\n                loc = wifi.{index}\n              }}\n"
+            ));
+        }
+        src.push_str(
+            r#"
+              row refresh {}
+              row back {}
+            }
+            "#,
+        );
+        let screen = compile_v2(&src).expect("wifi overflow");
+        let rest = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&rest, "ContextHeader").expect("header");
+        let refresh = layout_v1_find(&rest, "refresh").expect("refresh");
+        let back = layout_v1_find(&rest, "back").expect("back");
+        assert!(layout_v1_find(&rest, "wifi.11").is_none());
+        assert!(layout_v1_find(&rest, "wifi.0").is_some());
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 1200);
+        let last = layout_v1_find(&scrolled, "wifi.11").expect("scrolled last");
+        assert!(last.rect.y >= header.rect.y + header.rect.height);
+        assert!(last.rect.y + last.rect.height <= refresh.rect.y);
+        let header_scrolled = layout_v1_find(&scrolled, "ContextHeader").expect("header scrolled");
+        let refresh_scrolled = layout_v1_find(&scrolled, "refresh").expect("refresh scrolled");
+        let back_scrolled = layout_v1_find(&scrolled, "back").expect("back scrolled");
+        assert_eq!(header_scrolled.rect, header.rect);
+        assert_eq!(refresh_scrolled.rect, refresh.rect);
+        assert_eq!(back_scrolled.rect, back.rect);
     }
 
     #[test]
