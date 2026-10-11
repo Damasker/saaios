@@ -79,6 +79,14 @@ labelled apps sample: `ContextHeader`, Status `SurfacePattern`
 (ADR-437), and the same nested tabs. Status invents no tile.
 Empty docks below the header.
 
+[`examples/wifi-password-public.sui`](examples/wifi-password-public.sui)
+is the labelled Wi-Fi password sample: `ContextHeader` plus a Status
+`Field` (ADR-439). No `Keyboard`. Header x matches the Field margin.
+
+[`examples/pin-setup-public.sui`](examples/pin-setup-public.sui) is
+the labelled PIN setup sample: `ContextHeader` plus a Status `Field`
+(ADR-439). No `Keyboard`. Still Experimental.
+
 [`examples/spaces-public.sui`](examples/spaces-public.sui) is the
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 `a11y = Button` (ADR-203), and the same nested tabs. Status
@@ -163,6 +171,7 @@ review. Copying them into an app document fails `compile_v2_public()`.
   (ADR-435). Object View identity / facts share the `width/22`
   margin (ADR-436). Apps empty `SurfacePattern` reads that tree
   (ADR-437). NOW empty keeps loc `now.empty` (ADR-438).
+  Wi-Fi password compose uses surface `wifi-password` (ADR-439).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.

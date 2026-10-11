@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–438; production `compile_v2()`; named chrome paint from `layout_v2`; Object View, overlays, lists, and apps headings from `layout_v2`; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–439; production `compile_v2()`; named chrome paint from `layout_v2`; Object View, overlays, lists, and apps headings from `layout_v2`; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
 
 ---
 
@@ -1191,7 +1191,7 @@ pair fingerprint slot (ADR-432); overlay `ContextHeader` paint
 (ADR-433); compose `ContextHeader` paint (ADR-434); list / apps
 `ContextHeader` paint (ADR-435); Object View identity / facts
 margin (ADR-436); apps empty `SurfacePattern` (ADR-437); NOW empty
-loc `now.empty` (ADR-438). Release
+loc `now.empty` (ADR-438); wifi-password surface (ADR-439). Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1328,6 +1328,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Keep NOW empty loc `now.empty` (ADR-438). Status invents no
   action. `open_object` stays on `ObjectSummary`. Not Visual v1
   sign-off.
+- [x] Dock Wi-Fi password compose on surface `wifi-password`
+  (ADR-439). Public `wifi-password-public.sui` / `pin-setup-public.sui`.
+  Keyboard keys stay a formula. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1440,7 +1443,7 @@ After each completed task group, report:
 ## Next action
 
 VUI-09 host release gate remains: public subset stays Experimental
-(ADR-185/265/427–438); leftover formulas stay Keyboard keys, gallery
+(ADR-185/265/427–439); leftover formulas stay Keyboard keys, gallery
 page, lock idle/wake (ADR-232); do not promote Stable; do not
 flash for sign-off. Space detail still deferred. MEM-08 stays
 omitted. Thin tuning stays last (ADR-213).

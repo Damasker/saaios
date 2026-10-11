@@ -65,6 +65,8 @@
 //! invents no tile.
 //! ADR-438: NOW empty `SurfacePattern` keeps loc `now.empty`. Status
 //! invents no action.
+//! ADR-439: wifi-password compose uses its own surface, not `intent`.
+//! pin-setup stays its own surface. Keyboard keys stay a formula.
 
 use saai_ui_core::{
     layout, Axis, EdgeInsets, LayoutNode, Length, Node, Rect, SafeInsets, SpacingToken,
@@ -1564,6 +1566,29 @@ mod tests {
     }
 
     #[test]
+    fn layout_v2_wifi_password_header_matches_field_margin() {
+        let source = include_str!("../../../docs/os/ui/examples/wifi-password-public.sui");
+        let screen = compile_v2_public(source).expect("public wifi-password");
+        assert!(!screen.is_privileged());
+        let tree = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&tree, "ContextHeader").expect("header");
+        let field = layout_v1_find(&tree, "wifi-password-field").expect("field");
+        assert_eq!(header.rect.y, 0);
+        assert_eq!(header.rect.x, field.rect.x);
+        assert_eq!(header.rect.x, 1080 / 22);
+        assert!(header.action.is_none());
+        assert!(field.action.is_none());
+        let pin = include_str!("../../../docs/os/ui/examples/pin-setup-public.sui");
+        let pin_screen = compile_v2_public(pin).expect("public pin-setup");
+        assert!(!pin_screen.is_privileged());
+        let pin_tree = layout_v2(&pin_screen, 1080, 2400);
+        let pin_header = layout_v1_find(&pin_tree, "ContextHeader").expect("pin header");
+        let pin_field = layout_v1_find(&pin_tree, "pin-field").expect("pin field");
+        assert_eq!(pin_header.rect.x, pin_field.rect.x);
+        assert!(pin_field.action.is_none());
+    }
+
+    #[test]
     fn layout_v2_inbox_header_matches_stacked_top() {
         let source = include_str!("../../../docs/os/ui/examples/inbox-public.sui");
         let screen = compile_v2_public(source).expect("public inbox");
@@ -2176,6 +2201,14 @@ mod tests {
             (
                 "apps",
                 include_str!("../../../docs/os/ui/examples/apps-public.sui"),
+            ),
+            (
+                "wifi-password",
+                include_str!("../../../docs/os/ui/examples/wifi-password-public.sui"),
+            ),
+            (
+                "pin-setup",
+                include_str!("../../../docs/os/ui/examples/pin-setup-public.sui"),
             ),
         ] {
             let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));

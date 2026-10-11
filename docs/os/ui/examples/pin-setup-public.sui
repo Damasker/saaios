@@ -1,0 +1,15 @@
+sui 2
+screen pin-setup {
+  component ContextHeader {
+    text = Title
+    a11y = Heading
+    loc = pin-setup.header
+    focus = 0
+    inset = safe
+  }
+  component Field {
+    text = Body
+    a11y = Status
+    loc = pin-field
+  }
+}

@@ -112,6 +112,7 @@ ADR-435 list / apps `ContextHeader` paint from `layout_v2`; inset matches NOW.
 ADR-436 Object View identity / facts share the `width/22` margin; paint reads those slots.
 ADR-437 apps empty `SurfacePattern` from `layout_v2`; header stays; no invented tiles.
 ADR-438 NOW empty `SurfacePattern` keeps loc `now.empty`; Status invents no action.
+ADR-439 wifi-password compose uses its own surface; pin-setup public example; keys stay formula.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

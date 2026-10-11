@@ -42,9 +42,11 @@ Pair fingerprint reads that tree (ADR-432). Overlay
 `ContextHeader` paint reads that tree (ADR-435). Object View
 identity / facts share the `width/22` margin (ADR-436). Apps empty
 `SurfacePattern` reads that tree (ADR-437). NOW empty keeps loc
-`now.empty` (ADR-438). Public
+`now.empty` (ADR-438). Wi-Fi password compose uses surface
+`wifi-password` (ADR-439). Public
 `object-public.sui`, `consent-public.sui`,
-`remote-pair-public.sui`, `intent-public.sui`, and `apps-public.sui`
+`remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
+`wifi-password-public.sui`, and `pin-setup-public.sui`
 stay Experimental.
 
 The verification ledger stays in

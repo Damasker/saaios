@@ -2702,6 +2702,7 @@ fn key_fingerprint(public_key: &str) -> String {
 const INTENT_SCREEN_ID: &str = "intent-input";
 const INTENT_HEADER_ID: &str = "intent-header";
 const INTENT_FIELD_ID: &str = "intent-field";
+const WIFI_PASSWORD_FIELD_ID: &str = "wifi-password-field";
 const INTENT_ROWS_ID: &str = "intent-rows";
 const INTENT_CANCEL_ACTION: &str = "intent:cancel";
 const INTENT_MODE_TOGGLE_ACTION: &str = "intent:mode:toggle";
@@ -2871,15 +2872,10 @@ impl Default for IntentInputState {
     }
 }
 
-/// S19: reuses `intent_view()`'s keyboard layout and hit-testing
-/// verbatim (same rows, same control ids) rather than growing a
-/// second keyboard tree -- the two are visually and structurally
-/// identical, only the header text and what "Отправить" does differ,
-/// both handled by which of `intent_input`/`wifi_password` is
-/// currently `Some`. S29 added a digits/symbols mode (`KeyboardMode`,
-/// toggled by the same "123"/"ABC" control both screens share) --
-/// still lowercase-only and no uppercase, but a real WPA2 password
-/// with digits and punctuation is now actually typeable.
+/// S19: reuses Intent's keyboard layout and hit-testing (same rows,
+/// same control ids) rather than growing a second keyboard tree.
+/// ADR-439: the compose document is `wifi-password`, not `intent`.
+/// Keys stay a formula. S29 added digits/symbols (`KeyboardMode`).
 struct WifiPasswordState {
     ssid: String,
     buffer: String,
@@ -8272,7 +8268,11 @@ fn overlay_field_paint(
     } else {
         overlay_field_v2_source_with(screen_id, field_id, false)
     };
-    let why = "ADR-434 compose overlay";
+    let why = if screen_id == "wifi-password" {
+        "ADR-439 wifi-password overlay"
+    } else {
+        "ADR-434 compose overlay"
+    };
     let tree = layout_live_v2(&source, why, width, height);
     (
         v2_named_rect(&tree, "ContextHeader", why),
@@ -10431,8 +10431,8 @@ impl Shell {
                 Vec::new()
             };
             let (header_rect, field_rect) = overlay_field_paint(
-                "intent",
-                INTENT_FIELD_ID,
+                "wifi-password",
+                WIFI_PASSWORD_FIELD_ID,
                 state.keyboard.shows_panel(),
                 width,
                 height,
@@ -11927,7 +11927,7 @@ impl Shell {
                     self.wifi_password = Some(WifiPasswordState {
                         ssid: network.ssid.clone(),
                         buffer: String::new(),
-                        keyboard: live_keyboard(INTENT_FIELD_ID, KeyboardLayout::Qwerty),
+                        keyboard: live_keyboard(WIFI_PASSWORD_FIELD_ID, KeyboardLayout::Qwerty),
                     });
                     self.begin_compose_context();
                 } else {
@@ -15657,8 +15657,18 @@ mod tests {
         assert_eq!(compose_header.y, 0);
         assert_eq!(compose_header.x, field.x);
         assert!(field.height > 0);
+        let wifi = super::overlay_field_paint(
+            "wifi-password",
+            super::WIFI_PASSWORD_FIELD_ID,
+            true,
+            width,
+            height,
+        );
+        assert_eq!(wifi.0.x, field.x);
+        assert_eq!(wifi.1, field);
         let main = include_str!("main.rs");
         assert!(main.contains("ADR-229 overlay paint"));
+        assert!(main.contains("ADR-439 wifi-password overlay"));
         assert!(main.contains("overlay_decision_paint"));
         assert!(main.contains("overlay_field_paint"));
     }

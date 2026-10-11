@@ -209,6 +209,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 object overlay margin | Object View `ObjectSummary` / facts / permission `width/22` **host** (ADR-436; no `open_object`; do not open Object View; leave Сейчас) |
 | VUI-09 apps empty pattern | empty Приложения `SurfacePattern` from `layout_v2` **host** (ADR-437; no tiles; do not open Приложения; leave Сейчас) |
 | VUI-09 NOW empty loc | Сейчас empty `now.empty` from `layout_v2` **host** (ADR-438; no action; leave Сейчас) |
+| VUI-09 wifi-password surface | Wi-Fi password compose from `wifi-password` **host** (ADR-439; no PSK; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

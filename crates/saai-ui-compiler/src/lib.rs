@@ -1139,6 +1139,24 @@ mod tests {
         assert_eq!(apps.components[1].props.a11y.as_deref(), Some("Status"));
         assert_eq!(apps.components[1].props.loc.as_deref(), Some("apps.empty"));
         assert!(guide.contains("apps-public.sui"));
+        const WIFI_PASSWORD: &str =
+            include_str!("../../../docs/os/ui/examples/wifi-password-public.sui");
+        let wifi_password = compile_v2_public(WIFI_PASSWORD).unwrap();
+        assert_eq!(wifi_password.id, "wifi-password");
+        assert!(!wifi_password.is_privileged());
+        assert_eq!(wifi_password.components[1].type_name, "Field");
+        assert_eq!(
+            wifi_password.components[1].props.a11y.as_deref(),
+            Some("Status")
+        );
+        assert!(guide.contains("wifi-password-public.sui"));
+        const PIN_SETUP: &str = include_str!("../../../docs/os/ui/examples/pin-setup-public.sui");
+        let pin_setup = compile_v2_public(PIN_SETUP).unwrap();
+        assert_eq!(pin_setup.id, "pin-setup");
+        assert!(!pin_setup.is_privileged());
+        assert_eq!(pin_setup.components[1].type_name, "Field");
+        assert_eq!(pin_setup.components[1].props.a11y.as_deref(), Some("Status"));
+        assert!(guide.contains("pin-setup-public.sui"));
         const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");
         assert!(compile_v2_public(TRUSTED)
             .unwrap_err()
