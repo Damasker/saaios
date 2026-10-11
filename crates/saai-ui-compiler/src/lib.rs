@@ -1061,7 +1061,10 @@ mod tests {
         assert!(!search.is_privileged());
         assert_eq!(search.components[1].type_name, "DataRow");
         assert_eq!(search.components[1].props.a11y.as_deref(), Some("Button"));
-        assert_eq!(search.components[1].props.loc.as_deref(), Some("search.item"));
+        assert_eq!(
+            search.components[1].props.loc.as_deref(),
+            Some("search.item")
+        );
         assert!(guide.contains("search-public.sui"));
         assert!(guide.contains("search.item"));
         const SPACES: &str = include_str!("../../../docs/os/ui/examples/spaces-public.sui");
@@ -1109,11 +1112,72 @@ mod tests {
         assert_eq!(object.components[1].type_name, "ObjectSummary");
         assert_eq!(object.components[1].props.a11y.as_deref(), Some("Status"));
         assert_eq!(object.components[2].type_name, "DataRow");
-        assert_eq!(object.components[2].props.a11y.as_deref(), Some("Status"));
-        assert_eq!(object.components[3].type_name, "SurfacePattern");
-        assert_eq!(object.components[3].props.a11y.as_deref(), Some("Status"));
+        assert_eq!(object.components[2].props.a11y.as_deref(), Some("Button"));
+        assert_eq!(
+            object.components[2].props.loc.as_deref(),
+            Some("object.related.0")
+        );
+        assert_eq!(object.components[3].type_name, "DataRow");
+        assert_eq!(object.components[3].props.a11y.as_deref(), Some("Button"));
+        assert_eq!(
+            object.components[3].props.loc.as_deref(),
+            Some("object.related.1")
+        );
+        assert_eq!(object.components[4].type_name, "SurfacePattern");
+        assert_eq!(object.components[4].props.a11y.as_deref(), Some("Status"));
         assert!(object.rows.is_empty());
         assert!(guide.contains("object-public.sui"));
+        let steps = compile_v2_public(
+            r#"
+            sui 2
+            screen object {
+              component ContextHeader {
+                a11y = Status
+                loc = object.header
+              }
+              component ObjectSummary {
+                a11y = Status
+                loc = object.summary
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.0
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.1
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.2
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.3
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.4
+              }
+            }
+            "#,
+        )
+        .expect("intent steps");
+        assert!(!steps.is_privileged());
+        assert_eq!(
+            steps.components[2].props.loc.as_deref(),
+            Some("object.step.0")
+        );
+        assert_eq!(
+            steps.components[6].props.loc.as_deref(),
+            Some("object.step.4")
+        );
+        assert_eq!(steps.components[2].props.a11y.as_deref(), Some("Button"));
         const CONSENT: &str = include_str!("../../../docs/os/ui/examples/consent-public.sui");
         let consent = compile_v2_public(CONSENT).unwrap();
         assert_eq!(consent.id, "consent");
@@ -1126,7 +1190,10 @@ mod tests {
         assert_eq!(pair.id, "remote-pair");
         assert!(!pair.is_privileged());
         assert_eq!(pair.components[2].type_name, "DataRow");
-        assert_eq!(pair.components[2].props.loc.as_deref(), Some("pair.fingerprint"));
+        assert_eq!(
+            pair.components[2].props.loc.as_deref(),
+            Some("pair.fingerprint")
+        );
         assert_eq!(pair.components[2].props.a11y.as_deref(), Some("Status"));
         assert!(guide.contains("remote-pair-public.sui"));
         const INTENT: &str = include_str!("../../../docs/os/ui/examples/intent-public.sui");
@@ -1167,7 +1234,10 @@ mod tests {
         assert!(!pin_setup.is_privileged());
         assert_eq!(pin_setup.components.len(), 2);
         assert_eq!(pin_setup.components[1].type_name, "Field");
-        assert_eq!(pin_setup.components[1].props.a11y.as_deref(), Some("Status"));
+        assert_eq!(
+            pin_setup.components[1].props.a11y.as_deref(),
+            Some("Status")
+        );
         assert!(guide.contains("pin-setup-public.sui"));
         const TRUSTED: &str = include_str!("../../../docs/os/ui/examples/trusted-privileged.sui");
         assert!(compile_v2_public(TRUSTED)
@@ -1429,10 +1499,7 @@ mod tests {
                         "{label} names privileged surface `{name}`"
                     );
                 } else {
-                    assert!(
-                        !source.contains(name),
-                        "{label} names privileged `{name}`"
-                    );
+                    assert!(!source.contains(name), "{label} names privileged `{name}`");
                 }
             }
         }

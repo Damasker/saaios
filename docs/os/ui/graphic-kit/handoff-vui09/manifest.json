@@ -1,0 +1,138 @@
+{
+  "status": "implementation scenarios; not verified live snapshots",
+  "design_space": [
+    1080,
+    2400
+  ],
+  "min_hit_target_logical": 48,
+  "actual_hit_regions": "must be implemented and validated in saai-ui-core; SVG not clickable",
+  "nav": [
+    "Сейчас",
+    "Пространства",
+    "Поиск",
+    "Система"
+  ],
+  "colors": {
+    "bg": "#071011",
+    "surface": "#0D181A",
+    "elev": "#142326",
+    "accent": "#63D4D6",
+    "hi": "#A1EEF0",
+    "fg": "#D7E2DF",
+    "muted": "#829796",
+    "ok": "#6FB79A",
+    "warn": "#D4B658",
+    "bad": "#C7514B",
+    "border": "#315054"
+  },
+  "surfaces": [
+    "object",
+    "intent",
+    "now",
+    "space",
+    "system"
+  ],
+  "variants": [
+    "default",
+    "empty",
+    "one-item",
+    "overflow",
+    "offline"
+  ],
+  "source_of_truth": [
+    "docs/os/ui/references/v1-surfaces.jpg",
+    "docs/os/ui/references/v1-orb.jpg",
+    "docs/os/ui/references/v1-visual-system.jpg",
+    "docs/os/ui/graphic-kit/tokens/v1-tokens.json",
+    "docs/os/architecture/visual-language-v1.md"
+  ],
+  "mapping": {
+    "Object": [
+      [
+        "object identity",
+        "SOM object",
+        "ObjectSummary; no object → empty"
+      ],
+      [
+        "related peer",
+        "SOM relation with resolvable peer",
+        "missing peer → hide row"
+      ],
+      [
+        "quick actions",
+        "OAM action descriptor + permission / availability",
+        "none → hide action block; disabled → reason"
+      ]
+    ],
+    "Intent": [
+      [
+        "goal",
+        "IRAB intent",
+        "missing → «Нет задачи»"
+      ],
+      [
+        "steps",
+        "WSV2 task DAG / plan projection",
+        "missing → no step list"
+      ],
+      [
+        "confirm",
+        "AskUser pending action only",
+        "missing → no confirm"
+      ]
+    ],
+    "NOW": [
+      [
+        "attention",
+        "event/decision projection",
+        "0 → «Ничего не требует внимания»"
+      ],
+      [
+        "current work",
+        "live task execution",
+        "0 → «Нет текущих задач»"
+      ],
+      [
+        "composer",
+        "text input + search; mic unavailable",
+        "voice disabled"
+      ]
+    ],
+    "Space": [
+      [
+        "focus task",
+        "SOM space membership + task focus",
+        "missing → hide focus"
+      ],
+      [
+        "related objects",
+        "SOM in-space",
+        "0 → «Нет объектов»"
+      ],
+      [
+        "map",
+        "no source",
+        "omit"
+      ]
+    ],
+    "System": [
+      [
+        "device / wifi / brightness",
+        "DeviceState / settings",
+        "missing → unavailable with cause"
+      ],
+      [
+        "Android VM / notebook",
+        "runtime capability",
+        "Unavailable until runtime exists"
+      ]
+    ]
+  },
+  "icon_provenance": {
+    "nav": "existing graphic-kit icons geometry",
+    "device": "existing object-device.svg geometry; verify original",
+    "file": "existing object-file.svg geometry; verify original",
+    "orb": "existing orb-idle.svg geometry",
+    "quick_action": "uses confirm placeholder; MUST replace with real OAM-action icon; needs SVG"
+  }
+}

@@ -47,6 +47,12 @@
 //! it does not invent `open_object`.
 //! ADR-429: Object View fact `DataRow`s dock below that summary as
 //! Status; they invent no actions.
+//! ADR-471: public / live `object.related` is a concept Button when
+//! a related peer exists. Status related still invents no action.
+//! ADR-472: each SOM peer is `object.related.{i}`. Zero peers hide
+//! the block. Workflow captions stay Status.
+//! ADR-473: Intent plan Tasks are `object.step.{i}` Buttons. Empty
+//! stays «Нет задачи». Confirm stays AskUser on the waiting Task.
 //! ADR-430: Object View `SurfacePattern` docks the OAM permission
 //! band. Decision fact lines are Status `DataRow`s. Neither invents
 //! an action.
@@ -517,18 +523,19 @@ fn v2_decision_node(
         let id = object
             .and_then(|component| component.props.loc.clone())
             .unwrap_or_else(|| "ObjectSummary".to_string());
-        cards.push(
-            Node::leaf(id).with_size(Length::Fill, Length::Px(v2_now_object_height())),
-        );
+        cards.push(Node::leaf(id).with_size(Length::Fill, Length::Px(v2_now_object_height())));
         for (index, row) in facts.iter().enumerate() {
             let id = row
                 .props
                 .loc
                 .clone()
                 .unwrap_or_else(|| format!("object.fact.{index}"));
-            cards.push(
-                Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())),
-            );
+            let mut leaf =
+                Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height()));
+            if let Some(action) = v2_stacked_action(row) {
+                leaf = leaf.with_action(action);
+            }
+            cards.push(leaf);
         }
         if let Some(pattern) = pattern {
             let id = pattern
@@ -536,9 +543,8 @@ fn v2_decision_node(
                 .loc
                 .clone()
                 .unwrap_or_else(|| "SurfacePattern".to_string());
-            cards.push(
-                Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())),
-            );
+            cards
+                .push(Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())));
         }
         children.push(
             Node::linear(format!("{}-cards", screen.id), Axis::Vertical, cards)
@@ -645,8 +651,7 @@ fn v2_compose_node(
     });
     let header = Node::stack(
         format!("{}-header", screen.id),
-        vec![Node::leaf("ContextHeader".to_string())
-            .with_size(Length::Fill, Length::Fill)],
+        vec![Node::leaf("ContextHeader".to_string()).with_size(Length::Fill, Length::Fill)],
     )
     .with_padding(EdgeInsets {
         top: 0,
@@ -919,10 +924,7 @@ fn v2_content_node(
         ));
     }
     for component in rest {
-        if component.type_name == "SurfacePattern"
-            && object.is_none()
-            && header_height > 0
-        {
+        if component.type_name == "SurfacePattern" && object.is_none() && header_height > 0 {
             let id = component
                 .props
                 .loc
@@ -2510,18 +2512,101 @@ mod tests {
         assert!(summary.action.is_none());
         assert!(tree.hit_test(540.0, 200.0).is_none());
         assert!(layout_v1_find(&tree, "object-buttons").is_none());
-        let related = layout_v1_find(&tree, "object.related").expect("related");
-        assert_eq!(related.rect, saai_ui_core::Rect::new(49, 284, 982, related.rect.height));
-        assert!(related.action.is_none());
+        let related = layout_v1_find(&tree, "object.related.0").expect("related.0");
+        assert_eq!(
+            related.rect,
+            saai_ui_core::Rect::new(49, 284, 982, related.rect.height)
+        );
+        assert_eq!(related.action.as_deref(), Some("object.related.0"));
+        let related_two = layout_v1_find(&tree, "object.related.1").expect("related.1");
+        assert_eq!(related_two.rect.y, related.rect.y + related.rect.height);
+        assert_eq!(related_two.action.as_deref(), Some("object.related.1"));
         let permission = layout_v1_find(&tree, "object.permission").expect("permission");
         assert_eq!(permission.rect.x, 49);
         assert_eq!(permission.rect.width, 982);
-        assert_eq!(permission.rect.y, related.rect.y + related.rect.height);
+        assert_eq!(
+            permission.rect.y,
+            related_two.rect.y + related_two.rect.height
+        );
         assert!(permission.action.is_none());
-        assert!(tree.hit_test(540.0, (related.rect.y + 8) as f64).is_none());
-        assert!(tree.hit_test(540.0, (permission.rect.y + 8) as f64).is_none());
+        assert_eq!(
+            tree.hit_test(540.0, (related.rect.y + 8) as f64)
+                .and_then(|node| node.action.as_deref()),
+            Some("object.related.0")
+        );
+        assert_eq!(
+            tree.hit_test(540.0, (related_two.rect.y + 8) as f64)
+                .and_then(|node| node.action.as_deref()),
+            Some("object.related.1")
+        );
+        assert!(tree
+            .hit_test(540.0, (permission.rect.y + 8) as f64)
+            .is_none());
         assert!(tree.hit_test(270.0, 2250.0).is_none());
-        assert!(tree.hit_test(540.0, 335.0).is_none());
+        assert!(tree.hit_test(540.0, 200.0).is_none());
+    }
+
+    #[test]
+    fn layout_v2_intent_plan_steps_dock_below_summary() {
+        let screen = compile_v2_public(
+            r#"
+            sui 2
+            screen object {
+              component ContextHeader {
+                a11y = Status
+                loc = object.header
+              }
+              component ObjectSummary {
+                a11y = Status
+                loc = object.summary
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.0
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.1
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.2
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.3
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = object.step.4
+              }
+            }
+            "#,
+        )
+        .expect("intent steps");
+        let tree = layout_v2(&screen, 1080, 2400);
+        let summary = layout_v1_find(&tree, "object.summary").expect("summary");
+        assert_eq!(summary.rect, saai_ui_core::Rect::new(49, 140, 982, 144));
+        let first = layout_v1_find(&tree, "object.step.0").expect("step.0");
+        assert_eq!(
+            first.rect,
+            saai_ui_core::Rect::new(49, 284, 982, first.rect.height)
+        );
+        assert_eq!(first.action.as_deref(), Some("object.step.0"));
+        let last = layout_v1_find(&tree, "object.step.4").expect("step.4");
+        assert_eq!(last.rect.y, first.rect.y + first.rect.height * 4);
+        assert_eq!(last.action.as_deref(), Some("object.step.4"));
+        assert_eq!(
+            tree.hit_test(540.0, (last.rect.y + 8) as f64)
+                .and_then(|node| node.action.as_deref()),
+            Some("object.step.4")
+        );
+        assert!(tree.hit_test(540.0, 200.0).is_none());
     }
 
     #[test]
@@ -2587,10 +2672,7 @@ mod tests {
             let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));
             assert!(!screen.is_privileged(), "{name}");
             let tree = layout_v2(&screen, 1080, 2400);
-            assert!(
-                layout_v1_find(&tree, "ContextHeader").is_some(),
-                "{name}"
-            );
+            assert!(layout_v1_find(&tree, "ContextHeader").is_some(), "{name}");
         }
     }
 }

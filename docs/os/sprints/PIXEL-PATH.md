@@ -240,6 +240,10 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 public examples omit privileged | fourteen `*-public.sui` omit `OrbHost` / lock / gallery **host** (ADR-467; Experimental; leave Сейчас) |
 | VUI-09 public unknown reject | `compile_v2_public` rejects `WidgetCard` / surface `home` **host** (ADR-468; Experimental; leave Сейчас) |
 | VUI-09 public NOW empty | `now.empty` stays Fill leftover, not stacked row **host** (ADR-469; Experimental; leave Сейчас) |
+| VUI-09 reopen concept boards | boards are the visual source; parks no longer block named chrome **host** (ADR-470; Experimental; leave Сейчас) |
+| VUI-09 object related Button | `object.related` Button follows first live peer **host** (ADR-471; Experimental; leave Сейчас) |
+| VUI-09 object related peers | one Button per SOM peer `object.related.{i}` **host** (ADR-472; Experimental; leave Сейчас) |
+| VUI-09 intent plan steps | one Button per live Task `object.step.{i}` **host** (ADR-473; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

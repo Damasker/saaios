@@ -72,7 +72,7 @@
 //! limitation from Change 4), so a real layer surface couldn't
 //! receive the taps that switch pages.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -3293,34 +3293,81 @@ fn task_confirm_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bo
 
 const OBJECT_VIEW_ACTION_PREFIX: &str = "object-view-action:";
 
-/// The tapped button's position (0 = first/primary), or `None` if the
-/// tap missed every button or there are none -- same "layout only
-/// returns a position, the call site decides what it means" shape as
-/// `task_confirm_action_at`'s own `bool`, generalized past two fixed
-/// buttons since which entity is showing decides how many buttons
-/// (and what they do) at any given moment.
-fn object_view_action_at(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ObjectViewHit {
+    Action(usize),
+    Related(usize),
+    Step(usize),
+}
+
+/// The tapped Object View control, or `None` if the tap missed.
+/// Related is a SOM peer (ADR-472). Step is an Intent Task
+/// (ADR-473). Action index is the trailing Button list.
+fn object_view_hit(
     pos: (f64, f64),
     width: u32,
     height: u32,
     action_count: usize,
-) -> Option<usize> {
-    if width == 0 || height == 0 || action_count == 0 {
+    related_count: usize,
+    step_count: usize,
+) -> Option<ObjectViewHit> {
+    if width == 0 || height == 0 || (action_count == 0 && related_count == 0 && step_count == 0) {
         return None;
     }
     let locs: Vec<String> = (0..action_count)
         .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
         .collect();
     let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+    let related: Vec<String> = (0..related_count)
+        .map(|index| format!("object.related.{index}"))
+        .collect();
+    let steps: Vec<String> = (0..step_count)
+        .map(|index| format!("object.step.{index}"))
+        .collect();
+    let facts: Vec<&str> = related
+        .iter()
+        .chain(steps.iter())
+        .map(String::as_str)
+        .collect();
     live_v2_hit(
-        &object_overlay_v2_source(&loc_refs, &[], false),
-        "ADR-429 object overlay",
+        &object_overlay_v2_source(&loc_refs, &facts, false),
+        "ADR-473 object overlay",
         pos,
         width,
         height,
     )
     .and_then(|(_, action)| action)
-    .and_then(|action| action.strip_prefix(OBJECT_VIEW_ACTION_PREFIX)?.parse().ok())
+    .and_then(|action| {
+        if let Some(index) = action
+            .strip_prefix("object.step.")
+            .and_then(|index| index.parse().ok())
+        {
+            return Some(ObjectViewHit::Step(index));
+        }
+        action
+            .strip_prefix("object.related.")
+            .and_then(|index| index.parse().ok())
+            .map(ObjectViewHit::Related)
+            .or_else(|| {
+                action
+                    .strip_prefix(OBJECT_VIEW_ACTION_PREFIX)?
+                    .parse()
+                    .ok()
+                    .map(ObjectViewHit::Action)
+            })
+    })
+}
+
+fn object_view_action_at(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    action_count: usize,
+) -> Option<usize> {
+    match object_view_hit(pos, width, height, action_count, 0, 0) {
+        Some(ObjectViewHit::Action(index)) => Some(index),
+        _ => None,
+    }
 }
 
 /// What Object View shows for one entity -- `saaios.task`/`saaios.
@@ -3563,6 +3610,60 @@ fn related_object_line(
     }
 }
 
+fn related_object_first_peer(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> Option<Uuid> {
+    related_object_peer_ids(entity, selected_entities, relationships)
+        .into_iter()
+        .next()
+}
+
+fn related_object_peer_ids(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> Vec<Uuid> {
+    let now = Utc::now();
+    let self_ref = ObjectRef::entity(entity.id);
+    let mut related = relationships
+        .iter()
+        .filter(|relationship| {
+            relationship.is_active_at(now)
+                && relationship.relation_type != RELATION_IN_SPACE
+                && (relationship.source == self_ref || relationship.target == self_ref)
+        })
+        .collect::<Vec<_>>();
+    related.sort_by_key(|relationship| {
+        (
+            relationship.relation_type != RELATION_REALIZES,
+            relationship.id,
+        )
+    });
+    let mut peers = Vec::new();
+    for relationship in related {
+        let outgoing = relationship.source == self_ref;
+        let peer = if outgoing {
+            &relationship.target
+        } else {
+            &relationship.source
+        };
+        let ObjectRef::Entity { id: peer_id } = peer else {
+            continue;
+        };
+        if peers.contains(peer_id) {
+            continue;
+        }
+        if format_related_relationship(relationship, *peer_id, outgoing, selected_entities)
+            .is_some()
+        {
+            peers.push(*peer_id);
+        }
+    }
+    peers
+}
+
 /// ADR-242: Object View related is every live SOM entity link whose
 /// peer is already in the selected space. Space membership and
 /// dangling refs stay off this screen. Missing peers are omitted,
@@ -3634,6 +3735,79 @@ fn format_related_relationship(
     } else {
         Some(format!("Связано: {title}"))
     }
+}
+
+/// Intent Object View (ADR-473): live Tasks that realize this
+/// Intent. Other types emit no plan rows.
+fn object_view_plan_steps<'a>(
+    entity: &Entity,
+    selected_entities: &'a [Entity],
+    relationships: &[Relationship],
+) -> Vec<&'a Entity> {
+    if entity.entity_type != "saaios.intent" {
+        return Vec::new();
+    }
+    plan_steps_for_intent(entity, selected_entities, relationships)
+}
+
+fn object_view_step_lines(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> Vec<String> {
+    object_view_plan_steps(entity, selected_entities, relationships)
+        .into_iter()
+        .map(|task| {
+            format!(
+                "{} — {}",
+                task.title,
+                task_status_text(task, selected_entities)
+            )
+        })
+        .collect()
+}
+
+/// SOM peers that are not already an Intent plan step. Plan Tasks
+/// stay on `object.step.{i}` so they are not duplicated as related.
+fn object_view_related_omit(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> HashSet<Uuid> {
+    object_view_plan_steps(entity, selected_entities, relationships)
+        .into_iter()
+        .map(|task| task.id)
+        .collect()
+}
+
+fn object_view_related_peer_lines(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> Vec<String> {
+    let omit = object_view_related_omit(entity, selected_entities, relationships);
+    related_object_peer_ids(entity, selected_entities, relationships)
+        .into_iter()
+        .zip(related_object_lines(
+            entity,
+            selected_entities,
+            relationships,
+        ))
+        .filter(|(id, _)| !omit.contains(id))
+        .map(|(_, line)| line)
+        .collect()
+}
+
+fn object_view_related_peer_ids(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+) -> Vec<Uuid> {
+    let omit = object_view_related_omit(entity, selected_entities, relationships);
+    related_object_peer_ids(entity, selected_entities, relationships)
+        .into_iter()
+        .filter(|id| !omit.contains(id))
+        .collect()
 }
 
 /// A raw string's own text, not its quoted JSON form -- everything
@@ -6760,10 +6934,7 @@ fn remote_pair_content_cards(
     (
         body,
         header,
-        vec![(
-            cards[0],
-            render::ActionCardView::new(client_name, "", ""),
-        )],
+        vec![(cards[0], render::ActionCardView::new(client_name, "", ""))],
         cards[1],
         buttons[0],
         buttons[1],
@@ -7041,7 +7212,12 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.initial_attach" {
         return initial_attach_phrase(value.as_str()?.trim()).map(str::to_string);
     }
-    if key == "cellular.dns" || key == "cellular.dns6" || key == "cellular.ipv4" || key == "cellular.ipv6" || key == "cellular.signal" {
+    if key == "cellular.dns"
+        || key == "cellular.dns6"
+        || key == "cellular.ipv4"
+        || key == "cellular.ipv6"
+        || key == "cellular.signal"
+    {
         return dns_phrase(value.as_str()?.trim()).map(str::to_string);
     }
     if key == "cellular.rat" {
@@ -7060,7 +7236,37 @@ fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Opt
     if key == "cellular.traffic" {
         return traffic_phrase(value.as_str()?.trim()).map(str::to_string);
     }
-    if key == "cellular.config" || key == "cellular.sgc" || key == "cellular.power" || key == "cellular.voice_set" || key == "cellular.setup" || key == "cellular.profile" || key == "cellular.activity" || key == "cellular.fastdorm" || key == "cellular.endc" || key == "cellular.throttle" || key == "cellular.unsolff" || key == "cellular.unsol" || key == "cellular.screen" || key == "cellular.cellinfo" || key == "cellular.smsc" || key == "cellular.vonrget" || key == "cellular.aptime" || key == "cellular.dbgtrace" || key == "cellular.tty" || key == "cellular.pssvc" || key == "cellular.prefmodem" || key == "cellular.slot" || key == "cellular.sigcrit" || key == "cellular.smsact" || key == "cellular.linkcrit" || key == "cellular.smscb" || key == "cellular.calllist" || key == "cellular.gpslock" || key == "cellular.gpsnfw" || key == "cellular.samode" {
+    if key == "cellular.config"
+        || key == "cellular.sgc"
+        || key == "cellular.power"
+        || key == "cellular.voice_set"
+        || key == "cellular.setup"
+        || key == "cellular.profile"
+        || key == "cellular.activity"
+        || key == "cellular.fastdorm"
+        || key == "cellular.endc"
+        || key == "cellular.throttle"
+        || key == "cellular.unsolff"
+        || key == "cellular.unsol"
+        || key == "cellular.screen"
+        || key == "cellular.cellinfo"
+        || key == "cellular.smsc"
+        || key == "cellular.vonrget"
+        || key == "cellular.aptime"
+        || key == "cellular.dbgtrace"
+        || key == "cellular.tty"
+        || key == "cellular.pssvc"
+        || key == "cellular.prefmodem"
+        || key == "cellular.slot"
+        || key == "cellular.sigcrit"
+        || key == "cellular.smsact"
+        || key == "cellular.linkcrit"
+        || key == "cellular.smscb"
+        || key == "cellular.calllist"
+        || key == "cellular.gpslock"
+        || key == "cellular.gpsnfw"
+        || key == "cellular.samode"
+    {
         return config_phrase(value.as_str()?.trim()).map(str::to_string);
     }
     if key == "cellular.sim_app" {
@@ -7594,8 +7800,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 } else {
                     SettingRow::readout("Bluetooth", "Нет адаптера").row
                 },
-                SettingRow::readout("Сотовая сеть", cellular_row_with_session(&facts))
-                .row,
+                SettingRow::readout("Сотовая сеть", cellular_row_with_session(&facts)).row,
                 SettingRow::cycle(
                     "Удалённый доступ (SSH)",
                     remote_status,
@@ -7796,9 +8001,18 @@ fn overlay_buttons_v2_source(screen_id: &str, locs: &[&str]) -> String {
 fn object_overlay_v2_source(locs: &[&str], facts: &[&str], permission: bool) -> String {
     let mut src = String::from("sui 2\nscreen object {\n");
     src.push_str(&v2_header_block("object.header"));
-    src.push_str(&v2_stacked_block("ObjectSummary", "Status", "object.summary"));
+    src.push_str(&v2_stacked_block(
+        "ObjectSummary",
+        "Status",
+        "object.summary",
+    ));
     for fact in facts {
-        src.push_str(&v2_stacked_block("DataRow", "Status", fact));
+        let a11y = if fact.starts_with("object.related") || fact.starts_with("object.step") {
+            "Button"
+        } else {
+            "Status"
+        };
+        src.push_str(&v2_stacked_block("DataRow", a11y, fact));
     }
     if permission {
         src.push_str(&v2_stacked_block(
@@ -7815,13 +8029,17 @@ fn object_overlay_v2_source(locs: &[&str], facts: &[&str], permission: bool) -> 
 }
 
 fn object_overlay_fact_locs(
-    related: bool,
+    related_count: usize,
+    step_count: usize,
     detail_count: usize,
     decision_count: usize,
 ) -> Vec<String> {
     let mut facts = Vec::new();
-    if related {
-        facts.push("object.related".to_string());
+    for index in 0..related_count {
+        facts.push(format!("object.related.{index}"));
+    }
+    for index in 0..step_count {
+        facts.push(format!("object.step.{index}"));
     }
     for index in 0..detail_count {
         facts.push(format!("object.detail.{index}"));
@@ -9363,22 +9581,49 @@ impl TouchHandler for Shell {
                 // Button count varies by entity_type, so it has to be
                 // recomputed here, same "read fresh" reasoning
                 // `object_view_content` itself already documents.
-                let action_count = self
+                let content = self.viewing_entity().map(|entity| {
+                    object_view_content(entity, &self.selected_entities, &self.relationships)
+                });
+                let action_count = content.as_ref().map(|view| view.actions.len()).unwrap_or(0);
+                let related_count = self
                     .viewing_entity()
                     .map(|entity| {
-                        object_view_content(entity, &self.selected_entities, &self.relationships)
-                            .actions
+                        object_view_related_peer_ids(
+                            entity,
+                            &self.selected_entities,
+                            &self.relationships,
+                        )
+                        .len()
+                    })
+                    .unwrap_or(0);
+                let step_count = self
+                    .viewing_entity()
+                    .map(|entity| {
+                        object_view_plan_steps(entity, &self.selected_entities, &self.relationships)
                             .len()
                     })
                     .unwrap_or(0);
-                if let Some(index) = object_view_action_at(
+                match object_view_hit(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     action_count,
+                    related_count,
+                    step_count,
                 ) {
-                    self.handle_object_view_action(index);
-                    self.draw(conn, qh);
+                    Some(ObjectViewHit::Action(index)) => {
+                        self.handle_object_view_action(index);
+                        self.draw(conn, qh);
+                    }
+                    Some(ObjectViewHit::Related(index)) => {
+                        self.handle_object_view_related(index);
+                        self.draw(conn, qh);
+                    }
+                    Some(ObjectViewHit::Step(index)) => {
+                        self.handle_object_view_step(index);
+                        self.draw(conn, qh);
+                    }
+                    None => {}
                 }
             } else if self.intent_input.is_some() {
                 // Modal, same as consent: the on-screen keyboard owns
@@ -9984,12 +10229,8 @@ impl Shell {
                 .iter()
                 .map(|name| capability_label(name).to_owned())
                 .collect::<Vec<_>>();
-            let (content_rect, header_rect, rows, accept, decline) = consent_content_cards(
-                &pending.app_name,
-                &labels,
-                width,
-                height,
-            );
+            let (content_rect, header_rect, rows, accept, decline) =
+                consent_content_cards(&pending.app_name, &labels, width, height);
             Frame::Consent {
                 content_rect,
                 header: consent_header(&space_display_name(&self.spaces, &self.selected_space_id)),
@@ -10004,14 +10245,27 @@ impl Shell {
                 .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
                 .collect();
             let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
-            let details = object_view_details(&content);
+            let mut details = object_view_details(&content);
             let decision_facts = content
                 .decision
                 .as_ref()
                 .map(DecisionOverlay::fact_lines)
                 .unwrap_or_default();
+            let related_lines = object_view_related_peer_lines(
+                entity,
+                &self.selected_entities,
+                &self.relationships,
+            );
+            let step_lines =
+                object_view_step_lines(entity, &self.selected_entities, &self.relationships);
+            if related_lines.is_empty() && step_lines.is_empty() {
+                if let Some(related) = content.related.clone() {
+                    details.insert(0, related);
+                }
+            }
             let fact_locs = object_overlay_fact_locs(
-                content.related.is_some(),
+                related_lines.len(),
+                step_lines.len(),
                 details.len(),
                 decision_facts.len(),
             );
@@ -10025,10 +10279,8 @@ impl Shell {
                 width,
                 height,
             );
-            let mut fact_texts = Vec::new();
-            if let Some(related) = content.related.clone() {
-                fact_texts.push(related);
-            }
+            let mut fact_texts = related_lines;
+            fact_texts.extend(step_lines);
             fact_texts.extend(details);
             fact_texts.extend(decision_facts);
             let fact_rows = fact_rects.into_iter().zip(fact_texts).collect();
@@ -10322,9 +10574,10 @@ impl Shell {
                 ),
                 header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                 apps: apps_paint_cards(&view, &self.installed_apps),
-                empty_slot: self.installed_apps.is_empty().then(|| {
-                    v2_named_rect(&view, "apps.empty", "ADR-437 apps empty")
-                }),
+                empty_slot: self
+                    .installed_apps
+                    .is_empty()
+                    .then(|| v2_named_rect(&view, "apps.empty", "ADR-437 apps empty")),
                 empty_pattern: apps_grid_empty_pattern(
                     self.appd.is_connected(),
                     self.installed_apps.len(),
@@ -12103,8 +12356,12 @@ impl Shell {
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
             cellular_cp: read_cp_state(),
-            cellular_registration_raw: camp_log_is_current().then(read_data_registration_raw).flatten(),
-            cellular_voice_raw: camp_log_is_current().then(read_voice_registration_raw).flatten(),
+            cellular_registration_raw: camp_log_is_current()
+                .then(read_data_registration_raw)
+                .flatten(),
+            cellular_voice_raw: camp_log_is_current()
+                .then(read_voice_registration_raw)
+                .flatten(),
             cellular_radio: camp_log_is_current().then(read_radio_token).flatten(),
             cellular_selection: camp_log_is_current().then(read_selection_mode).flatten(),
             cellular_stack: camp_log_is_current().then(read_stack_mode).flatten(),
@@ -12158,11 +12415,8 @@ impl Shell {
             cellular_endpoint: read_endpoint_holder().map(str::to_string),
             cellular_supervisor: read_supervisor_token(),
             cellular_action: Some(
-                saai_observation::camp_action(
-                    read_cp_state().as_deref(),
-                    camp_owner_running(),
-                )
-                .to_string(),
+                saai_observation::camp_action(read_cp_state().as_deref(), camp_owner_running())
+                    .to_string(),
             ),
             cellular_open: Some(
                 saai_observation::camp_open(
@@ -12544,6 +12798,28 @@ impl Shell {
             }
             _ => self.viewing_entity_id = None,
         }
+    }
+
+    fn handle_object_view_related(&mut self, index: usize) {
+        let Some(entity) = self.viewing_entity().cloned() else {
+            return;
+        };
+        let next =
+            object_view_related_peer_ids(&entity, &self.selected_entities, &self.relationships)
+                .into_iter()
+                .nth(index);
+        self.viewing_entity_id = next.filter(|id| *id != entity.id);
+    }
+
+    fn handle_object_view_step(&mut self, index: usize) {
+        let Some(entity) = self.viewing_entity().cloned() else {
+            return;
+        };
+        let next = object_view_plan_steps(&entity, &self.selected_entities, &self.relationships)
+            .into_iter()
+            .nth(index)
+            .map(|task| task.id);
+        self.viewing_entity_id = next.filter(|id| *id != entity.id);
     }
 
     /// HIA-04b: the Orb's own action handler, same "layout returns a
@@ -13427,41 +13703,41 @@ impl Shell {
 mod tests {
     use super::{
         activity_clock_for, apply_volume, apps_grid_empty_pattern, apps_grid_header,
-        bluetooth_card_from_row, bluetooth_hci_present_in_listing, bluetooth_header,
-        bluetooth_list_action_at, bluetooth_list_pattern, bluetooth_list_row_count,
-        bluetooth_list_rows, bluetooth_pair_error_from, bluetooth_scan_pattern,
-        calibration_requested, capability_label, capture_nodes_from_v4l_listing,
-        cellular_ifaces_from_net_listing, cellular_row_status, bearer_is_live, cp_state_token,
-        last_field_registration_raw, consent_action_at, consent_content_cards, consent_header,
-        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header,
-        diagnostic_row, diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space,
-        ensure_me_row_cache, field_shows_context_focus, flatten_me_rows, format_utc_offset,
-        in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
-        intent_compose_header, intent_field_rect, intent_input_field, known_surfaces,
-        lock_attention_view, lock_device_view, lock_idle_view,
-        lock_pin_entry_field, lock_sleep_view, lock_wake_tap, logical_surface_size,
-        me_fixture_facts, me_header, me_system_sections, motion_clock_for, next_in_cycle,
-        next_pending_action, now_action_at, now_object_tapped, now_workflow_sections,
-        object_view_action_at, object_view_content, object_view_details,
-        object_view_permission_pattern, object_view_summary, orb_action_at,
+        bearer_is_live, bluetooth_card_from_row, bluetooth_hci_present_in_listing,
+        bluetooth_header, bluetooth_list_action_at, bluetooth_list_pattern,
+        bluetooth_list_row_count, bluetooth_list_rows, bluetooth_pair_error_from,
+        bluetooth_scan_pattern, calibration_requested, capability_label,
+        capture_nodes_from_v4l_listing, cellular_ifaces_from_net_listing, cellular_row_status,
+        consent_action_at, consent_content_cards, consent_header, cp_state_token,
+        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
+        diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
+        field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
+        inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
+        intent_field_rect, intent_input_field, known_surfaces, last_field_registration_raw,
+        lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
+        lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
+        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
+        now_object_tapped, now_workflow_sections, object_view_action_at, object_view_content,
+        object_view_details, object_view_hit, object_view_permission_pattern,
+        object_view_related_peer_lines, object_view_step_lines, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
-        remote_pair_content_cards, remote_pair_header, remove_context_source,
-        retain_pressed_while_clock, search_header, search_row_at, search_rows, space_color,
-        space_color_entity, space_detail_action_at, space_detail_empty_card, space_detail_header,
-        space_display_name, space_for_wifi_ssid, space_lifecycle,
-        space_list_rows, space_member_kind_label, space_member_rows, space_relation_targets,
-        space_row_at, spaces_header, stacked_control_rect,
+        related_object_first_peer, remote_pair_content_cards, remote_pair_header,
+        remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
+        search_rows, space_color, space_color_entity, space_detail_action_at,
+        space_detail_empty_card, space_detail_header, space_display_name, space_for_wifi_ssid,
+        space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
+        space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, trusted_client_card_from_row, trusted_client_is_protected,
-        trusted_client_list_rows, trusted_client_revoke_decision,
-        trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        trusted_client_list_rows, trusted_client_revoke_decision, trusted_header,
+        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
         wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
         AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
         ContextSource, DataRowVariant, Entity, FieldKind, HealthReport, HealthState, Keyboard,
-        KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke,
-        LockWakeTap, MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage,
+        KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockWakeTap,
+        MotionClock, MotionToken, ObjectSummary, ObjectViewHit, OrbAction, Rect, RootPage,
         SafeInsets, Space, SpaceColor, SpaceDetailTap, SpaceLifecycle, SurfacePattern,
         SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
         WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
@@ -14781,7 +15057,10 @@ mod tests {
         );
         assert_eq!(
             now_action_at(
-                (f64::from(first.x + first.width + 40), f64::from(first.y + 10)),
+                (
+                    f64::from(first.x + first.width + 40),
+                    f64::from(first.y + 10)
+                ),
                 1080,
                 2400,
                 &apps
@@ -15104,13 +15383,8 @@ mod tests {
         );
         assert_eq!(pair.1[0].y, buttons[0].y);
         assert_eq!(pair.1[0].height, 300);
-        let (compose_header, field) = super::overlay_field_paint(
-            "intent",
-            super::INTENT_FIELD_ID,
-            true,
-            width,
-            height,
-        );
+        let (compose_header, field) =
+            super::overlay_field_paint("intent", super::INTENT_FIELD_ID, true, width, height);
         assert_eq!(compose_header.y, 0);
         assert_eq!(compose_header.x, field.x);
         assert!(field.height > 0);
@@ -15504,7 +15778,10 @@ mod tests {
         );
         assert!(!super::radio_suffix(Some(&phy)).contains("pci"));
         assert_eq!(super::radio_suffix(None), "");
-        assert_eq!(super::barring_phrase(Some("clear")), Some("ограничений нет"));
+        assert_eq!(
+            super::barring_phrase(Some("clear")),
+            Some("ограничений нет")
+        );
         assert_eq!(super::barring_phrase(Some("set")), Some("ограничение есть"));
         assert_eq!(super::barring_phrase(Some("nope")), None);
     }
@@ -15527,206 +15804,2858 @@ mod tests {
     #[test]
     fn cellular_row_shows_cp_registration_and_live_bearer_only() {
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("gone"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                Some("gone"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, Some("running"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                Some("running"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "процесс"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("owner"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "camp"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, Some("hold"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("hold"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "удержание"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, Some("attend"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("attend"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "уже запущен"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, Some("owner"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("owner"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "отказ процесса"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, Some(1), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(1),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "голос домашняя"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, Some("automatic"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("automatic"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "авто"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("enabled"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "стек"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, Some("voice-centric"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("voice-centric"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "служба голосовая"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, Some("enabled"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("enabled"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "операция включена"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "разрешение дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "присоединение дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("yes"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "dns есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("yes"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "dns6 есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "конфиг дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "sgc дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "питание дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "задание дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("yes"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "ipv4 есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("yes"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("yes"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "ipv6 есть"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "сессия дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "профиль дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "активность дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "дремота дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "endc дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "троттлинг дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "фильтр дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "отбор дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "экран дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "соты дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "smsc дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "vonr дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "время дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "трасса дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "tty дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "ps дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "pref дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "слот дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "критерий дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "активация дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "связь дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "рассылка дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                None,
+                &[]
+            ),
             "список дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                None,
+                &[]
+            ),
             "gps дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                None,
+                &[]
+            ),
             "gpsnfw дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, Some("accepted"), &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("accepted"),
+                &[]
+            ),
             "sa дано"
         );
         assert_eq!(
-            cellular_row_status(None, None, None, None, None, None, Some("handoff-exit"), Some("pin"), Some("pin"), Some(9), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), Some("pin"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("handoff-exit"),
+                Some("pin"),
+                Some("pin"),
+                Some(9),
+                Some("pin"),
+                Some("pin"),
+                Some("pin"),
+                Some("pin"),
+                Some("pin"),
+                Some("pin"),
+                Some("pin"),
+                Some("pin"),
+                Some("pin"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "Нет модема"
         );
         assert_eq!(
-            cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]),
+            cellular_row_status(
+                Some("ONLINE"),
+                Some(0),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[]
+            ),
             "ONLINE · нет регистрации"
         );
-        let online = cellular_row_status(Some("ONLINE"), Some(0), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, &[]);
+        let online = cellular_row_status(
+            Some("ONLINE"),
+            Some(0),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            &[],
+        );
         assert!(!online.contains("LTE"));
         assert!(!online.contains("Kyivstar"));
         assert_eq!(
@@ -15744,7 +18673,43 @@ mod tests {
                 None,
                 None,
                 None,
-                None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 &["rmnet1".into()]
             ),
             "ONLINE · домашняя · rmnet1"
@@ -15825,7 +18790,38 @@ mod tests {
                 Some("pin"),
                 Some("pin"),
                 Some("pin"),
-                Some("pin"), None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None,
+                Some("pin"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
                 &[]
             ),
             "ONLINE · домашняя · без процесса"
@@ -17258,17 +20254,108 @@ mod tests {
     }
 
     #[test]
+    fn object_view_related_button_hits_the_concept_row() {
+        assert_eq!(
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0),
+            Some(ObjectViewHit::Related(0))
+        );
+        assert_eq!(object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0), None);
+        assert_eq!(
+            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 2, 0),
+            Some(ObjectViewHit::Action(0))
+        );
+        assert_eq!(object_view_action_at((540.0, 292.0), 1080, 2400, 1), None);
+    }
+
+    #[test]
+    fn object_view_intent_step_button_hits_the_plan_row() {
+        assert_eq!(
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 1),
+            Some(ObjectViewHit::Step(0))
+        );
+        let painted = super::object_overlay_paint(
+            &[],
+            &[
+                "object.step.0",
+                "object.step.1",
+                "object.step.2",
+                "object.step.3",
+                "object.step.4",
+            ],
+            false,
+            "ADR-473 object overlay",
+            1080,
+            2400,
+        );
+        assert_eq!(painted.2.len(), 5);
+        assert_eq!(
+            painted.2[0],
+            saai_ui_core::Rect::new(49, 284, 982, painted.2[0].height)
+        );
+        assert_eq!(painted.2[1].y, painted.2[0].y + painted.2[0].height);
+        assert_eq!(
+            object_view_hit((540.0, (painted.2[4].y + 8) as f64), 1080, 2400, 0, 0, 5),
+            Some(ObjectViewHit::Step(4))
+        );
+        assert_eq!(
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 1),
+            Some(ObjectViewHit::Related(0))
+        );
+    }
+
+    #[test]
+    fn object_view_intent_plan_steps_omit_those_tasks_from_related() {
+        let intent = intent_entity("Подготовить демо");
+        let first = task_entity("Собрать слайды", Some(intent.id));
+        let second = task_entity("Экспорт PDF", Some(intent.id));
+        let mut note = test_entity("note.doc", serde_json::Map::new());
+        note.title = "Заметка".to_string();
+        let entities = vec![intent.clone(), first.clone(), second.clone(), note.clone()];
+        let relationships = vec![
+            related_relationship(
+                first.id,
+                ObjectRef::entity(intent.id),
+                RELATION_REALIZES,
+                Provenance::System,
+                None,
+            ),
+            related_relationship(
+                second.id,
+                ObjectRef::entity(intent.id),
+                RELATION_REALIZES,
+                Provenance::System,
+                None,
+            ),
+            related_relationship(
+                intent.id,
+                ObjectRef::entity(note.id),
+                "saaios.related-to",
+                Provenance::User,
+                None,
+            ),
+        ];
+        let steps = object_view_step_lines(&intent, &entities, &relationships);
+        assert_eq!(steps.len(), 2);
+        assert!(steps[0].starts_with("Собрать слайды — "));
+        assert!(steps[1].starts_with("Экспорт PDF — "));
+        assert_eq!(
+            object_view_related_peer_lines(&intent, &entities, &relationships),
+            vec!["Связано: Заметка".to_string()]
+        );
+        let empty = intent_entity("Пустое намерение");
+        assert!(object_view_step_lines(&empty, &[empty.clone()], &[]).is_empty());
+        assert_eq!(
+            object_view_content(&empty, &[empty.clone()], &[]).status,
+            "Нет задачи"
+        );
+    }
+
+    #[test]
     fn empty_object_view_header_comes_from_layout_v2() {
         let width = 1080;
         let height = 2400;
-        let (header, summary, facts, permission, buttons) = super::object_overlay_paint(
-            &[],
-            &[],
-            false,
-            "ADR-430 object overlay",
-            width,
-            height,
-        );
+        let (header, summary, facts, permission, buttons) =
+            super::object_overlay_paint(&[], &[], false, "ADR-430 object overlay", width, height);
         assert!(buttons.is_empty());
         assert!(facts.is_empty());
         assert!(permission.is_none());
@@ -17276,7 +20363,7 @@ mod tests {
         assert_eq!(summary, saai_ui_core::Rect::new(49, 140, 982, 144));
         let with_fact = super::object_overlay_paint(
             &[],
-            &["object.related"],
+            &["object.related.0"],
             true,
             "ADR-430 object overlay",
             width,
@@ -17295,7 +20382,7 @@ mod tests {
         assert!(perm.height > 0);
         let two = super::object_overlay_paint(
             &["object-view-action:0", "object-view-action:1"],
-            &["object.related"],
+            &["object.related.0"],
             true,
             "ADR-430 object overlay",
             width,
@@ -17869,9 +20956,14 @@ mod tests {
             Provenance::User,
             None,
         );
-        let content = object_view_content(&entity, &[other], &[relationship]);
+        let peer = other.id;
+        let content = object_view_content(&entity, &[other.clone()], &[relationship.clone()]);
         assert_eq!(content.related, Some("Связано: Сервер".to_string()));
         assert!(content.actions.is_empty());
+        assert_eq!(
+            related_object_first_peer(&entity, &[other], &[relationship]),
+            Some(peer)
+        );
     }
 
     #[test]

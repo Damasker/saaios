@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–469; production `compile_v2()`; named chrome paint from `layout_v2`; leftover unused chrome closed; public Search hits, list/overlay/NOW headers, compose-without-Keyboard, privileged/deferred/unknown rejects, public summaries/primitives, public examples omit privileged chrome, and NOW empty Fill leftover host-locked; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–473; concept-board chrome reopened; Object related peers; Intent plan steps; public subset Experimental; not Visual v1 sign-off) |
 
 ---
 
@@ -1221,7 +1221,11 @@ public primitives dock stacked rows (ADR-465);
 public paint primitives are not stacked rows (ADR-466);
 public examples omit privileged chrome (ADR-467);
 public subset rejects unknown names (ADR-468);
-public NOW empty stays Fill leftover (ADR-469).
+public NOW empty stays Fill leftover (ADR-469);
+concept-board chrome reopened (ADR-470);
+Object related is a Button (ADR-471);
+Object related is one Button per SOM peer (ADR-472);
+Intent plan steps are live Task Buttons (ADR-473).
 Release
 gate remains. Not Visual v1 sign-off.
 
@@ -1440,6 +1444,16 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   stays Fill leftover behind `ObjectSummary`, not stacked row 0.
   Status invents no action. Still Experimental. Not Visual v1
   sign-off.
+- [x] Reopen concept-board chrome (ADR-470). Boards are the visual
+  source. Do not fake weather / voice / Android VM. Still
+  Experimental. Not Visual v1 sign-off.
+- [x] Object related row is a concept Button (ADR-471). First live
+  peer follow. Still Experimental. Not Visual v1 sign-off.
+- [x] Object related is one Button per SOM peer (ADR-472).
+  Still Experimental. Not Visual v1 sign-off.
+- [x] Intent plan steps are live Task Buttons (ADR-473). Confirm
+  stays AskUser. Compose `intent-public.sui` stays header+Field.
+  Still Experimental. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1551,13 +1565,9 @@ After each completed task group, report:
 
 ## Next action
 
-VUI-09 host release gate remains: leftover named chrome is closed
-(ADR-456); public Search hits, list/overlay/NOW headers,
-compose-without-Keyboard, privileged/deferred/unknown rejects,
-public summaries/primitives, public examples omit privileged
-chrome, and NOW empty Fill leftover are host-locked
-(ADR-457–469); public subset stays Experimental
-(ADR-185/265/427–469); leftover formulas stay Keyboard keys,
-gallery page, lock idle/wake (ADR-232); do not promote Stable; do
-not flash for sign-off. Space detail still deferred. MEM-08 stays
-omitted. Thin tuning stays last (ADR-213).
+VUI-09 concept-board chrome is open (ADR-470). Next named board
+regions: Object quick actions that already exist in OAM, NOW
+attention rows, composer mic disabled. Public subset stays Experimental.
+Acceptance stays unchecked until panther evidence. Do not fake
+weather / voice / Android VM. Keyboard keys, gallery page, and
+lock idle/wake stay formulas until a board names them.

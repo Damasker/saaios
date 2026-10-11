@@ -2919,9 +2919,8 @@ mod tests {
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
-        fingerprint_wrap_box,
-        gallery_row_positions, now_empty_pattern, physical, physical_line_height, role_px,
-        state_color, theme_color, ActionCardView, Canvas,
+        fingerprint_wrap_box, gallery_row_positions, now_empty_pattern, physical,
+        physical_line_height, role_px, state_color, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
         composite_gallery_fixtures, ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field,

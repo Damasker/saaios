@@ -62,6 +62,10 @@ Phone-oriented destination frames (generated working art, not Pixel captures):
 These illustrate hierarchy for design review. They do not authorize fake
 telemetry, Android VM rows, or chat-home IA.
 
+Implementation scenarios (25 SVG fixtures, not Pixel captures):
+[`handoff-vui09/HANDOFF.md`](handoff-vui09/HANDOFF.md). Labels like
+`Peer 1 · SOM` are contract placeholders, not live data.
+
 ## v1 navigation contract
 
 ```text

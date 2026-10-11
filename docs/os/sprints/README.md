@@ -143,6 +143,10 @@ ADR-466 public SemanticText / Icon / Divider are not stacked rows.
 ADR-467 public examples omit privileged chrome.
 ADR-468 public subset rejects unknown names.
 ADR-469 public NOW empty stays Fill leftover, not a stacked row.
+ADR-470 reopen concept-board chrome; parks no longer block named regions.
+ADR-471 Object related row is a concept Button; first live peer follow.
+ADR-472 Object related is one Button per SOM peer.
+ADR-473 Intent plan steps are live Task Buttons.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

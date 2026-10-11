@@ -73,7 +73,11 @@ primitives dock stacked rows (ADR-465). Public
 paint primitives are not stacked rows (ADR-466). Public
 examples omit privileged chrome (ADR-467). Public
 subset rejects unknown names (ADR-468). Public
-NOW empty stays Fill leftover (ADR-469). Public
+NOW empty stays Fill leftover (ADR-469). Concept-board
+chrome reopened (ADR-470). Object related is a Button
+(ADR-471). Object related is one Button per SOM peer
+(ADR-472). Intent plan steps are live Task Buttons
+(ADR-473). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`

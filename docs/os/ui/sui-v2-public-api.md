@@ -61,9 +61,12 @@ labelled Inbox sample: `ContextHeader`, `EventRow` with
 
 [`examples/object-public.sui`](examples/object-public.sui) is the
 labelled Object View sample: `ContextHeader` plus Status
-`ObjectSummary` (ADR-427/428), a Status `DataRow` (ADR-429), and
-a Status `SurfacePattern` (ADR-430). No nested tabs. Status
-invents no `open_object` and no action Buttons. `layout_v2` docks
+`ObjectSummary` (ADR-427/428), Button `DataRow`s for related peers
+(ADR-471/472), and a Status `SurfacePattern` (ADR-430). No nested
+tabs. Related actions are interned `object.related.0` /
+`object.related.1`. Intent plan steps are interned `object.step.{i}`
+Buttons from live Tasks (ADR-473). Compose `intent-public.sui` stays
+header+Field. Status invents no `open_object`. `layout_v2` docks
 the summary at `(49, 140, 982, 144)`, the fact row at `y=284`,
 and permission below that, all with the `width/22` margin
 (ADR-436). Public `IntentSummary` / `TaskSummary` / `AgentSummary`
@@ -223,6 +226,8 @@ into an app document fails `compile_v2_public()` (ADR-462).
   Public examples omit privileged chrome (ADR-467).
   Public subset rejects unknown names (ADR-468).
   Public NOW empty stays Fill leftover (ADR-469).
+  Concept-board chrome reopened (ADR-470).
+  Object related is a Button (ADR-471).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.

@@ -15,8 +15,13 @@ screen object {
   }
   component DataRow {
     text = Body
-    a11y = Status
-    loc = object.related
+    a11y = Button
+    loc = object.related.0
+  }
+  component DataRow {
+    text = Body
+    a11y = Button
+    loc = object.related.1
   }
   component SurfacePattern {
     text = Body
