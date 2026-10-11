@@ -99,7 +99,8 @@ above the tab strip (ADR-492). Space switcher overflow scrolls
 above the tab strip (ADR-493). Система
 cycles lock widget disclosure (ADR-494). Wi-Fi overflow
 networks scroll above pinned Обновить (ADR-495). Bluetooth
-overflow devices scroll above pinned Искать (ADR-496). Public
+overflow devices scroll above pinned Искать (ADR-496). Trusted-client
+overflow scrolls above pinned Назад (ADR-497). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`

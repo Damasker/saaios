@@ -168,6 +168,8 @@ nested tabs. Live overflow devices scroll above pinned Искать
 the labelled shell sample: `TrustedClientRow` with `a11y = Button`
 (ADR-207) and nested `row back` (ADR-214). `compile_v2_public()`
 rejects it. Status rows invent no `revoke_trusted_client`.
+Live overflow clients scroll above pinned Назад (ADR-497);
+this example does not name the offset.
 
 [`examples/capability-privileged.sui`](examples/capability-privileged.sui)
 is the labelled shell sample: `CapabilityRow` with `a11y = Status`

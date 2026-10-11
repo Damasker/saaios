@@ -170,6 +170,7 @@ ADR-493 Space switcher overflow scrolls above the tab strip.
 ADR-494 LW-02 Система cycles lock widget disclosure.
 ADR-495 Wi-Fi overflow networks scroll above pinned Обновить.
 ADR-496 Bluetooth overflow devices scroll above pinned Искать.
+ADR-497 trusted-client overflow scrolls above pinned Назад.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

@@ -1500,6 +1500,7 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Space switcher overflow scrolls above the tab strip (ADR-493).
 - [x] Wi-Fi overflow networks scroll above pinned Обновить (ADR-495).
 - [x] Bluetooth overflow devices scroll above pinned Искать (ADR-496).
+- [x] Trusted-client overflow scrolls above pinned Назад (ADR-497).
   Still Experimental. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
@@ -1616,7 +1617,8 @@ VUI-09 concept-board chrome is open (ADR-470). Space switcher
 overflow scrolls above the tab strip (ADR-493). LW-02 host
 selector cycles lock widgets (ADR-494). Wi-Fi overflow
 networks scroll above pinned Обновить (ADR-495). Bluetooth
-overflow devices scroll above pinned Искать (ADR-496). Keyboard keys,
+overflow devices scroll above pinned Искать (ADR-496). Trusted-client
+overflow scrolls above pinned Назад (ADR-497). Keyboard keys,
 gallery page, and lock idle/wake stay formulas until a board
 names them. Public subset stays Experimental. Acceptance stays
 unchecked until panther evidence. Do not fake weather / voice /

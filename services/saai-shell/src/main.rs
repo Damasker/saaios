@@ -3101,18 +3101,52 @@ fn trusted_v2_source(client_count: usize) -> String {
     src
 }
 
+fn trusted_list_row_count(client_count: usize) -> usize {
+    if client_count == 0 {
+        1
+    } else {
+        client_count
+    }
+}
+
+fn trusted_list_scroll_content(width: u32, height: u32, client_count: usize) -> Rect {
+    let first = stacked_row_rect(0, width, height);
+    let back = stacked_control_rect(trusted_list_row_count(client_count), width, height);
+    Rect::new(0, first.y, width, back.y.saturating_sub(first.y))
+}
+
+fn trusted_list_scroll_max(client_count: usize, width: u32, height: u32) -> i32 {
+    me_max_scroll_offset(
+        trusted_list_row_count(client_count),
+        width,
+        height,
+        trusted_list_scroll_content(width, height, client_count),
+    )
+}
+
 fn trusted_client_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     client_count: usize,
 ) -> Option<TrustedClientTap> {
-    let (id, action) = live_v2_hit(
+    trusted_client_action_at_scrolled(pos, width, height, client_count, 0)
+}
+
+fn trusted_client_action_at_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    client_count: usize,
+    scroll_offset: i32,
+) -> Option<TrustedClientTap> {
+    let (id, action) = live_v2_hit_scrolled(
         &trusted_v2_source(client_count),
         "ADR-218 trusted",
         pos,
         width,
         height,
+        scroll_offset,
     )?;
     match action.as_deref() {
         Some("list_back") => Some(TrustedClientTap::Back),
@@ -9874,6 +9908,7 @@ fn main() {
         spaces_list_scroll_offset: 0,
         wifi_scroll_offset: 0,
         bluetooth_scroll_offset: 0,
+        trusted_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -10257,6 +10292,10 @@ struct Shell {
     /// Обновить, and Назад stay at offset 0 (ADR-496). Reset when the
     /// list opens or closes.
     bluetooth_scroll_offset: i32,
+    /// Vertical drag-to-scroll for trusted clients. Header and Назад
+    /// stay at offset 0 (ADR-497). Reset when the list opens or
+    /// closes.
+    trusted_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10759,6 +10798,14 @@ impl TouchHandler for Shell {
             } else {
                 None
             }
+        } else if self.tab_touch_pending && self.trusted_clients_open {
+            if trusted_list_scroll_content(self.width, self.height, trusted_clients().len())
+                .contains(position.0, position.1)
+            {
+                Some((position.1, self.trusted_scroll_offset))
+            } else {
+                None
+            }
         } else if self.tab_touch_pending && self.viewing_entity_id.is_some() {
             Some((position.1, self.object_scroll_offset))
         } else if self.tab_touch_pending
@@ -11133,11 +11180,12 @@ impl TouchHandler for Shell {
                 // count fresh, same reasoning as the Bluetooth branch
                 // just above.
                 let client_count = trusted_clients().len();
-                if let Some(tap) = trusted_client_action_at(
+                if let Some(tap) = trusted_client_action_at_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     client_count,
+                    self.trusted_scroll_offset,
                 ) {
                     self.handle_trusted_client_tap(tap, conn, qh);
                 }
@@ -11468,6 +11516,14 @@ impl TouchHandler for Shell {
                     self.bluetooth_scroll_offset = clamped;
                     self.me_scroll_dirty = true;
                 }
+            } else if self.trusted_clients_open && !self.dev_surface_open {
+                let max_offset =
+                    trusted_list_scroll_max(trusted_clients().len(), self.width, self.height);
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.trusted_scroll_offset {
+                    self.trusted_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
             } else if self.viewing_entity_id.is_some() && !self.dev_surface_open {
                 let max_offset = self.object_view_scroll_max();
                 let clamped = new_offset.clamp(0, max_offset);
@@ -11751,6 +11807,7 @@ impl Shell {
         if !self.dev_surface_open
             && self.wifi_list.is_none()
             && !self.bluetooth_list_open
+            && !self.trusted_clients_open
             && self.viewing_entity_id.is_none()
             && !matches!(
                 self.current_page,
@@ -12112,11 +12169,12 @@ impl Shell {
             let clients = trusted_clients();
             let trusted_rows = trusted_client_list_rows(&clients);
             let recent_fingerprints = recently_authenticated_key_fingerprints();
-            let tree = layout_live_v2(
+            let tree = layout_live_v2_scrolled(
                 &trusted_v2_source(clients.len()),
                 "ADR-226 trusted paint",
                 width,
                 height,
+                self.trusted_scroll_offset,
             );
             let mut ids: Vec<String> = if clients.is_empty() {
                 vec!["trusted.empty".into()]
@@ -13381,6 +13439,7 @@ impl Shell {
             }
             "open_trusted_clients" => {
                 // Same reasoning as "open_wifi_list" above.
+                self.trusted_scroll_offset = 0;
                 self.trusted_clients_open = true;
                 self.pending_revoke_trusted_client = None;
                 self.draw(conn, qh);
@@ -13635,6 +13694,7 @@ impl Shell {
                 }
             }
             TrustedClientTap::Back => {
+                self.trusted_scroll_offset = 0;
                 self.trusted_clients_open = false;
                 self.pending_revoke_trusted_client = None;
             }
@@ -17771,6 +17831,56 @@ mod tests {
         assert!(matches!(
             trusted_client_action_at(center, width, height, client_count),
             Some(TrustedClientTap::Back)
+        ));
+    }
+
+    #[test]
+    fn trusted_overflow_rows_scroll_above_pinned_back() {
+        let width = 1080;
+        let height = 2400;
+        let client_count = 12;
+        let max = super::trusted_list_scroll_max(client_count, width, height);
+        assert!(max > 0, "12 trusted rows must cross pinned Назад");
+        let tree = super::layout_live_v2(
+            &super::trusted_v2_source(client_count),
+            "ADR-497 trusted overflow",
+            width,
+            height,
+        );
+        let header = super::v2_named_rect(&tree, "ContextHeader", "trusted header");
+        let back = super::v2_named_rect(&tree, "back", "trusted back");
+        assert!(saai_ui_compiler::layout_v1_find(&tree, "trusted.11").is_none());
+        let last_slot = stacked_row_rect(11, width, height);
+        let last_point = (
+            (last_slot.x + last_slot.width / 2) as f64,
+            (last_slot.y + last_slot.height / 2) as f64,
+        );
+        assert!(trusted_client_action_at(last_point, width, height, client_count).is_none());
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::trusted_v2_source(client_count),
+            "ADR-497 trusted overflow",
+            width,
+            height,
+            max,
+        );
+        let found = saai_ui_compiler::layout_v1_find(&scrolled, "trusted.11")
+            .expect("scrolled last trusted");
+        assert!(found.rect.y + found.rect.height <= back.y);
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "ContextHeader", "trusted header scrolled"),
+            header
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "back", "trusted back scrolled"),
+            back
+        );
+        let hit = (
+            (found.rect.x + found.rect.width / 2) as f64,
+            (found.rect.y + 8) as f64,
+        );
+        assert!(matches!(
+            super::trusted_client_action_at_scrolled(hit, width, height, client_count, max),
+            Some(TrustedClientTap::Revoke(11))
         ));
     }
 

@@ -1495,6 +1495,48 @@ mod tests {
     }
 
     #[test]
+    fn layout_v2_trusted_overflow_rows_scroll_above_pinned_back() {
+        let mut src = String::from(
+            r#"
+            sui 2
+            screen trusted {
+              component ContextHeader {
+                text = Title
+                a11y = Heading
+                loc = trusted.header
+                focus = 0
+                inset = safe
+              }
+            "#,
+        );
+        for index in 0..12 {
+            src.push_str(&format!(
+                "              component TrustedClientRow {{\n                text = Body\n                a11y = Button\n                loc = trusted.{index}\n              }}\n"
+            ));
+        }
+        src.push_str(
+            r#"
+              row back {}
+            }
+            "#,
+        );
+        let screen = compile_v2(&src).expect("trusted overflow");
+        let rest = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&rest, "ContextHeader").expect("header");
+        let back = layout_v1_find(&rest, "back").expect("back");
+        assert!(layout_v1_find(&rest, "trusted.11").is_none());
+        assert!(layout_v1_find(&rest, "trusted.0").is_some());
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 1200);
+        let last = layout_v1_find(&scrolled, "trusted.11").expect("scrolled last");
+        assert!(last.rect.y >= header.rect.y + header.rect.height);
+        assert!(last.rect.y + last.rect.height <= back.rect.y);
+        let header_scrolled = layout_v1_find(&scrolled, "ContextHeader").expect("header scrolled");
+        let back_scrolled = layout_v1_find(&scrolled, "back").expect("back scrolled");
+        assert_eq!(header_scrolled.rect, header.rect);
+        assert_eq!(back_scrolled.rect, back.rect);
+    }
+
+    #[test]
     fn layout_v2_space_overflow_members_scroll_above_pinned_back() {
         let mut src = String::from(
             r#"
