@@ -58,7 +58,6 @@ fn main() {
     let generated = format!(
         "const ROOT_SCREEN_ID: &str = {:?};\n\
          const ROOT_CONTENT_ID: &str = {:?};\n\
-         const ROOT_CONTENT_ACTIONS: &[ContentActionDefinition] = &[];\n\
          const ROOT_TABS_ID: &str = {:?};\n\
          const ROOT_TAB_HEIGHT: u32 = {};\n\
          const ROOT_TABS: &[TabDefinition] = &[\n    {}\n];\n",

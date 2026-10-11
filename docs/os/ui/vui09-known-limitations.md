@@ -14,7 +14,7 @@ Current panther shell: `4dc19018…` (ADR-308). Prior chrome `5ba2ef7b…`
 (ADR-209). Display restart is proven (ADR-210). Cold boot is proven
 (ADR-211). 7-tap gallery is proven (ADR-212). Parked last: thin tuning
 (ADR-213). List trailing rows are host (ADR-214). Me flatten/scroll
-is host (`flatten_me_rows` / `scrolled_row_rect`, ADR-215).
+is host (`layout_v2_scrolled`, ADR-215).
 Production is `compile_v2()` (ADR-216). NOW content hits use
 compiled `now.sui` (ADR-217). Inbox/Spaces/list hits generate
 `compile_v2()` documents (ADR-218). Me scroll uses
@@ -43,7 +43,28 @@ Pair fingerprint reads that tree (ADR-432). Overlay
 identity / facts share the `width/22` margin (ADR-436). Apps empty
 `SurfacePattern` reads that tree (ADR-437). NOW empty keeps loc
 `now.empty` (ADR-438). Wi-Fi password compose uses surface
-`wifi-password` (ADR-439). Public
+`wifi-password` (ADR-439). Pair fingerprint wrap
+reads the compiled slot (ADR-440). Leftover
+`paint_context_header` is gone (ADR-441). Leftover
+`task_confirm_view` is gone (ADR-442). Leftover
+`now_object_summary_rect` is gone (ADR-443). Leftover
+`consent_view` is gone (ADR-444). Leftover
+`orb_view` is gone (ADR-445). Leftover live
+`Frame::Root` is gone (ADR-446). Leftover
+`draw_root` is gone (ADR-447). Leftover
+live `content_action_at` dispatch is gone (ADR-448). Leftover
+`cycle_space_lifecycle` is gone (ADR-449). Leftover
+`content_action_at` table is gone (ADR-450). Leftover
+`lock_attention_tap` is gone (ADR-451). Leftover
+`present_lock_surface` is gone (ADR-452). Leftover
+`now_grid_rect` is gone (ADR-453). Leftover
+`scrolled_row_rect` is gone (ADR-454). Leftover
+`stacked_trailing_rect` is gone (ADR-455). Leftover
+named chrome is closed (ADR-456). Public
+Search hits are host-locked (ADR-457). Public
+list headers match Inbox stacked top (ADR-458). Public
+compose omits `Keyboard` (ADR-459). Public
+overlay headers match Inbox stacked top (ADR-460). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`
@@ -81,11 +102,11 @@ ADR-211. 7-tap gallery is ADR-212.
   (ADR-204); Status rows and `SystemSection` invent no
   interned `loc`. Live Me flatten/scroll stays procedural.
   `WifiRow` docks Wi-Fi list stacked hits (ADR-205); Status rows
-  invent no `connect_wifi`. Trailing `row refresh`/`back` dock as
-  `stacked_trailing_rect` (ADR-214).
+  invent no `connect_wifi`. Trailing `row refresh`/`back` dock via
+  compiler `v2_trailing_top` (ADR-214/455).
   `BluetoothRow` docks Bluetooth list stacked hits (ADR-206); Status
   rows invent no `pair_bluetooth`. Trailing `row scan`/`refresh`/`back`
-  dock as `stacked_trailing_rect` (ADR-214).
+  dock via compiler `v2_trailing_top` (ADR-214/455).
   Privileged `TrustedClientRow` docks trusted-client stacked hits
   (ADR-207); Status rows invent no `revoke_trusted_client`.
   `compile_v2_public()` rejects the name. Trailing `row back` docks

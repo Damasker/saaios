@@ -113,6 +113,27 @@ ADR-436 Object View identity / facts share the `width/22` margin; paint reads th
 ADR-437 apps empty `SurfacePattern` from `layout_v2`; header stays; no invented tiles.
 ADR-438 NOW empty `SurfacePattern` keeps loc `now.empty`; Status invents no action.
 ADR-439 wifi-password compose uses its own surface; pin-setup public example; keys stay formula.
+ADR-440 pair fingerprint wrap reads the compiled slot; inset matches ActionCard, not a second `width/22`.
+ADR-441 drop leftover `paint_context_header`; NOW / overlay / list headings share one slot painter.
+ADR-442 drop leftover `task_confirm_view`; confirm / pair hits stay `layout_v2`.
+ADR-443 drop leftover `now_object_summary_rect`; NOW object paint/hits stay `layout_v2`.
+ADR-444 drop leftover `consent_view`; consent hits stay `layout_v2`.
+ADR-445 drop leftover `orb_view`; Orb paint/hits stay `layout_v2`.
+ADR-446 live draw does not construct `Frame::Root`; `draw_root` stays the test painter.
+ADR-447 drop leftover `draw_root`; tab tests call `draw_tab_bar`.
+ADR-448 drop leftover live `content_action_at` dispatch; leftover table stays empty.
+ADR-449 drop leftover `cycle_space_lifecycle`; live color cycle stays `cycle_space_color`.
+ADR-450 drop leftover `content_action_at` table; footer and space hits stay.
+ADR-451 drop leftover `lock_attention_tap`; lock idle/wake stay formulas.
+ADR-452 drop leftover `present_lock_surface`; live lock stays `present_lock_pin_entry`.
+ADR-453 drop leftover `now_grid_rect`; apps tiles stay `layout_v2`.
+ADR-454 drop leftover `scrolled_row_rect`; Me / diagnostic stay `layout_v2_scrolled`.
+ADR-455 drop leftover `stacked_trailing_rect`; overflow Back stays `layout_v2`.
+ADR-456 leftover named chrome closed; drop leftover `stacked_row_fits_above`.
+ADR-457 public Search hits through `compile_v2_public`; Status invents no action.
+ADR-458 public list headers match Inbox stacked top.
+ADR-459 public compose omits `Keyboard`; PIN setup matches Intent field margin.
+ADR-460 public overlay headers match Inbox stacked top.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

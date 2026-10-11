@@ -210,6 +210,27 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 apps empty pattern | empty Приложения `SurfacePattern` from `layout_v2` **host** (ADR-437; no tiles; do not open Приложения; leave Сейчас) |
 | VUI-09 NOW empty loc | Сейчас empty `now.empty` from `layout_v2` **host** (ADR-438; no action; leave Сейчас) |
 | VUI-09 wifi-password surface | Wi-Fi password compose from `wifi-password` **host** (ADR-439; no PSK; leave Сейчас) |
+| VUI-09 pair fingerprint wrap | remote-pair wrap from compiled `pair.fingerprint` **host** (ADR-440; ActionCard inset; no Сопряжь; leave Сейчас) |
+| VUI-09 leftover header painter | drop `paint_context_header` (`width/20`); NOW uses slot helper **host** (ADR-441; leave Сейчас) |
+| VUI-09 leftover task-confirm tree | drop `task_confirm_view`; hits stay `layout_v2` **host** (ADR-442; no Сопряжь; leave Сейчас) |
+| VUI-09 leftover NOW object formula | drop `now_object_summary_rect`; slot stays `layout_v2` **host** (ADR-443; no `open_object`; leave Сейчас) |
+| VUI-09 leftover consent tree | drop `consent_view`; hits stay `layout_v2` **host** (ADR-444; no Разрешить; leave Сейчас) |
+| VUI-09 leftover orb tree | drop `orb_view`; hits stay `layout_v2` **host** (ADR-445; do not tap Orb; leave Сейчас) |
+| VUI-09 leftover root frame | live draw does not construct `Frame::Root`; `draw_root` stays test **host** (ADR-446; leave Сейчас) |
+| VUI-09 leftover root painter | drop `draw_root`; tabs stay `draw_tab_bar` **host** (ADR-447; leave Сейчас) |
+| VUI-09 leftover content-action dispatch | drop live `content_action_at` / `invoke_content_action`; leftover table stays empty **host** (ADR-448; leave Сейчас) |
+| VUI-09 leftover lifecycle writer | drop `cycle_space_lifecycle`; live color cycle stays `cycle_space_color` **host** (ADR-449; leave Сейчас) |
+| VUI-09 leftover content-action table | drop `content_action_at` / `ROOT_CONTENT_ACTIONS`; footer and space hits stay **host** (ADR-450; leave Сейчас) |
+| VUI-09 leftover lock-tap oracle | drop `lock_attention_tap`; lock idle/wake stay formulas **host** (ADR-451; leave Сейчас) |
+| VUI-09 leftover lock fill | drop `present_lock_surface`; live lock stays `present_lock_pin_entry` **host** (ADR-452; leave Сейчас) |
+| VUI-09 leftover apps-grid formula | drop `now_grid_rect`; tiles stay `layout_v2` **host** (ADR-453; do not launch; leave Сейчас) |
+| VUI-09 leftover scroll formula | drop `scrolled_row_rect`; Me / diagnostic stay `layout_v2_scrolled` **host** (ADR-454; leave Сейчас) |
+| VUI-09 leftover trailing dock | drop `stacked_trailing_rect`; overflow Back stays `layout_v2` **host** (ADR-455; leave Сейчас) |
+| VUI-09 leftover named chrome closed | drop `stacked_row_fits_above`; leftover unused chrome closed **host** (ADR-456; leave Сейчас) |
+| VUI-09 public Search hits | `search-public.sui` Button `DataRow` → interned `loc` on `stacked_row_rect` **host** (ADR-457; Experimental; leave Сейчас) |
+| VUI-09 public list headers | Search/Spaces/Me/Wi-Fi/Bluetooth `ContextHeader` matches Inbox stacked top **host** (ADR-458; Experimental; leave Сейчас) |
+| VUI-09 public compose Keyboard | intent/wifi-password/pin-setup omit `Keyboard` **host** (ADR-459; Experimental; leave Сейчас) |
+| VUI-09 public overlay headers | consent/remote-pair `ContextHeader` matches Inbox stacked top **host** (ADR-460; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

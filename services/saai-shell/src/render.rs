@@ -308,7 +308,7 @@ impl<'a> Canvas<'a> {
 }
 
 /// ADR-142: app-consent through `ContextHeader` and Static `DataRow`
-/// cards. Accept/decline rects stay the `consent_view` hit targets.
+/// cards. Accept/decline rects stay the `layout_v2` hit targets.
 /// No concatenated `draw_root` Surface bar, no accent-square bullets.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_consent(
@@ -418,8 +418,8 @@ pub fn draw_wifi_password(
 /// behavior (HIA-ROADMAP.md's own negative scenario: still a real,
 /// non-empty screen, just without a button row).
 /// ADR-137: identity paint shared by NOW and Object View. Returns the
-/// y just below the trailing status/value, matching the cursor math
-/// `now_object_summary_rect` uses for hit-testing.
+/// y just below the trailing status/value. NOW hit-test reads
+/// `layout_v2` (`open_object`), not a leftover width/20 formula.
 /// ADR-157: `waiting_confirmation` paints `DecisionOverlay` facts as
 /// Body, not the same Caption dump as activity/OAM. Identity stays
 /// `ObjectSummary`; overlay `heading()` is not painted.
@@ -463,32 +463,6 @@ pub struct NowPaintChrome {
     pub header: Rect,
     pub object: Rect,
     pub empty: Rect,
-}
-
-/// Historical cursor math for the NOW `ObjectSummary`. Live paint and
-/// hit-test use `NowPaintChrome.object` from `layout_v2` (ADR-225).
-pub fn now_object_summary_rect(content: Rect, has_lifecycle: bool, object: &ObjectSummary) -> Rect {
-    let margin = (content.width / 20).max(12);
-    let top_inset = ((150_u64 * u64::from(content.height.max(1))) / 2400) as u32;
-    let mut y = content.y + top_inset;
-    y += scaled_line_height(TextRole::Title);
-    if has_lifecycle {
-        y += scaled_line_height(TextRole::Body);
-    }
-    y += physical(SpacingToken::Medium.value());
-    let start = y;
-    y += scaled_line_height(TextRole::Body);
-    y += scaled_line_height(TextRole::Caption);
-    if object.trailing.is_some() {
-        y += scaled_line_height(TextRole::Body);
-    }
-    let height = y.saturating_sub(start).max(physical(MIN_TOUCH_TARGET));
-    Rect::new(
-        content.x + margin,
-        start,
-        content.width.saturating_sub(margin.saturating_mul(2)),
-        height,
-    )
 }
 
 /// VUI-07 (ADR-137): identity is an `ObjectSummary` (title + type/
@@ -720,10 +694,24 @@ fn draw_square_ring(canvas: &mut Canvas<'_>, rect: Rect, thickness: u32, color: 
     );
 }
 
+/// ADR-440: wrap lives inside the compiled `pair.fingerprint` slot.
+/// Inset matches `draw_action_card`'s no-action text, not a second
+/// `width/22` on an already padded row.
+fn fingerprint_wrap_box(slot: Rect) -> Rect {
+    let inset = 34;
+    Rect::new(
+        slot.x.saturating_add(inset),
+        slot.y,
+        slot.width.saturating_sub(inset.saturating_mul(2)),
+        slot.height,
+    )
+}
+
 /// ADR-144: SSH pairing through `ContextHeader`. The live client name
 /// is a Static `DataRow`. ADR-432: the fingerprint slot is
 /// `pair.fingerprint` on `layout_v2`; wrap stays MonoBody so the
-/// full `SHA256:` string remains readable. Buttons stay `layout_v2`.
+/// full `SHA256:` string remains readable. ADR-440: wrap origin is
+/// that slot, not a second margin. Buttons stay `layout_v2`.
 /// Lock unlock stays `draw_lock_pin_entry`.
 pub fn draw_remote_pair(
     canvas: &mut Canvas<'_>,
@@ -746,12 +734,11 @@ pub fn draw_remote_pair(
         draw_action_card(canvas, *rect, card, fonts);
     }
     if let Some(fonts) = fonts {
-        let margin = (fingerprint_rect.width / 22).max(12);
+        let wrap = fingerprint_wrap_box(fingerprint_rect);
         let (mono, mono_size) = fonts.resolve(TextRole::MonoBody);
         let scaled_size = mono_size * text_scale();
         let glyph_width = mono.metrics('0', scaled_size).advance_width.max(1.0);
-        let available_width = fingerprint_rect.width.saturating_sub(margin * 2) as f32;
-        let chars_per_line = (available_width / glyph_width).floor().max(1.0) as usize;
+        let chars_per_line = (wrap.width as f32 / glyph_width).floor().max(1.0) as usize;
         let line_height = SurfaceScale::PIXEL_7
             .logical_to_physical(TextRole::MonoBody.style().line_height)
             as f32
@@ -763,10 +750,8 @@ pub fn draw_remote_pair(
             .enumerate()
         {
             let chunk = chunk.iter().collect::<String>();
-            let y = fingerprint_rect.y + (line as f32 * line_height).round() as u32;
-            if y.saturating_add(line_height.round() as u32)
-                > fingerprint_rect.y + fingerprint_rect.height
-            {
+            let y = wrap.y + (line as f32 * line_height).round() as u32;
+            if y.saturating_add(line_height.round() as u32) > wrap.y + wrap.height {
                 break;
             }
             draw_text(
@@ -774,7 +759,7 @@ pub fn draw_remote_pair(
                 mono,
                 &chunk,
                 mono_size,
-                fingerprint_rect.x + margin,
+                wrap.x,
                 y,
                 theme_color(ColorRole::TextSecondary),
             );
@@ -2209,108 +2194,10 @@ pub fn draw_composite_gallery(
         );
     }
 }
-// S23 added `is_grid` as the 8th plain draw-time knob on an already
-// data-only function (no behavior to extract into a struct without
-// inventing one purely to appease this lint) -- same call shape as
-// `draw_consent`/`draw_object_view`, just with one more page-shaped
-// screen to describe.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_root(
-    canvas: &mut Canvas<'_>,
-    content: Rect,
-    tabs: &[(Rect, NavigationItem)],
-    selected: usize,
-    context_label: &str,
-    fonts: Option<&Fonts>,
-    content_actions: &[(Rect, ActionCardView)],
-    is_grid: bool,
-    paint_navigation: bool,
-) {
-    if paint_navigation {
-        canvas.fill(theme_color(ColorRole::Canvas));
-    } else {
-        canvas.set_clip(Some(content));
-        canvas.fill(theme_color(ColorRole::Canvas));
-    }
-    canvas.set_clip(Some(content));
-
-    // A stable phone-like content surface. The number of rows changes per
-    // root page so page transitions remain visible even if a display pipeline
-    // maps two colors too similarly.
-    let margin = content.width / 22;
-    let card_width = content.width.saturating_sub(margin * 2);
-    canvas.fill_rect(
-        Rect::new(margin, 150, card_width, 190),
-        theme_color(ColorRole::Surface),
-    );
-    canvas.fill_rect(
-        Rect::new(margin, 150, 14, 190),
-        theme_color(ColorRole::Accent),
-    );
-    if let (Some(fonts), Some((_, title))) = (fonts, tabs.get(selected)) {
-        let header = format!("{context_label} · {}", title.label);
-        draw_text_centered(
-            canvas,
-            &fonts.semibold,
-            &header,
-            role_px(TextRole::Section),
-            content.x + content.width / 2,
-            210,
-            theme_color(ColorRole::TextPrimary),
-        );
-    }
-
-    let row_count = selected.saturating_add(2).min(5);
-    let first_placeholder = if content_actions.is_empty() {
-        0
-    } else {
-        row_count
-    };
-    if !is_grid {
-        for row in first_placeholder..row_count {
-            let y = 430 + row as u32 * 230;
-            if y >= content.height {
-                break;
-            }
-            canvas.fill_rect(
-                Rect::new(margin, y, card_width, 170),
-                theme_color(ColorRole::Surface),
-            );
-            canvas.fill_rect(
-                Rect::new(margin + 34, y + 42, 86, 86),
-                theme_color(ColorRole::Border),
-            );
-            canvas.fill_rect(
-                Rect::new(margin + 154, y + 52, card_width.saturating_sub(210), 24),
-                theme_color(ColorRole::Border),
-            );
-            canvas.fill_rect(
-                Rect::new(margin + 154, y + 96, card_width.saturating_sub(290), 18),
-                theme_color(ColorRole::Border),
-            );
-        }
-    }
-
-    // ADR-138: the live apps grid paints through `draw_apps_grid`.
-    // `is_grid` stays for the leftover `draw_root` path if a caller
-    // still asks for letter-square tiles.
-    if is_grid {
-        draw_app_icon_grid(canvas, fonts, content_actions);
-    } else {
-        for (rect, card) in content_actions {
-            draw_action_card(canvas, *rect, card, fonts);
-        }
-    }
-
-    canvas.set_clip(None);
-    if paint_navigation {
-        draw_tab_bar(canvas, tabs, fonts);
-    }
-}
-
-/// ADR-433: overlay heading sits inside the compiled `ContextHeader`
-/// slot. The 150/2400 clearance matches NOW (ADR-225) so copy is not
-/// drawn under the status layer.
+/// ADR-433/441: named `ContextHeader` sits inside the compiled slot.
+/// The 150/2400 clearance matches NOW so copy is not drawn under the
+/// status layer. Overlay, compose, list, apps, and NOW share this.
+/// The leftover `width/20` painter is gone.
 fn paint_overlay_context_header(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -2331,31 +2218,6 @@ fn paint_overlay_context_header(
     cursor_y += scaled_line_height(TextRole::Title);
     if let Some(lifecycle) = &header.lifecycle {
         draw_status_indicator(canvas, fonts, lifecycle, slot.x, cursor_y);
-    }
-}
-
-#[allow(dead_code)]
-fn paint_context_header(
-    canvas: &mut Canvas<'_>,
-    fonts: &Fonts,
-    content: Rect,
-    header: &ContextHeader,
-) {
-    let margin = (content.width / 20).max(12);
-    let content_width = content.width.saturating_sub(margin * 2);
-    let top_inset = ((150_u64 * u64::from(content.height)) / 2400) as u32;
-    let mut cursor_y = content.y + top_inset;
-    draw_semantic_text(
-        canvas,
-        fonts,
-        &header.heading(),
-        content.x + margin,
-        cursor_y,
-        content_width,
-    );
-    cursor_y += scaled_line_height(TextRole::Title);
-    if let Some(lifecycle) = &header.lifecycle {
-        draw_status_indicator(canvas, fonts, lifecycle, content.x + margin, cursor_y);
     }
 }
 
@@ -2473,17 +2335,13 @@ pub fn draw_context_row_list(
     }
 }
 
-/// Extracted from `draw_root` (VUI-03): the bottom navigation bar is the
-/// same four-tab strip regardless of what a page draws above it, so
-/// `draw_now` (a real composed screen, not `draw_root`'s diagnostic
-/// scaffold) can share this exact drawing code instead of duplicating it.
-/// VUI-04 (ADR-116): `tabs` now carries a real `NavigationItem` per
-/// destination instead of a bare label -- `selected`/`disabled`/`badge`
-/// all come from that item's own data, not a separate index parameter
-/// (which `draw_root` still needs for its own unrelated title-lookup/
-/// row-count logic, so it keeps its own `selected: usize`, just no
-/// longer forwards it here). `pressed` is a real touch-down on that
-/// tab (`Shell::pressed_tab`); it uses the pressed token and a bottom
+/// VUI-03: the bottom navigation bar is the same four-tab strip
+/// regardless of what a page draws above it. ADR-447: leftover
+/// `draw_root` is gone; live pages call this directly.
+/// VUI-04 (ADR-116): `tabs` carries a real `NavigationItem` per
+/// destination -- `selected`/`disabled`/`badge` come from that
+/// item. `pressed` is a real touch-down on that tab
+/// (`Shell::pressed_tab`); it uses the pressed token and a bottom
 /// hairline so color is never the only cue, and it does not change
 /// icon size or move neighbors.
 pub fn draw_tab_bar(
@@ -2615,9 +2473,8 @@ pub fn draw_tab_bar(
 }
 
 /// VUI-03: the real `Сейчас` composition -- `ContextHeader` +
-/// `SystemSection`s + an optional `ObjectSummary`, replacing `draw_root`'s
-/// diagnostic scaffold (hardcoded rectangles, an ad hoc header string) for
-/// this one page. Built entirely from the section 6/7 primitive/composite
+/// `SystemSection`s + an optional `ObjectSummary`. Built entirely from
+/// the section 6/7 primitive/composite
 /// draw functions already used by the gallery -- no new text-rendering
 /// path, matching every ADR in this file since VUI-02.
 #[allow(clippy::too_many_arguments)]
@@ -2642,34 +2499,12 @@ pub fn draw_now(
             draw_data_row(canvas, fonts, row, *rect);
         }
 
-        // ADR-225: heading sits inside the compiled ContextHeader slot.
-        // `content` spans the full canvas from y=0 -- the status bar is a
-        // separate, always-on-top compositor surface, not a reserved inset
-        // in this tree. The 150/2400 clearance is painted *inside* the
-        // header rect so copy is not drawn underneath that layer.
-        let top_inset = ((150_u64 * u64::from(content.height.max(1))) / 2400) as u32;
-        let mut cursor_y = chrome.header.y + top_inset;
-        draw_semantic_text(
-            canvas,
-            fonts,
-            &header.heading(),
-            left,
-            cursor_y,
-            content_width,
-        );
-        cursor_y += scaled_line_height(TextRole::Title);
-
-        // Section 7.1: "a non-default lifecycle is exposed through the
-        // nested `StatusIndicator`'s own state, not a second accessible
-        // string glued onto the header's name" -- drawn here as a real,
-        // always-visible compact mark, not just consulted for the
-        // whole-screen empty-state message below. Without this, an offline
-        // signal (or an archived-space one) would be silently invisible
-        // whenever `sections`/`object` still have real, possibly-stale
-        // content to show.
-        if let Some(lifecycle) = &header.lifecycle {
-            draw_status_indicator(canvas, fonts, lifecycle, left, cursor_y);
-        }
+        // ADR-225/441: heading sits inside the compiled ContextHeader
+        // slot. Overlay, compose, list, and apps already share this
+        // painter. `content` spans the full canvas from y=0 -- the
+        // status bar is a separate compositor surface. Clearance is
+        // painted *inside* the header rect.
+        paint_overlay_context_header(canvas, fonts, chrome.header, canvas.height, header);
 
         if let Some(object) = object {
             draw_object_summary(
@@ -2711,7 +2546,7 @@ pub fn draw_now(
             // Live SystemSection rows are not in now.sui. They paint below
             // the compiled object slot, or the header when there is no live
             // object, using the same inset as chrome.
-            cursor_y = if object.is_some() {
+            let mut cursor_y = if object.is_some() {
                 chrome.object.y.saturating_add(chrome.object.height)
             } else {
                 chrome.header.y.saturating_add(chrome.header.height)
@@ -3083,7 +2918,8 @@ mod tests {
         context_color, draw_action_card, draw_apps_grid, draw_calibration, draw_composite_gallery,
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
-        draw_remote_pair, draw_root, draw_status_bar, draw_surface_pattern, draw_tab_bar,
+        draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
+        fingerprint_wrap_box,
         gallery_row_positions, now_empty_pattern, physical, physical_line_height, role_px,
         state_color, theme_color, ActionCardView, Canvas,
     };
@@ -3204,55 +3040,13 @@ mod tests {
                 .collect()
         };
         let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
-        draw_root(
-            &mut canvas,
-            Rect::new(0, 0, 1080, 2100),
-            &make_tabs(0),
-            0,
-            "Дом",
-            None,
-            &[],
-            true,
-            true,
-        );
+        draw_tab_bar(&mut canvas, &make_tabs(0), None);
         assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Accent));
         assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Surface));
 
-        draw_root(
-            &mut canvas,
-            Rect::new(0, 0, 1080, 2100),
-            &make_tabs(3),
-            3,
-            "Дом",
-            None,
-            &[],
-            false,
-            true,
-        );
+        draw_tab_bar(&mut canvas, &make_tabs(3), None);
         assert_eq!(canvas.pixel(135, 2125), theme_color(ColorRole::Surface));
         assert_eq!(canvas.pixel(945, 2125), theme_color(ColorRole::Accent));
-    }
-
-    #[test]
-    fn scroll_frame_does_not_repaint_navigation() {
-        let mut pixels = vec![0; 1080 * 2400 * 4];
-        let tabs = vec![(
-            Rect::new(0, 2100, 270, 300),
-            NavigationItem::new("me", "Система").selected(),
-        )];
-        let mut canvas = Canvas::new(&mut pixels, 1080, 2400);
-        draw_root(
-            &mut canvas,
-            Rect::new(0, 0, 1080, 2100),
-            &tabs,
-            3,
-            "Дом",
-            None,
-            &[],
-            false,
-            false,
-        );
-        assert_eq!(canvas.pixel(135, 2125), [0, 0, 0, 0]);
     }
 
     #[test]
@@ -3585,16 +3379,11 @@ mod tests {
     }
 
     #[test]
-    fn now_object_summary_rect_sits_below_the_header_and_above_the_footer() {
-        let content = Rect::new(0, 0, 1080, 2160);
-        let object = ObjectSummary::new("vnnnmb", "saaios.intent · версия 1");
-        let rect = super::now_object_summary_rect(content, false, &object);
-        assert!(rect.y >= 150);
-        assert!(rect.height >= physical(MIN_TOUCH_TARGET));
-        assert!(rect.y + rect.height < 1800);
-        let mid_y = rect.y + rect.height / 2;
-        assert!(rect.contains(540.0, f64::from(mid_y)));
-        assert!(!rect.contains(540.0, 2000.0));
+    fn leftover_now_object_summary_rect_is_gone() {
+        let src = include_str!("render.rs");
+        assert!(!src.contains(concat!("pub fn now_object_", "summary_rect(")));
+        assert!(src.contains("chrome.object"));
+        assert!(src.contains("struct NowPaintChrome"));
     }
 
     #[test]
@@ -3933,6 +3722,48 @@ mod tests {
         );
         assert_eq!(canvas.pixel(270, 2250), theme_color(ColorRole::Accent));
         assert_eq!(canvas.pixel(810, 2250), theme_color(ColorRole::Surface));
+    }
+
+    #[test]
+    fn fingerprint_wrap_reads_the_compiled_slot_not_a_second_margin() {
+        let slot = Rect::new(49, 650, 982, 190);
+        let wrap = fingerprint_wrap_box(slot);
+        assert_eq!(wrap, Rect::new(83, 650, 914, 190));
+        assert_ne!(wrap.x, slot.x + slot.width / 22);
+        let paint = include_str!("render.rs")
+            .split("fn fingerprint_wrap_box(")
+            .nth(1)
+            .expect("wrap box")
+            .split("pub fn draw_remote_pair(")
+            .next()
+            .expect("draw_remote_pair");
+        assert!(paint.contains("inset = 34"));
+        assert!(!paint.contains("width / 22"));
+    }
+
+    #[test]
+    fn leftover_width20_context_header_painter_is_gone() {
+        let src = include_str!("render.rs");
+        let live = src.split("#[cfg(test)]").next().expect("live");
+        assert!(!live.contains("fn paint_context_header("));
+        let draw_now = src
+            .split("pub fn draw_now(")
+            .nth(1)
+            .expect("draw_now")
+            .split("pub fn draw_status_bar(")
+            .next()
+            .expect("status");
+        assert!(draw_now.contains("paint_overlay_context_header(canvas, fonts, chrome.header"));
+        assert!(!draw_now.contains("width / 20"));
+        let helper = src
+            .split("fn paint_overlay_context_header(")
+            .nth(1)
+            .expect("helper")
+            .split("fn draw_app_icon_grid(")
+            .next()
+            .expect("icon");
+        assert!(helper.contains("150_u64"));
+        assert!(!helper.contains("width / 20"));
     }
 
     #[test]
@@ -4352,17 +4183,10 @@ mod tests {
     }
 
     #[test]
-    fn draw_root_reuses_draw_action_card() {
+    fn leftover_draw_root_is_gone() {
         let src = include_str!("render.rs");
-        let draw_root = src
-            .split("pub fn draw_root(")
-            .nth(1)
-            .expect("draw_root")
-            .split("fn paint_context_header(")
-            .next()
-            .expect("paint_context_header");
-        assert!(draw_root.contains("draw_action_card(canvas, *rect, card, fonts)"));
-        assert!(!draw_root.contains("38.0"));
-        assert!(!draw_root.contains("27.0"));
+        assert!(!src.contains(concat!("pub fn draw_", "root(")));
+        assert!(src.contains("pub fn draw_tab_bar("));
+        assert!(src.contains("draw_action_card(canvas, *rect, card, fonts)"));
     }
 }

@@ -1058,7 +1058,9 @@ mod tests {
         assert!(!search.is_privileged());
         assert_eq!(search.components[1].type_name, "DataRow");
         assert_eq!(search.components[1].props.a11y.as_deref(), Some("Button"));
+        assert_eq!(search.components[1].props.loc.as_deref(), Some("search.item"));
         assert!(guide.contains("search-public.sui"));
+        assert!(guide.contains("search.item"));
         const SPACES: &str = include_str!("../../../docs/os/ui/examples/spaces-public.sui");
         let spaces = compile_v2_public(SPACES).unwrap();
         assert_eq!(spaces.id, "spaces");
@@ -1125,12 +1127,15 @@ mod tests {
         assert_eq!(pair.components[2].props.a11y.as_deref(), Some("Status"));
         assert!(guide.contains("remote-pair-public.sui"));
         const INTENT: &str = include_str!("../../../docs/os/ui/examples/intent-public.sui");
+        assert!(!INTENT.contains("Keyboard"));
         let intent = compile_v2_public(INTENT).unwrap();
         assert_eq!(intent.id, "intent");
         assert!(!intent.is_privileged());
+        assert_eq!(intent.components.len(), 2);
         assert_eq!(intent.components[1].type_name, "Field");
         assert_eq!(intent.components[1].props.a11y.as_deref(), Some("Status"));
         assert!(guide.contains("intent-public.sui"));
+        assert!(guide.contains("No `Keyboard`"));
         const APPS: &str = include_str!("../../../docs/os/ui/examples/apps-public.sui");
         let apps = compile_v2_public(APPS).unwrap();
         assert_eq!(apps.id, "apps");
@@ -1141,9 +1146,11 @@ mod tests {
         assert!(guide.contains("apps-public.sui"));
         const WIFI_PASSWORD: &str =
             include_str!("../../../docs/os/ui/examples/wifi-password-public.sui");
+        assert!(!WIFI_PASSWORD.contains("Keyboard"));
         let wifi_password = compile_v2_public(WIFI_PASSWORD).unwrap();
         assert_eq!(wifi_password.id, "wifi-password");
         assert!(!wifi_password.is_privileged());
+        assert_eq!(wifi_password.components.len(), 2);
         assert_eq!(wifi_password.components[1].type_name, "Field");
         assert_eq!(
             wifi_password.components[1].props.a11y.as_deref(),
@@ -1151,9 +1158,11 @@ mod tests {
         );
         assert!(guide.contains("wifi-password-public.sui"));
         const PIN_SETUP: &str = include_str!("../../../docs/os/ui/examples/pin-setup-public.sui");
+        assert!(!PIN_SETUP.contains("Keyboard"));
         let pin_setup = compile_v2_public(PIN_SETUP).unwrap();
         assert_eq!(pin_setup.id, "pin-setup");
         assert!(!pin_setup.is_privileged());
+        assert_eq!(pin_setup.components.len(), 2);
         assert_eq!(pin_setup.components[1].type_name, "Field");
         assert_eq!(pin_setup.components[1].props.a11y.as_deref(), Some("Status"));
         assert!(guide.contains("pin-setup-public.sui"));

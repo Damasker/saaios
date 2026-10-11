@@ -40,9 +40,11 @@ hit (ADR-200). The empty `SurfacePattern` is loc `now.empty`
 
 [`examples/search-public.sui`](examples/search-public.sui) is the
 labelled Search sample: `ContextHeader`, `DataRow` with
-`a11y = Button` (ADR-240), and the same nested tabs. Status
-`DataRow` invents no object hit. Inbox remains a surface opened
-from Orb, not a primary tab.
+`a11y = Button` (ADR-240/457), and the same nested tabs. The
+heading matches Inbox stacked top (ADR-458). The Button row
+matches `stacked_row_rect`; action is interned `loc`
+`search.item`. Status `DataRow` invents no action. Inbox remains
+a surface opened from Orb, not a primary tab.
 
 [`examples/inbox-public.sui`](examples/inbox-public.sui) is the
 labelled Inbox sample: `ContextHeader`, `EventRow` with
@@ -61,18 +63,21 @@ and permission below that, all with the `width/22` margin
 [`examples/consent-public.sui`](examples/consent-public.sui) is the
 labelled consent sample: `ContextHeader`, Status `DataRow`s for the
 app and a capability (ADR-431), and accept/decline `Button`s.
-Status invents no action. Cards match `stacked_row_rect`.
+The heading matches Inbox stacked top (ADR-460). Status invents no
+action. Cards match `stacked_row_rect`.
 
 [`examples/remote-pair-public.sui`](examples/remote-pair-public.sui)
 is the labelled pairing sample: `ContextHeader`, Status `DataRow`s
 for the client and fingerprint (ADR-432), and accept/decline
-`Button`s. Status invents no action. The fingerprint slot matches
-`stacked_row_rect`; wrap stays paint.
+`Button`s. The heading matches Inbox stacked top (ADR-460). Status
+invents no action. The fingerprint slot matches `stacked_row_rect`;
+wrap stays paint and reads that slot (ADR-440), not a second
+`width/22`.
 
 [`examples/intent-public.sui`](examples/intent-public.sui) is the
 labelled compose sample: `ContextHeader` plus a Status `Field`
-(ADR-434). No `Keyboard`. Status invents no action. Header x
-matches the Field margin.
+(ADR-434/459). No `Keyboard`. Status invents no action. Header x
+matches the Field margin. The Field fills to the panel bottom.
 
 [`examples/apps-public.sui`](examples/apps-public.sui) is the
 labelled apps sample: `ContextHeader`, Status `SurfacePattern`
@@ -81,36 +86,41 @@ Empty docks below the header.
 
 [`examples/wifi-password-public.sui`](examples/wifi-password-public.sui)
 is the labelled Wi-Fi password sample: `ContextHeader` plus a Status
-`Field` (ADR-439). No `Keyboard`. Header x matches the Field margin.
+`Field` (ADR-439/459). No `Keyboard`. Header x matches the Field
+margin. The Field fills to the panel bottom.
 
 [`examples/pin-setup-public.sui`](examples/pin-setup-public.sui) is
 the labelled PIN setup sample: `ContextHeader` plus a Status `Field`
-(ADR-439). No `Keyboard`. Still Experimental.
+(ADR-439/459). No `Keyboard`. Header x matches the Field margin.
+The Field fills to the panel bottom. Still Experimental.
 
 [`examples/spaces-public.sui`](examples/spaces-public.sui) is the
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
-`a11y = Button` (ADR-203), and the same nested tabs. Status
-`SpaceRow` invents no `select_space`.
+`a11y = Button` (ADR-203), and the same nested tabs. The heading
+matches Inbox stacked top (ADR-458). Status `SpaceRow` invents no
+`select_space`.
 
 [`examples/me-public.sui`](examples/me-public.sui) is the
 labelled Me sample: `ContextHeader`, a `SystemSection` header, the
 live «Устройство» prefix, and interned `cycle_timezone` at flatten
-index 4 (ADR-204/215), plus the same nested tabs. Status
-`SettingRow` and `SystemSection` invent no interned action. Rows
-that fail `scrolled_row_rect` at offset 0 are not hittable.
+index 4 (ADR-204/215), plus the same nested tabs. The heading
+matches Inbox stacked top (ADR-458). Status `SettingRow` and
+`SystemSection` invent no interned action. Rows that fail
+`layout_v2_scrolled` at offset 0 are not hittable.
 
 [`examples/wifi-public.sui`](examples/wifi-public.sui) is the
 labelled Wi-Fi sample: `ContextHeader`, `WifiRow` with
 `a11y = Button` (ADR-205), and nested `row refresh` / `row back`
-(ADR-214). Status `WifiRow` invents no `connect_wifi`. No nested
-tabs: live «Wi-Fi сети» has trailing controls, not
-`BottomNavigation`.
+(ADR-214). The heading matches Inbox stacked top (ADR-458).
+Status `WifiRow` invents no `connect_wifi`. No nested tabs: live
+«Wi-Fi сети» has trailing controls, not `BottomNavigation`.
 
 [`examples/bluetooth-public.sui`](examples/bluetooth-public.sui) is the
 labelled Bluetooth sample: `ContextHeader`, `BluetoothRow` with
 `a11y = Button` (ADR-206), and nested `row scan` / `row refresh` /
-`row back` (ADR-214). Status `BluetoothRow` invents no
-`pair_bluetooth`. No nested tabs.
+`row back` (ADR-214). The heading matches Inbox stacked top
+(ADR-458). Status `BluetoothRow` invents no `pair_bluetooth`. No
+nested tabs.
 
 [`examples/trusted-privileged.sui`](examples/trusted-privileged.sui) is
 the labelled shell sample: `TrustedClientRow` with `a11y = Button`
@@ -148,7 +158,7 @@ review. Copying them into an app document fails `compile_v2_public()`.
 - `compile_v2()` is production on `root.sui` (ADR-216) and `now.sui`
   (ADR-217). Live Inbox/Spaces/list hits generate documents
   (ADR-218). Me scroll is `layout_v2_scrolled` (ADR-219). Apps grid
-  `Button` tiles match `now_grid_rect` (ADR-220). Overlay Field and
+  `Button` tiles come from `layout_v2` (ADR-220/453). Overlay Field and
   decision `Button`s match consent/object-view rows (ADR-221). Privileged
   `Keyboard` binds to the focused Field; USB HID may replace the on-screen
   panel (ADR-222). Privileged `OrbHost` matches the live Orb zone
@@ -172,6 +182,27 @@ review. Copying them into an app document fails `compile_v2_public()`.
   margin (ADR-436). Apps empty `SurfacePattern` reads that tree
   (ADR-437). NOW empty keeps loc `now.empty` (ADR-438).
   Wi-Fi password compose uses surface `wifi-password` (ADR-439).
+  Pair fingerprint wrap reads the compiled slot (ADR-440).
+  Leftover `paint_context_header` is gone (ADR-441).
+  Leftover `task_confirm_view` is gone (ADR-442).
+  Leftover `now_object_summary_rect` is gone (ADR-443).
+  Leftover `consent_view` is gone (ADR-444).
+  Leftover `orb_view` is gone (ADR-445).
+  Leftover live `Frame::Root` is gone (ADR-446).
+  Leftover `draw_root` is gone (ADR-447).
+  Leftover live `content_action_at` dispatch is gone (ADR-448).
+  Leftover `cycle_space_lifecycle` is gone (ADR-449).
+  Leftover `content_action_at` table is gone (ADR-450).
+  Leftover `lock_attention_tap` is gone (ADR-451).
+  Leftover `present_lock_surface` is gone (ADR-452).
+  Leftover `now_grid_rect` is gone (ADR-453).
+  Leftover `scrolled_row_rect` is gone (ADR-454).
+  Leftover `stacked_trailing_rect` is gone (ADR-455).
+  Leftover named chrome is closed (ADR-456).
+  Public Search hits are host-locked (ADR-457).
+  Public list headers match Inbox stacked top (ADR-458).
+  Public compose omits `Keyboard` (ADR-459).
+  Public overlay headers match Inbox stacked top (ADR-460).
   `layout_v2()`
   matches v1 tab hits for the public NOW example (ADR-194/196) and
   live footer hits (ADR-199). Frozen v1 stays `compile_v1_rollback()`.

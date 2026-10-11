@@ -1192,6 +1192,52 @@ mod tests {
     }
 
     #[test]
+    fn layout_v2_public_search_row_matches_stacked_row() {
+        let source = include_str!("../../../docs/os/ui/examples/search-public.sui");
+        let screen = compile_v2_public(source).expect("public Search");
+        assert!(!screen.is_privileged());
+        let v2 = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            v2.hit_test(540.0, 525.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("search.item")
+        );
+        assert_eq!(
+            v2.hit_test(540.0, 525.0).map(|node| node.id.as_str()),
+            Some("search.item")
+        );
+        assert!(v2.hit_test(540.0, 250.0).is_none());
+        assert_eq!(
+            v2.hit_test(675.0, 2250.0).map(|node| node.id.as_str()),
+            Some("search")
+        );
+        let quiet = compile_v2(
+            r#"
+            sui 2
+            screen search {
+              component ContextHeader {}
+              component DataRow {
+                a11y = Status
+              }
+              component BottomNavigation {
+                tab now {}
+                tab spaces {}
+                tab search {}
+                tab me {}
+              }
+            }
+            "#,
+        )
+        .expect("quiet row");
+        let tree = layout_v2(&quiet, 1080, 2400);
+        assert!(tree.hit_test(540.0, 525.0).is_none());
+        assert_eq!(
+            tree.hit_test(675.0, 2250.0).map(|node| node.id.as_str()),
+            Some("search")
+        );
+    }
+
+    #[test]
     fn layout_v2_public_spaces_row_matches_stacked_row() {
         let source = include_str!("../../../docs/os/ui/examples/spaces-public.sui");
         let screen = compile_v2_public(source).expect("public Spaces");
@@ -1500,8 +1546,7 @@ mod tests {
         assert!(!screen.is_privileged());
         let tree = layout_v2(&screen, 1080, 2400);
         let header = layout_v1_find(&tree, "ContextHeader").expect("header");
-        assert_eq!(header.rect.y, 0);
-        assert_eq!(header.rect.height, 430);
+        assert_eq!(header.rect, saai_ui_core::Rect::new(49, 0, 982, 430));
         assert!(header.action.is_none());
         let app = layout_v1_find(&tree, "consent.app").expect("app");
         assert_eq!(app.rect.y, 430);
@@ -1530,8 +1575,7 @@ mod tests {
         assert!(!screen.is_privileged());
         let tree = layout_v2(&screen, 1080, 2400);
         let header = layout_v1_find(&tree, "ContextHeader").expect("header");
-        assert_eq!(header.rect.y, 0);
-        assert_eq!(header.rect.height, 430);
+        assert_eq!(header.rect, saai_ui_core::Rect::new(49, 0, 982, 430));
         assert!(header.action.is_none());
         let client = layout_v1_find(&tree, "pair.client").expect("client");
         assert_eq!(client.rect.y, 430);
@@ -1589,6 +1633,62 @@ mod tests {
     }
 
     #[test]
+    fn layout_v2_public_compose_omits_keyboard() {
+        for (name, source, field_id) in [
+            (
+                "intent",
+                include_str!("../../../docs/os/ui/examples/intent-public.sui"),
+                "intent-field",
+            ),
+            (
+                "wifi-password",
+                include_str!("../../../docs/os/ui/examples/wifi-password-public.sui"),
+                "wifi-password-field",
+            ),
+            (
+                "pin-setup",
+                include_str!("../../../docs/os/ui/examples/pin-setup-public.sui"),
+                "pin-field",
+            ),
+        ] {
+            assert!(!source.contains("Keyboard"), "{name}");
+            let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));
+            assert!(!screen.is_privileged(), "{name}");
+            assert!(
+                screen
+                    .components
+                    .iter()
+                    .all(|component| component.type_name != "Keyboard"),
+                "{name}"
+            );
+            let tree = layout_v2(&screen, 1080, 2400);
+            let header = layout_v1_find(&tree, "ContextHeader").unwrap_or_else(|| panic!("{name}"));
+            let field = layout_v1_find(&tree, field_id).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(header.rect.y, 0, "{name}");
+            assert_eq!(header.rect.x, field.rect.x, "{name}");
+            assert_eq!(header.rect.x, 1080 / 22, "{name}");
+            assert!(header.action.is_none(), "{name}");
+            assert!(field.action.is_none(), "{name}");
+            assert_eq!(field.rect.y + field.rect.height, 2400, "{name}");
+            assert!(layout_v1_find(&tree, "Keyboard").is_none(), "{name}");
+        }
+        let rejected = compile_v2_public(
+            r#"
+            sui 2
+            screen intent {
+              component ContextHeader {}
+              component Field { a11y = Status loc = "intent-field" }
+              component Keyboard { a11y = Status loc = "intent-keyboard" }
+            }
+            "#,
+        )
+        .unwrap_err();
+        assert!(rejected
+            .to_string()
+            .contains("privileged SUI v2 component `Keyboard`"));
+    }
+
+    #[test]
     fn layout_v2_inbox_header_matches_stacked_top() {
         let source = include_str!("../../../docs/os/ui/examples/inbox-public.sui");
         let screen = compile_v2_public(source).expect("public inbox");
@@ -1598,6 +1698,70 @@ mod tests {
         assert_eq!(header.rect.height, 430);
         assert_eq!(header.rect.x, 1080 / 22);
         assert!(header.action.is_none());
+    }
+
+    #[test]
+    fn layout_v2_public_list_headers_match_stacked_top() {
+        for (name, source) in [
+            (
+                "search",
+                include_str!("../../../docs/os/ui/examples/search-public.sui"),
+            ),
+            (
+                "spaces",
+                include_str!("../../../docs/os/ui/examples/spaces-public.sui"),
+            ),
+            (
+                "me",
+                include_str!("../../../docs/os/ui/examples/me-public.sui"),
+            ),
+            (
+                "wifi",
+                include_str!("../../../docs/os/ui/examples/wifi-public.sui"),
+            ),
+            (
+                "bluetooth",
+                include_str!("../../../docs/os/ui/examples/bluetooth-public.sui"),
+            ),
+        ] {
+            let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));
+            assert!(!screen.is_privileged(), "{name}");
+            let tree = layout_v2(&screen, 1080, 2400);
+            let header = layout_v1_find(&tree, "ContextHeader").unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(
+                header.rect,
+                saai_ui_core::Rect::new(49, 0, 982, 430),
+                "{name}"
+            );
+            assert!(header.action.is_none(), "{name}");
+            assert!(tree.hit_test(540.0, 250.0).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn layout_v2_public_overlay_headers_match_stacked_top() {
+        for (name, source) in [
+            (
+                "consent",
+                include_str!("../../../docs/os/ui/examples/consent-public.sui"),
+            ),
+            (
+                "remote-pair",
+                include_str!("../../../docs/os/ui/examples/remote-pair-public.sui"),
+            ),
+        ] {
+            let screen = compile_v2_public(source).unwrap_or_else(|err| panic!("{name}: {err}"));
+            assert!(!screen.is_privileged(), "{name}");
+            let tree = layout_v2(&screen, 1080, 2400);
+            let header = layout_v1_find(&tree, "ContextHeader").unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(
+                header.rect,
+                saai_ui_core::Rect::new(49, 0, 982, 430),
+                "{name}"
+            );
+            assert!(header.action.is_none(), "{name}");
+            assert!(tree.hit_test(540.0, 250.0).is_none(), "{name}");
+        }
     }
 
     #[test]

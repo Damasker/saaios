@@ -162,20 +162,11 @@ enum SpaceLifecycle {
 }
 
 impl SpaceLifecycle {
-    fn as_str(self) -> &'static str {
-        match self {
-            SpaceLifecycle::Temporary => "temporary",
-            SpaceLifecycle::Emerging => "emerging",
-            SpaceLifecycle::Stable => "stable",
-            SpaceLifecycle::Archived => "archived",
-        }
-    }
-
-    /// Shown on the space's own card (`content_card`'s `select_space:`
-    /// branch) -- `None` for `Stable` specifically, so the common,
-    /// untouched case doesn't clutter every card with a label nobody
-    /// asked to see (same "only show what's not the default" spirit
-    /// as `capability_label`'s callers already apply elsewhere).
+    /// Shown on the space's own card -- `None` for `Stable`
+    /// specifically, so the common, untouched case doesn't clutter
+    /// every card with a label nobody asked to see (same "only show
+    /// what's not the default" spirit as `capability_label`'s
+    /// callers already apply elsewhere).
     fn label(self) -> Option<&'static str> {
         match self {
             SpaceLifecycle::Temporary => Some("Временное"),
@@ -194,19 +185,6 @@ impl SpaceLifecycle {
             _ => None,
         }
     }
-
-    /// Drives the tap-an-already-selected-space gesture
-    /// (`invoke_content_action`'s `select_space:` branch) -- a fixed
-    /// cycle, same shape as `next_in_cycle` used everywhere on "Я",
-    /// just over four fixed states instead of a settings array.
-    fn next(self) -> Self {
-        match self {
-            SpaceLifecycle::Temporary => SpaceLifecycle::Emerging,
-            SpaceLifecycle::Emerging => SpaceLifecycle::Stable,
-            SpaceLifecycle::Stable => SpaceLifecycle::Archived,
-            SpaceLifecycle::Archived => SpaceLifecycle::Temporary,
-        }
-    }
 }
 
 /// `Stable` (the default) for a space with no matching entity in
@@ -222,17 +200,6 @@ fn space_lifecycle(system_entities: &[Entity], space_id: &str) -> SpaceLifecycle
         .and_then(|entity| entity.properties.get("lifecycle").and_then(Value::as_str))
         .and_then(SpaceLifecycle::parse)
         .unwrap_or(SpaceLifecycle::Stable)
-}
-
-/// The existing `saaios.space-lifecycle` record for `space_id`, if
-/// this space has ever had one written -- `cycle_space_lifecycle`
-/// needs the real `Entity` (id/revision) to `update_entity` it
-/// in place instead of accumulating duplicates.
-fn space_lifecycle_entity<'a>(system_entities: &'a [Entity], space_id: &str) -> Option<&'a Entity> {
-    system_entities.iter().find(|entity| {
-        entity.entity_type == SPACE_LIFECYCLE_ENTITY_TYPE
-            && entity.properties.get("space_id").and_then(Value::as_str) == Some(space_id)
-    })
 }
 
 /// `(target_space_id, kind)` for every edge whose `from_space_id` is
@@ -332,7 +299,7 @@ impl SpaceColor {
     }
 
     /// Drives the "Цвет пространства" card on "Я" -- same fixed-cycle
-    /// shape as `SpaceLifecycle::next`.
+    /// shape as `next_in_cycle` on the other Система cards.
     fn next(self) -> Self {
         match self {
             SpaceColor::Default => SpaceColor::Blue,
@@ -384,7 +351,7 @@ fn space_color(system_entities: &[Entity], space_id: &str) -> SpaceColor {
 /// The existing `saaios.space-color` record for `space_id`, if one
 /// exists -- `cycle_space_color` needs the real `Entity` (id/
 /// revision) to `update_entity` it in place instead of accumulating
-/// duplicates, same reasoning as `space_lifecycle_entity`.
+/// duplicates.
 fn space_color_entity<'a>(system_entities: &'a [Entity], space_id: &str) -> Option<&'a Entity> {
     system_entities.iter().find(|entity| {
         entity.entity_type == SPACE_COLOR_ENTITY_TYPE
@@ -1004,16 +971,6 @@ struct TabDefinition {
     action: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ContentActionDefinition {
-    id: &'static str,
-    page: &'static str,
-    top: u32,
-    height: u32,
-    label: &'static str,
-    action: &'static str,
-}
-
 include!(concat!(env!("OUT_DIR"), "/root_sui.rs"));
 
 /// The four root sections in bottom-tab-bar order, plus Inbox as an
@@ -1025,28 +982,6 @@ enum RootPage {
     Search,
     Me,
     Inbox,
-}
-
-impl RootPage {
-    fn index(self) -> usize {
-        match self {
-            RootPage::Now => 0,
-            RootPage::Spaces => 1,
-            RootPage::Search => 2,
-            RootPage::Me => 3,
-            RootPage::Inbox => 0,
-        }
-    }
-
-    fn id(self) -> &'static str {
-        match self {
-            RootPage::Now => "now",
-            RootPage::Spaces => "spaces",
-            RootPage::Search => "search",
-            RootPage::Me => "me",
-            RootPage::Inbox => "inbox",
-        }
-    }
 }
 
 fn physical_unit(value: LogicalUnit) -> u32 {
@@ -2580,16 +2515,8 @@ fn format_utc_offset(minutes: i32) -> String {
     format!("UTC{sign}{:02}:{:02}", abs_minutes / 60, abs_minutes % 60)
 }
 
-const CONSENT_SCREEN_ID: &str = "consent";
-const CONSENT_HEADER_ID: &str = "consent-header";
-const CONSENT_BUTTONS_ID: &str = "consent-buttons";
-const CONSENT_ACCEPT_ID: &str = "consent-accept";
-const CONSENT_DECLINE_ID: &str = "consent-decline";
 const CONSENT_ACCEPT_ACTION: &str = "consent:accept";
 const CONSENT_DECLINE_ACTION: &str = "consent:decline";
-/// Matches the root tab bar's own height (ROOT_TAB_HEIGHT) so the two
-/// screens share the same bottom-button proportions.
-const CONSENT_BUTTON_HEIGHT: u32 = ROOT_TAB_HEIGHT;
 
 /// The requested-capability screen (ADR-020 section 2, S07 Change 4): a
 /// second full-screen `ui_tree` layout, built and hit-tested the same way
@@ -3057,14 +2984,6 @@ enum TrustedClientTap {
     Back,
 }
 
-fn trusted_client_list_row_count(client_count: usize) -> usize {
-    if client_count == 0 {
-        1
-    } else {
-        client_count
-    }
-}
-
 fn trusted_v2_source(client_count: usize) -> String {
     let mut src = String::from("sui 2\nscreen trusted {\n");
     src.push_str(&v2_header_block("trusted.header"));
@@ -3144,16 +3063,8 @@ fn dev_surface_back_tapped(pos: (f64, f64), width: u32, height: u32, row_count: 
         == Some("list_back")
 }
 
-const TASK_CONFIRM_HEADER_ID: &str = "task-confirm-header";
-const TASK_CONFIRM_BUTTONS_ID: &str = "task-confirm-buttons";
-const TASK_CONFIRM_ACCEPT_ID: &str = "task-confirm-accept";
-const TASK_CONFIRM_DECLINE_ID: &str = "task-confirm-decline";
 const TASK_CONFIRM_ACCEPT_ACTION: &str = "task_confirm:accept";
 const TASK_CONFIRM_DECLINE_ACTION: &str = "task_confirm:decline";
-/// Same reasoning as `CONSENT_BUTTON_HEIGHT`: matches the tab bar's own
-/// button proportions on this "second full-screen `ui_tree`" class of
-/// modal.
-const TASK_CONFIRM_BUTTON_HEIGHT: u32 = ROOT_TAB_HEIGHT;
 /// `saaios.task`'s own recognized values for the property this screen
 /// reads and writes -- kept local to `saai-shell` rather than imported
 /// from `saai-taskd`, per ADR-030's no-cross-runtime-dependency
@@ -3287,13 +3198,6 @@ enum Frame {
         field_rect: Rect,
         keys: Vec<(Rect, String)>,
     },
-    Root {
-        content_rect: Rect,
-        tabs: Vec<(Rect, NavigationItem)>,
-        content_cards: Vec<(Rect, render::ActionCardView)>,
-        context_label: String,
-        paint_navigation: bool,
-    },
     /// ADR-138: the `Приложения` grid is no longer `Frame::Root`.
     /// Header is a real `ContextHeader`; tiles are only live
     /// `installed_apps` (the old `root.sui` inspect/intent cells stay
@@ -3362,26 +3266,9 @@ enum Frame {
     },
 }
 
-fn task_confirm_view(width: u32, height: u32) -> LayoutNode {
-    let buttons = Node::linear(
-        TASK_CONFIRM_BUTTONS_ID,
-        Axis::Horizontal,
-        vec![
-            Node::leaf(TASK_CONFIRM_ACCEPT_ID).with_action(TASK_CONFIRM_ACCEPT_ACTION),
-            Node::leaf(TASK_CONFIRM_DECLINE_ID).with_action(TASK_CONFIRM_DECLINE_ACTION),
-        ],
-    )
-    .with_size(Length::Fill, Length::Px(TASK_CONFIRM_BUTTON_HEIGHT));
-    let root = Node::linear(
-        "task-confirm",
-        Axis::Vertical,
-        vec![Node::leaf(TASK_CONFIRM_HEADER_ID), buttons],
-    );
-    layout(&root, Rect::new(0, 0, width, height))
-}
-
 /// `Some(true)` for confirm, `Some(false)` for decline -- same shape as
-/// `consent_action_at()`.
+/// `consent_action_at()`. ADR-442: hits stay `overlay_buttons_v2_source`.
+/// The leftover v1 `task_confirm_view` tree is gone.
 fn task_confirm_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bool> {
     if width == 0 || height == 0 {
         return None;
@@ -3786,19 +3673,14 @@ fn object_view_fact_status(entity: &Entity) -> String {
     }
 }
 
-const ORB_DOT_ID: &str = "orb-dot";
 const ORB_TOGGLE_ACTION: &str = "orb:toggle";
 const ORB_MENU_INBOX_ACTION: &str = "orb-menu:inbox";
 const ORB_MENU_INTENT_ACTION: &str = "orb-menu:intent";
 const ORB_MENU_BLUETOOTH_ACTION: &str = "orb-menu:bluetooth";
-fn orb_dot_size(width: u32, height: u32) -> u32 {
-    saai_ui_compiler::v2_orb_dot_size(width, height)
-}
-
 /// HIA-04b's own negative scenario (HIA-ROADMAP.md): the Orb must
 /// never occupy hit-test space the tab-bar/cards already use. Every
 /// `Frame::Root` page's cards start at `y=430` (2400-scale --
-/// `stacked_row_rect`/`now_grid_rect` both hardcode that same
+/// `stacked_row_rect` hardcodes that same
 /// constant) and the tab bar sits at the very bottom of the screen;
 /// this zone's bottom edge is pinned to `y=410`, twenty px of margin
 /// short of where a card could ever start, in EVERY state including
@@ -3817,8 +3699,7 @@ fn orb_zone_rect(width: u32, height: u32, menu_action_count: usize) -> Rect {
 /// always the dot itself (open/close), never a labeled row. The other
 /// three are `orb_menu_actions`' own vocabulary; adding a
 /// fourth someday only needs a new variant plus its `wire()`/`parse()`/
-/// `label()` arms, `orb_view`/`orb_action_at` already handle any
-/// length list.
+/// `label()` arms, `orb_action_at` already handles any length list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OrbAction {
     Toggle,
@@ -3884,30 +3765,8 @@ fn orb_menu_actions(is_system_space: bool, bluetooth_paired: bool) -> Vec<OrbAct
     actions
 }
 
-/// Closed (`menu_actions` empty): the whole zone IS the dot, one
-/// leaf, nothing to stack. Open: a vertical list within the (now
-/// taller) zone -- one row per `menu_actions` entry, the dot itself
-/// last, doubling as the close control. Host tests still compare
-/// against this tree. Live paint and hits read `layout_v2()` over
-/// `orb_v2_source` (ADR-230).
-fn orb_view(width: u32, height: u32, menu_actions: &[OrbAction]) -> LayoutNode {
-    let zone = orb_zone_rect(width, height, menu_actions.len());
-    if menu_actions.is_empty() {
-        return layout(&Node::leaf(ORB_DOT_ID).with_action(ORB_TOGGLE_ACTION), zone);
-    }
-    let mut children: Vec<Node> = menu_actions
-        .iter()
-        .enumerate()
-        .map(|(index, action)| Node::leaf(format!("orb-menu-{index}")).with_action(action.wire()))
-        .collect();
-    children.push(
-        Node::leaf(ORB_DOT_ID)
-            .with_action(ORB_TOGGLE_ACTION)
-            .with_size(Length::Fill, Length::Px(orb_dot_size(width, height))),
-    );
-    layout(&Node::linear("orb-menu", Axis::Vertical, children), zone)
-}
-
+/// ADR-223/445: Orb hits stay `orb_v2_source`. The leftover v1
+/// `orb_view` tree is gone.
 fn orb_action_at(
     pos: (f64, f64),
     width: u32,
@@ -3929,8 +3788,7 @@ fn orb_action_at(
 
 /// What `draw_orb` needs, computed once per frame in `build_orb_
 /// frame` (a `Shell` method -- needs `&self` for the current space's
-/// color and notification state, which `orb_view`/`orb_state` alone
-/// can't see).
+/// color and notification state, which `orb_state` alone can't see).
 struct OrbFrame {
     dot: Rect,
     dot_color: render::Pixel,
@@ -3969,8 +3827,8 @@ fn intent_key_action(ch: char) -> String {
     format!("{INTENT_KEY_PREFIX}{ch}")
 }
 
-/// Built and hit-tested the same way as `root_view()`/`consent_view()`:
-/// one `Node`/`layout()` tree, no second set of rectangles for touch.
+/// Built and hit-tested as one `Node`/`layout()` tree, no second set
+/// of rectangles for touch. Overlay consent hits stay `layout_v2`.
 /// ADR-150: four `MIN_TOUCH_TARGET` rows docked at the bottom (first
 /// iPhone QWERTY), not a Fill of the whole panel. Shorter letter rows
 /// inset so key cells stay one width. Space `Fill`s the control row.
@@ -4200,27 +4058,9 @@ fn intent_labeled_center(label: &str, width: u32, height: u32, mode: KeyboardMod
     )
 }
 
-fn consent_view(width: u32, height: u32) -> LayoutNode {
-    let buttons = Node::linear(
-        CONSENT_BUTTONS_ID,
-        Axis::Horizontal,
-        vec![
-            Node::leaf(CONSENT_ACCEPT_ID).with_action(CONSENT_ACCEPT_ACTION),
-            Node::leaf(CONSENT_DECLINE_ID).with_action(CONSENT_DECLINE_ACTION),
-        ],
-    )
-    .with_size(Length::Fill, Length::Px(CONSENT_BUTTON_HEIGHT));
-    let root = Node::linear(
-        CONSENT_SCREEN_ID,
-        Axis::Vertical,
-        vec![Node::leaf(CONSENT_HEADER_ID), buttons],
-    );
-    layout(&root, Rect::new(0, 0, width, height))
-}
-
 /// `Some(true)` for accept, `Some(false)` for decline, `None` if the touch
-/// missed both buttons -- same tree `draw()` renders from, per the same
-/// "no second set of rectangles" rule as `tab_at()`.
+/// missed both buttons. ADR-444: hits stay `overlay_buttons_v2_source`.
+/// The leftover v1 `consent_view` tree is gone.
 fn consent_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bool> {
     if width == 0 || height == 0 {
         return None;
@@ -4454,75 +4294,22 @@ fn boot_attempts() -> u32 {
         .unwrap_or(0)
 }
 
-fn content_action_rect(action: &ContentActionDefinition, width: u32, height: u32) -> Rect {
-    saai_ui_compiler::layout_v1_find(&root_view(width, height), action.id)
-        .map(|node| node.rect)
-        .unwrap_or_else(|| Rect::new(0, 0, 0, 0))
-}
-
-fn content_action_at(
-    page: RootPage,
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-) -> Option<ContentActionDefinition> {
-    if width == 0 || height == 0 {
-        return None;
-    }
-    let tree = root_view(width, height);
-    let hit = tree.hit_test(pos.0, pos.1)?;
-    ROOT_CONTENT_ACTIONS
-        .iter()
-        .copied()
-        .find(|action| action.page == page.id() && action.id == hit.id)
-}
-
-/// S13 Change 2: "Входящие" has no `root.sui` entries at all -- unlike
-/// every other page's content, the task list's length is runtime data
-/// (however many tasks `saai-taskd` currently has waiting), not
-/// something `build.rs` can bake in from markup. These functions are
-/// this page's own equivalent of `ROOT_CONTENT_ACTIONS` /
-/// `content_action_rect` / `content_action_at`.
+/// S13 Change 2: "Входящие" has no leftover `root.sui` content
+/// actions (ADR-187/450). Task-list length is runtime data, not
+/// something `build.rs` can bake in from markup.
 
 /// Same 190-tall/220-apart stacking `root.sui`'s "Пространства" cards
 /// use (`space-home` top=430, `space-work` top=650, ...), just computed
 /// per-index instead of read from compiled-in constants. Shared by
 /// every page whose card count is runtime data -- "Входящие" (S13
 /// Change 2) and "Я" (S13 Change 3) so far.
-/// S23: "Сейчас"'s icon grid -- 3 columns, phone-style, replacing the
-/// single-column list every other page still uses (`stacked_row_
-/// rect`). Same 1080x2400 reference-canvas convention as that
-/// function: literal units scaled by the real panel size, not a
-/// design-time assumption about actual resolution.
-const NOW_GRID_COLUMNS: u32 = 3;
-
-fn now_grid_rect(index: usize, width: u32, height: u32) -> Rect {
-    let margin = width / 22;
-    let columns = NOW_GRID_COLUMNS;
-    let gap = margin / 2;
-    let usable_width = width.saturating_sub(margin * 2);
-    let cell_width = usable_width.saturating_sub(gap * (columns - 1)) / columns;
-    let cell_height_2400 = 300u32;
-    let row = index as u32 / columns;
-    let column = index as u32 % columns;
-    let top_2400 = 430 + row * (cell_height_2400 + 40);
-    let top = ((u64::from(top_2400) * u64::from(height)) / 2400) as u32;
-    let cell_height = ((u64::from(cell_height_2400) * u64::from(height)) / 2400) as u32;
-    Rect::new(
-        margin + column * (cell_width + gap),
-        top,
-        cell_width,
-        cell_height,
-    )
-}
-
 /// VUI-03 (ADR-113): "Приложения" (behind which the app grid moves) and
 /// "Новое намерение" -- the two persistent navigation rows the composed
 /// `Сейчас` keeps reachable regardless of section content, fixed just
 /// above the tab bar rather than interleaved with `SystemSection` rows so
 /// their position never depends on how much real data is above them.
 /// Same "pure function shared by rendering and hit-testing" pattern
-/// `now_grid_rect`/`stacked_row_rect` already use.
+/// `stacked_row_rect` already uses.
 fn now_footer_action_rect(index: usize, width: u32, height: u32) -> Rect {
     let id = match index {
         0 => "apps",
@@ -4705,30 +4492,6 @@ fn stacked_control_rect(index: usize, width: u32, height: u32) -> Rect {
             desired.height,
         )
     }
-}
-
-fn stacked_row_pitch(height: u32) -> u32 {
-    ((220_u64 * height as u64) / 2400) as u32
-}
-
-/// ADR-165: trailing list controls dock as a cluster whose last row
-/// (Назад) stays on-screen. Same x/height as `stacked_row_rect`.
-fn stacked_trailing_rect(index: usize, last_index: usize, width: u32, height: u32) -> Rect {
-    let back = stacked_control_rect(last_index, width, height);
-    let steps = last_index.saturating_sub(index) as u32;
-    let y = back
-        .y
-        .saturating_sub(steps.saturating_mul(stacked_row_pitch(height)));
-    Rect::new(
-        back.x,
-        y.max(stacked_row_rect(0, width, height).y),
-        back.width,
-        back.height,
-    )
-}
-
-fn stacked_row_fits_above(row: Rect, back: Rect) -> bool {
-    row.y.saturating_add(row.height) <= back.y
 }
 
 /// ADR-160: DevSurface data rows scroll between the first stacked
@@ -6195,24 +5958,6 @@ fn lock_attention_key(view: &Option<LockAttentionView>) -> u8 {
     view.as_ref().map(LockAttentionView::key).unwrap_or(0)
 }
 
-/// ADR-148: re-check on tap. Locked lock never reveals details.
-/// Not a new hit-target — existing tap-to-unlock stays.
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LockAttentionTap {
-    UnlockRequired,
-    ViewAllowed,
-}
-
-#[allow(dead_code)]
-fn lock_attention_tap(locked: bool) -> LockAttentionTap {
-    if locked {
-        LockAttentionTap::UnlockRequired
-    } else {
-        LockAttentionTap::ViewAllowed
-    }
-}
-
 /// ADR-154: first tap after pseudo-sleep shows the lock; it is not
 /// unlock. The existing down-handler still consumes that touch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -6826,7 +6571,7 @@ fn space_detail_empty_card(store_connected: bool) -> render::ActionCardView {
 /// ADR-138 / ADR-187 / ADR-220: the apps grid only hits live
 /// `installed_apps`. Intent compose stays on the composed footer,
 /// not as extra tiles. Hits come from generated `compile_v2()`
-/// `Button` tiles laid out like `now_grid_rect`.
+/// `Button` tiles from generated `layout_v2`.
 fn now_action_at(
     pos: (f64, f64),
     width: u32,
@@ -7089,37 +6834,6 @@ fn consent_content_cards(
 /// tap, large enough that a normal tap on a real device never
 /// accidentally suppresses its own action.
 const ME_DRAG_TAP_SLOP_PX: f64 = 24.0;
-
-/// Physically discovered during the S14-S25 series' first device
-/// pass: 14 fixed rows plus N installed apps stopped fitting on one
-/// screen a while before S25 even landed. Originally worked around
-/// with Ещё/Назад pagination (this shell had no drag gesture
-/// recognition at all back then); replaced with real vertical
-/// drag-to-scroll once `TouchHandler` gained one (`down`/`motion`/`up`
-/// below) -- `scrolled_row_rect`/`me_max_scroll_offset` are the same
-/// idea `stacked_row_rect` already used, offset by how far the user
-/// has dragged.
-fn scrolled_row_rect(
-    index: usize,
-    width: u32,
-    height: u32,
-    scroll_offset: i32,
-    content_rect: Rect,
-) -> Option<Rect> {
-    let base = stacked_row_rect(index, width, height);
-    let top = base.y as i64 - scroll_offset as i64;
-    let bottom = top + base.height as i64;
-    let content_top = content_rect.y as i64;
-    let content_bottom = (content_rect.y + content_rect.height) as i64;
-    // A row that doesn't fit entirely inside the content area at this
-    // offset is skipped outright (neither drawn nor hit-tested) rather
-    // than clipped mid-row -- rows appear/disappear whole as the user
-    // scrolls, which is enough for a plain stacked full-width list.
-    if top < content_top || bottom > content_bottom {
-        return None;
-    }
-    Some(Rect::new(base.x, top as u32, base.width, base.height))
-}
 
 /// How far "Я"'s content list can scroll before its last row's bottom
 /// edge reaches the content area's own bottom edge -- the usual
@@ -8229,7 +7943,8 @@ fn overlay_field_v2_source_with(screen_id: &str, field_id: &str, with_keyboard: 
 
 /// ADR-223: live Orb hits are a generated `OrbHost` plus `orb-menu:`
 /// Buttons. Closed omits the menu Buttons so `layout_v2` docks only
-/// the dot. Paint still uses `orb_view`.
+/// the dot. ADR-445: leftover `orb_view` is gone; paint reads this
+/// tree.
 fn orb_v2_source(menu_actions: &[OrbAction]) -> String {
     let mut src = String::from(
         "sui 2\nscreen now {\n  component OrbHost {\n    a11y = Status\n    loc = \"orb:toggle\"\n  }\n",
@@ -8443,11 +8158,9 @@ fn main() {
             None
         }
     };
-    // Third `DmabufCanvas` (own DRM fd, own slots) shared by both lock-
-    // surface presentation functions (`present_lock_surface`,
-    // `present_lock_pin_entry`) -- they already share the wl_shm
-    // `lock_buffer`/`lock_pool` pair for the same reason: same surface,
-    // same size, mutually exclusive content.
+    // Third `DmabufCanvas` (own DRM fd, own slots) for
+    // `present_lock_pin_entry` -- same surface, same size as the
+    // wl_shm `lock_buffer`/`lock_pool` pair.
     let lock_dmabuf_canvas = match DmabufCanvas::new() {
         Ok(canvas) => Some(canvas),
         Err(error) => {
@@ -8762,14 +8475,13 @@ struct Shell {
     /// still needs to read after `commit()` returns.
     lock_pool: Option<SlotPool>,
     lock_buffer: Option<Buffer>,
-    /// GPU-native alternative to `lock_buffer`/`lock_pool`, shared by
-    /// `present_lock_surface` and `present_lock_pin_entry` the same
-    /// way those two already share the wl_shm pair (ADR-024
-    /// continued). `None` on unavailability or any error, same
-    /// permanent-fallback contract as `main_dmabuf`/`dmabuf`.
+    /// GPU-native alternative to `lock_buffer`/`lock_pool` for
+    /// `present_lock_pin_entry` (ADR-024 continued). `None` on
+    /// unavailability or any error, same permanent-fallback contract
+    /// as `main_dmabuf`/`dmabuf`.
     lock_dmabuf: Option<DmabufCanvas>,
     /// Size the lock surface was last `configure()`d at -- needed by
-    /// `present_lock_surface()` to redraw it later (e.g. the sleep
+    /// `present_lock_pin_entry` to redraw it later (e.g. the sleep
     /// indicator around a real suspend, S11 Change 2) outside of a fresh
     /// configure event, where `configure`'s own `new_size` parameter
     /// isn't available. Matches `self.width`/`self.height` in practice
@@ -9321,7 +9033,7 @@ impl SessionLockHandler for Shell {
         self.lock_width = width;
         self.lock_height = height;
         // A fresh configure means a new size -- the old buffer (if any)
-        // was sized for the previous one and `present_lock_surface()`
+        // was sized for the previous one and `present_lock_pin_entry`
         // never resizes an existing buffer itself.
         self.lock_buffer = None;
         self.present_lock_pin_entry(qh);
@@ -9841,9 +9553,9 @@ impl TouchHandler for Shell {
                 }
             } else if self.current_page == RootPage::Inbox {
                 // S13 Change 2 (tasks), extended S21 (notifications):
-                // "Входящие" has no `root.sui` entries, so its rows
-                // aren't reachable through `content_action_at` below --
-                // this page's tap target is entirely runtime data.
+                // "Входящие" has no leftover `root.sui` content
+                // actions (ADR-187). This page's tap target is
+                // entirely runtime data.
                 if let Some((_kind, id)) = inbox_row_at(
                     self.last_touch_pos,
                     self.width,
@@ -9926,15 +9638,11 @@ impl TouchHandler for Shell {
                     }
                 }
             } else if self.current_page == RootPage::Now {
-                // S13 Change 4: same reasoning as "Входящие" above --
-                // the app-list rows have no `root.sui` entries, so
-                // `content_action_at` alone can't find them (or, now,
-                // even correctly locate the two cards that remain
-                // static, since they're repositioned below the
-                // runtime-sized app list). Also reached once
-                // "Приложения" has opened the grid (`self.apps_open`)
-                // over the composed screen -- same grid, same handling
-                // either way.
+                // S13 Change 4: the app-list rows have no leftover
+                // `root.sui` content actions (ADR-187). Also reached
+                // once "Приложения" has opened the grid
+                // (`self.apps_open`) over the composed screen -- same
+                // grid, same handling either way.
                 if let Some(action_str) = now_action_at(
                     self.last_touch_pos,
                     self.width,
@@ -9950,26 +9658,18 @@ impl TouchHandler for Shell {
                         self.draw(conn, qh);
                     }
                     // "inspect_selected_entity" has no tap behavior --
-                    // matches this card's pre-existing no-op (it was
-                    // never wired into `invoke_content_action` either).
+                    // leftover inspect cards were never wired.
                 }
             } else if self.current_page == RootPage::Me {
-                // S16: same reasoning again -- the three settings rows
-                // sit below "Я"'s two-then-three fixed info rows, at
-                // indices `content_action_at`'s `root.sui`-driven table
-                // (which has no "me" entries at all) can't reach.
+                // S16: the three settings rows sit below "Я"'s
+                // two-then-three fixed info rows. Leftover
+                // `root.sui` content actions have no "me" entries
+                // (ADR-187).
                 if let Some(action) =
                     self.me_action_at(self.last_touch_pos, self.width, self.height)
                 {
                     self.invoke_me_action(action, conn, qh);
                 }
-            } else if let Some(action) = content_action_at(
-                self.current_page,
-                self.last_touch_pos,
-                self.width,
-                self.height,
-            ) {
-                self.invoke_content_action(action, conn, qh);
             }
             if had_pressed_tab || had_pressed_key {
                 self.draw(conn, qh);
@@ -10274,11 +9974,9 @@ impl Shell {
         };
         self.sync_activity_clock();
 
-        // Every `&self` read this frame needs (content cards, context
-        // label, consent labels) happens here, before `buffer`/`canvas`
-        // take a mutable borrow tied to `self.buffer`/`self.pool` for the
-        // rest of the function -- `self.content_card()`/`self.context_
-        // label()` need the whole of `self`, not just those two fields.
+        // Every `&self` read this frame needs happens here, before
+        // `buffer`/`canvas` take a mutable borrow tied to
+        // `self.buffer`/`self.pool` for the rest of the function.
         let pressed_key = self.pressed_key.clone();
         let frame = if let Some(pending) = &self.pending_consent {
             let labels = pending
@@ -10351,10 +10049,10 @@ impl Shell {
                 actions,
             }
         } else if let Some(pending) = &self.pending_pair_request {
-            // Reuses task_confirm_view's geometry verbatim (same
-            // header-plus-two-buttons shape) -- only the drawn text
-            // and the touch handler's meaning differ. ADR-144: the
-            // header leaf is `content_rect` for `ContextHeader`.
+            // ADR-229/433: pair chrome is `status_overlay_paint` on
+            // `remote-pair`, not the leftover v1 header-plus-buttons
+            // tree. Only the drawn text and the touch handler's
+            // meaning differ from consent.
             let (content_rect, header_rect, rows, fingerprint_rect, accept, decline) =
                 remote_pair_content_cards(&pending.client_name, width, height);
             Frame::RemotePairing {
@@ -10744,27 +10442,7 @@ impl Shell {
                 paint_navigation: !content_only,
             }
         } else {
-            let view = root_view(width, height);
-            let content_rect = view.children[0].rect;
-            let tabs = self.root_navigation_items(width, height);
-            let content_cards = ROOT_CONTENT_ACTIONS
-                .iter()
-                .filter(|action| action.page == self.current_page.id())
-                .map(|action| {
-                    (
-                        content_action_rect(action, width, height),
-                        self.content_card(action),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let context_label = self.context_label();
-            Frame::Root {
-                content_rect,
-                tabs,
-                content_cards,
-                context_label,
-                paint_navigation: !content_only,
-            }
+            unreachable!("ADR-446: every RootPage has a dedicated Frame");
         };
 
         // HIA-04b: the Orb is drawn once, unconditionally, after the
@@ -10773,15 +10451,14 @@ impl Shell {
         // own notification check, `space_color`) has to happen before
         // `canvas`/`buffer` take their mutable borrow, same reasoning
         // this function's own top comment already gives for `frame`.
-        // Only ever `Some` on `Frame::Root` (the only frame the Orb
-        // ever draws on) and only when the Rollback setting allows it.
+        // Only ever `Some` on a root tab frame and only when the
+        // Rollback setting allows it.
         let orb_frame = (!content_only
             && !self.calibration_mode
             && self.settings.orb_enabled
             && matches!(
                 frame,
-                Frame::Root { .. }
-                    | Frame::Now { .. }
+                Frame::Now { .. }
                     | Frame::AppsGrid { .. }
                     | Frame::Inbox { .. }
                     | Frame::Search { .. }
@@ -10794,8 +10471,6 @@ impl Shell {
         let contrast_pct = self.settings.contrast_pct;
         let field_focused = field_shows_context_focus(self.motion_clock.as_ref());
         let need_frame = self.clocks_need_frame();
-        let current_page_index = self.current_page.index();
-        let current_page_is_now = self.current_page == RootPage::Now;
         let calibration_mode = self.calibration_mode;
         let gallery_mode = self.gallery_mode;
         let gallery_composites = self.gallery_composites;
@@ -11063,25 +10738,6 @@ impl Shell {
                         fonts,
                     );
                 }
-                Frame::Root {
-                    content_rect,
-                    tabs,
-                    content_cards,
-                    context_label,
-                    paint_navigation,
-                } => {
-                    render::draw_root(
-                        &mut render::Canvas::new(canvas, width, height),
-                        content_rect,
-                        &tabs,
-                        current_page_index,
-                        &context_label,
-                        fonts,
-                        &content_cards,
-                        current_page_is_now,
-                        paint_navigation,
-                    );
-                }
                 Frame::Now {
                     content_rect,
                     tabs,
@@ -11199,7 +10855,7 @@ impl Shell {
                 }
             }
             // HIA-04b: unconditional -- `orb_frame` is already `None`
-            // whenever it shouldn't draw (not `Frame::Root`, or the
+            // whenever it shouldn't draw (not a root tab frame, or the
             // Rollback setting turned it off), computed once above before
             // this function's own mutable canvas borrow began.
             if let Some(orb) = &orb_frame {
@@ -11302,29 +10958,7 @@ impl Shell {
         self.finish_frame(produce_ms, need_frame, content_only, FrameBackend::Shm);
     }
 
-    /// The lifecycle-cycle gesture's actual write path -- full-replace
-    /// `update_entity` on the space's existing `saaios.space-lifecycle`
-    /// record if one exists (same pattern `dismiss_notification`/
-    /// `handle_object_view_action` already use), or `create_entity`
-    /// the first time this space's lifecycle is ever touched.
-    fn cycle_space_lifecycle(&mut self, space_id: &str) {
-        let next = space_lifecycle(&self.system_space_entities, space_id).next();
-        let mut properties = Map::new();
-        properties.insert("space_id".into(), Value::String(space_id.to_string()));
-        properties.insert("lifecycle".into(), Value::String(next.as_str().to_string()));
-        match space_lifecycle_entity(&self.system_space_entities, space_id) {
-            Some(entity) => self.entityd.update_entity(entity, properties),
-            None => self.entityd.create_entity(
-                SYSTEM_SPACE_ID,
-                SPACE_LIFECYCLE_ENTITY_TYPE,
-                format!("Жизненный цикл: {space_id}"),
-                properties,
-            ),
-        }
-    }
-
-    /// HIA-03's "Цвет пространства" card on "Я" -- same write shape as
-    /// `cycle_space_lifecycle` just above, one entity type over.
+    /// HIA-03's "Цвет пространства" card on "Я".
     fn cycle_space_color(&mut self, space_id: &str) {
         let next = space_color(&self.system_space_entities, space_id).next();
         let mut properties = Map::new();
@@ -11342,8 +10976,8 @@ impl Shell {
     }
 
     /// HIA-02: called from the one place a real, deliberate user
-    /// choice happens -- `invoke_content_action`'s tap-driven
-    /// `select_space:` branch -- and nowhere else. Deliberately NOT
+    /// choice happens -- `invoke_select_space` -- and nowhere else.
+    /// Deliberately NOT
     /// called from `apply_entityd_message`'s `Selection`/
     /// `SelectionChanged` arms, even though those also update
     /// `selected_space_id`: if a Wi-Fi-triggered auto-switch also
@@ -11406,27 +11040,6 @@ impl Shell {
             self.entityd.select_space(space_id);
         }
         self.space_detail_open = true;
-    }
-
-    fn invoke_content_action(
-        &mut self,
-        action: ContentActionDefinition,
-        conn: &Connection,
-        qh: &QueueHandle<Self>,
-    ) {
-        println!(
-            "saai-shell: invoked content action {} ({})",
-            action.id, action.action
-        );
-        if let Some(space_id) = action.action.strip_prefix("select_space:") {
-            self.invoke_select_space(space_id);
-            return;
-        }
-        if action.action == "open_intent_input" {
-            self.intent_input = Some(open_intent_state());
-            self.begin_compose_context();
-            self.draw(conn, qh);
-        }
     }
 
     /// S13 Change 4: launches an already-installed app by id -- the
@@ -12667,26 +12280,9 @@ impl Shell {
         rows
     }
 
-    /// VUI-03 (ADR-112): replaces `context_label()`'s own
-    /// name-plus-"(архив)"-suffix string with the real `ContextHeader`
-    /// composite -- a non-default lifecycle becomes a nested
-    /// `StatusIndicator`, not text baked into the name itself.
-    /// VUI-03 (ADR-114): "Нет связи" takes priority over the space's own
-    /// lifecycle when `saai-entityd` is unreachable -- without a live
-    /// connection, `self.selected_entities` is whatever was last
-    /// fetched (possibly nothing, possibly stale), so this shell cannot
-    /// honestly claim to know the space's *current* lifecycle either.
-    /// Offline is the more urgent, more global fact.
-    /// VUI-04 (ADR-116): the shared `BottomNavigation` data every root
-    /// page now draws through -- real `selected` (matches the current
-    /// tab). Inbox is not a primary tab (ADR-240). `pressed` follows
-    /// the live finger (`pressed_tab`); `disabled` stays at its
-    /// default `false` -- no tab is ever actually disabled today.
-    fn root_navigation_items(&self, width: u32, height: u32) -> Vec<(Rect, NavigationItem)> {
-        self.navigation_items_from(&root_view(width, height))
-    }
-
     /// ADR-225: tab rects from the same compiled tree the screen paints.
+    /// VUI-04 (ADR-116): real `selected` matches the current tab.
+    /// Inbox is not a primary tab (ADR-240).
     fn navigation_items_from(&self, tree: &LayoutNode) -> Vec<(Rect, NavigationItem)> {
         let Some(nav) = saai_ui_compiler::layout_v1_find(tree, "BottomNavigation") else {
             return Vec::new();
@@ -12707,6 +12303,9 @@ impl Shell {
             .collect()
     }
 
+    /// VUI-03 (ADR-112): a non-default lifecycle is a nested
+    /// `StatusIndicator`, not text baked into the name. ADR-114:
+    /// "Нет связи" takes priority when `saai-entityd` is unreachable.
     fn now_context_header(&self) -> ContextHeader {
         let header = ContextHeader::new(space_display_name(&self.spaces, &self.selected_space_id))
             .with_section_title("Сейчас");
@@ -12721,11 +12320,8 @@ impl Shell {
         }
     }
 
-    /// VUI-03 (ADR-112): the same "most recently updated entity in the
-    /// space" the ad hoc `"inspect_selected_entity"` card already used
-    /// (`content_card`'s own doc comment), now returning a real
-    /// `ObjectSummary` instead of a `render::ActionCardView` built by
-    /// string formatting.
+    /// VUI-03 (ADR-112): the most recently updated entity in the
+    /// space, as a real `ObjectSummary`.
     fn now_object_summary(&self) -> Option<ObjectSummary> {
         self.selected_entities.first().map(|entity| {
             let mut summary = ObjectSummary::new(
@@ -12750,72 +12346,6 @@ impl Shell {
             &self.relationships,
             read_runtime_live_facts().health.as_ref(),
         )
-    }
-
-    fn content_card(&self, action: &ContentActionDefinition) -> render::ActionCardView {
-        if action.action == "inspect_selected_entity" {
-            return match self.selected_entities.first() {
-                Some(entity) => render::ActionCardView::new(
-                    entity.title.clone(),
-                    format!("{} · версия {}", entity.entity_type, entity.revision),
-                    "Локально",
-                ),
-                None if self.entityd.is_connected() => render::ActionCardView::new(
-                    action.label,
-                    "В этом пространстве пока пусто",
-                    "Нет объектов",
-                ),
-                None => render::ActionCardView::new(
-                    action.label,
-                    "Сервис пространств недоступен",
-                    "Ожидание",
-                ),
-            };
-        }
-        if action.action == "open_intent_input" {
-            return render::ActionCardView::new(
-                action.label,
-                intent_compose_status(self.entityd.is_connected()),
-                "Открыть",
-            );
-        }
-        if let Some(space_id) = action.action.strip_prefix("select_space:") {
-            let selected = space_id == self.selected_space_id;
-            return render::ActionCardView::new(
-                action.label,
-                space_card_status(
-                    space_id,
-                    self.entityd.is_connected(),
-                    &self.entity_counts,
-                    &self.spaces,
-                    &self.system_space_entities,
-                ),
-                if selected {
-                    "Выбрано"
-                } else {
-                    "Открыть"
-                },
-            )
-            .selected(selected);
-        }
-        render::ActionCardView::new(action.label, "", "")
-    }
-
-    fn context_label(&self) -> String {
-        let name = space_display_name(&self.spaces, &self.selected_space_id);
-        // HIA-01: the one real, always-visible behavioral difference
-        // `SpaceLifecycle::Archived` makes today -- everything else
-        // about an archived space (its card, its entities) keeps
-        // working exactly as before; only the status-bar label
-        // admits it's archived, so nobody mistakes it for an active
-        // context by accident.
-        if space_lifecycle(&self.system_space_entities, &self.selected_space_id)
-            == SpaceLifecycle::Archived
-        {
-            format!("{name} (архив)")
-        } else {
-            name
-        }
     }
 
     /// S09 Change 3 (ADR-031's follow-up): the first `saaios.task` in
@@ -13294,7 +12824,7 @@ impl Shell {
     /// object itself isn't present for some other reason.
     /// S13 Change 1: draws the real status bar content (time, Wi-Fi,
     /// battery) into the permanent system layer. Reuses `layer_pool`/
-    /// `layer_buffer` the same way `present_lock_surface` reuses its
+    /// `layer_buffer` the same way `present_lock_pin_entry` reuses its
     /// own pool/buffer -- called both from the layer's own `configure`
     /// (first paint) and periodically from `refresh_statusbar_if_due`.
     fn shell_owns_text_field(&self) -> bool {
@@ -13670,109 +13200,6 @@ impl Shell {
         );
     }
 
-    #[allow(dead_code)]
-    fn present_lock_surface(&mut self, qh: &QueueHandle<Self>, color: [u8; 4]) {
-        let width = self.lock_width;
-        let height = self.lock_height;
-        if width == 0 || height == 0 {
-            return;
-        }
-        let Some(lock_surface) = self.lock_surfaces.last() else {
-            return;
-        };
-        let stride = width as i32 * 4;
-
-        // GPU-native path (ADR-024 continued), same contract as
-        // `draw()`/`present_status_bar`: a transient busy state (both
-        // slots still held by the compositor) falls back to wl_shm for
-        // just this call; any real error disables the path for the
-        // rest of the session.
-        if let (Some(dmabuf_global), Some(lock_dmabuf)) =
-            (self.dmabuf_global.clone(), self.lock_dmabuf.as_mut())
-        {
-            let ready = match lock_dmabuf.ensure_size(width, height, &dmabuf_global, qh) {
-                Ok(()) => lock_dmabuf.has_free_slot(),
-                Err(error) => {
-                    eprintln!(
-                        "saai-shell: dma-buf lock surface path failed ({error}), disabling it for this session"
-                    );
-                    self.lock_dmabuf = None;
-                    false
-                }
-            };
-            if ready {
-                let lock_dmabuf = self
-                    .lock_dmabuf
-                    .as_mut()
-                    .expect("just confirmed ready above");
-                match lock_dmabuf.paint(|canvas| {
-                    for chunk in canvas.chunks_exact_mut(4) {
-                        chunk.copy_from_slice(&color);
-                    }
-                }) {
-                    Ok(wl_buffer) => {
-                        let surface = lock_surface.wl_surface();
-                        surface.attach(Some(wl_buffer), 0, 0);
-                        surface.damage_buffer(0, 0, width as i32, height as i32);
-                        surface.commit();
-                        return;
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "saai-shell: dma-buf lock surface paint failed ({error}), disabling it for this session"
-                        );
-                        self.lock_dmabuf = None;
-                    }
-                }
-            }
-        }
-
-        if self.lock_pool.is_none() {
-            self.lock_pool = Some(
-                SlotPool::new(width as usize * height as usize * 4, &self.shm)
-                    .expect("create lock surface pool"),
-            );
-        }
-        let pool = self.lock_pool.as_mut().expect("just ensured above");
-
-        if self.lock_buffer.is_none() {
-            let (buffer, _canvas) = pool
-                .create_buffer(
-                    width as i32,
-                    height as i32,
-                    stride,
-                    wl_shm::Format::Xrgb8888,
-                )
-                .expect("create lock buffer");
-            self.lock_buffer = Some(buffer);
-        }
-        let buffer = self.lock_buffer.as_mut().expect("just ensured above");
-
-        let canvas = match pool.canvas(buffer) {
-            Some(canvas) => canvas,
-            None => {
-                let (second_buffer, canvas) = pool
-                    .create_buffer(
-                        width as i32,
-                        height as i32,
-                        stride,
-                        wl_shm::Format::Xrgb8888,
-                    )
-                    .expect("create lock buffer");
-                *buffer = second_buffer;
-                canvas
-            }
-        };
-        for chunk in canvas.chunks_exact_mut(4) {
-            chunk.copy_from_slice(&color);
-        }
-
-        let surface = lock_surface.wl_surface();
-        surface.damage_buffer(0, 0, width as i32, height as i32);
-        buffer.attach_to(surface).expect("buffer attach");
-        surface.commit();
-    }
-
     /// S24 / VUI-07 (ADR-134 / ADR-149 / ADR-154): no-PIN lock is clock
     /// + hint (+ attention + battery). PIN unlock paints a Password
     /// `Field` of occupancy plus the keypad, never the secret. AOD
@@ -14006,12 +13433,12 @@ mod tests {
         calibration_requested, capability_label, capture_nodes_from_v4l_listing,
         cellular_ifaces_from_net_listing, cellular_row_status, bearer_is_live, cp_state_token,
         last_field_registration_raw, consent_action_at, consent_content_cards, consent_header,
-        content_action_at, dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header,
+        dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header,
         diagnostic_row, diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space,
         ensure_me_row_cache, field_shows_context_focus, flatten_me_rows, format_utc_offset,
         in_progress_work, inbox_header, input_idle_for_at_least, intent_action_at,
         intent_compose_header, intent_field_rect, intent_input_field, known_surfaces,
-        lock_attention_tap, lock_attention_view, lock_device_view, lock_idle_view,
+        lock_attention_view, lock_device_view, lock_idle_view,
         lock_pin_entry_field, lock_sleep_view, lock_wake_tap, logical_surface_size,
         me_fixture_facts, me_header, me_system_sections, motion_clock_for, next_in_cycle,
         next_pending_action, now_action_at, now_object_tapped, now_workflow_sections,
@@ -14023,23 +13450,23 @@ mod tests {
         remote_pair_content_cards, remote_pair_header, remove_context_source,
         retain_pressed_while_clock, search_header, search_row_at, search_rows, space_color,
         space_color_entity, space_detail_action_at, space_detail_empty_card, space_detail_header,
-        space_display_name, space_for_wifi_ssid, space_lifecycle, space_lifecycle_entity,
+        space_display_name, space_for_wifi_ssid, space_lifecycle,
         space_list_rows, space_member_kind_label, space_member_rows, space_relation_targets,
-        space_row_at, spaces_header, stacked_control_rect, stacked_row_fits_above,
-        stacked_row_rect, stacked_trailing_rect, tab_at, task_confirm_action_at, today_schedules,
+        space_row_at, spaces_header, stacked_control_rect,
+        stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, trusted_client_card_from_row, trusted_client_is_protected,
-        trusted_client_list_row_count, trusted_client_list_rows, trusted_client_revoke_decision,
+        trusted_client_list_rows, trusted_client_revoke_decision,
         trusted_header, upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
         wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
         AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
         ContextSource, DataRowVariant, Entity, FieldKind, HealthReport, HealthState, Keyboard,
-        KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke, LockAttentionTap,
+        KeyboardCommand, KeyboardLayout, KeyboardMode, KeyboardSource, Keystroke,
         LockWakeTap, MotionClock, MotionToken, ObjectSummary, OrbAction, Rect, RootPage,
         SafeInsets, Space, SpaceColor, SpaceDetailTap, SpaceLifecycle, SurfacePattern,
         SystemSectionRow, TrustedClient, TrustedClientTap, UniversalState, WifiListTap,
         WifiNetwork, ACTION_ENTITY_TYPE, INTENT_CANCEL_ACTION, INTENT_MODE_TOGGLE_ACTION,
         INTENT_SEND_ACTION, MANUAL_CONFIDENCE, MIN_TOUCH_TARGET, NOTIFICATION_ENTITY_TYPE,
-        RESULT_ENTITY_TYPE, ROOT_CONTENT_ACTIONS, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
+        RESULT_ENTITY_TYPE, ROOT_TABS, ROOT_TAB_HEIGHT, SCHEDULE_ENTITY_TYPE,
         SPACE_COLOR_ENTITY_TYPE, SPACE_LIFECYCLE_ENTITY_TYPE, SPACE_RELATION_ENTITY_TYPE,
         SPACE_SIGNAL_ENTITY_TYPE, SPACE_SIGNAL_TYPE_WIFI_SSID, VOLUME_LEVELS_PCT, WIFI_CONFIDENCE,
     };
@@ -14567,7 +13994,13 @@ mod tests {
         let network_count = 20;
         let back_index = wifi_list_row_count(network_count) + 1;
         let desired = stacked_row_rect(back_index, width, height);
-        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        let tree = super::layout_live_v2(
+            &super::wifi_v2_source(network_count),
+            "ADR-455 wifi overflow",
+            width,
+            height,
+        );
+        let back = super::v2_named_rect(&tree, "back", "wifi");
         assert!(desired.y + desired.height > height);
         assert!(back.y + back.height <= height);
         let center = (
@@ -14667,45 +14100,58 @@ mod tests {
     }
 
     #[test]
-    fn scrolled_row_rect_shifts_up_by_the_scroll_offset() {
-        let width = 1080;
-        let height = 2400;
-        let content_rect = super::Rect::new(0, 0, width, height);
-        let base = super::stacked_row_rect(2, width, height);
-        let scrolled = super::scrolled_row_rect(2, width, height, 100, content_rect)
-            .expect("row still fits inside a full-height content area");
-        assert_eq!(scrolled.y, base.y - 100);
-        assert_eq!(scrolled.x, base.x);
-        assert_eq!(scrolled.height, base.height);
+    fn leftover_scrolled_row_rect_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn scrolled_row_", "rect(")));
+        assert!(src.contains("fn me_dispatch_at("));
+        assert!(src.contains("layout_v2_scrolled"));
+        assert!(src.contains("fn me_max_scroll_offset("));
     }
 
     #[test]
-    fn scrolled_row_rect_hides_rows_the_offset_pushes_out_of_the_content_area() {
+    fn leftover_stacked_trailing_rect_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn stacked_trailing_", "rect(")));
+        assert!(!src.contains(concat!("fn stacked_row_", "pitch(")));
+        assert!(src.contains("fn stacked_row_rect("));
+        assert!(src.contains("fn stacked_control_rect("));
+    }
+
+    #[test]
+    fn leftover_stacked_row_fits_above_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn stacked_row_fits_", "above(")));
+        assert!(src.contains("fn stacked_control_rect("));
+        assert!(src.contains("fn stacked_row_rect("));
+        assert!(src.contains("fn lock_idle_view("));
+        assert!(src.contains("fn lock_wake_tap("));
+    }
+
+    #[test]
+    fn layout_v2_scrolled_shifts_me_rows_by_offset() {
         let width = 1080;
         let height = 2400;
-        let content_rect = super::Rect::new(0, 200, width, 1700);
-        let content_bottom = content_rect.y + content_rect.height;
-        // A row far enough down the list to sit entirely below the
-        // content area at zero scroll (real state: nothing has been
-        // dragged yet, so only the first few rows are visible).
-        let row_index = 10;
-        let base = super::stacked_row_rect(row_index, width, height);
-        assert!(
-            base.y + base.height > content_bottom,
-            "row 10 is expected to overflow the bottom of this content area unscrolled"
+        let rows = super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts()));
+        let loc = super::me_row_loc(0, &rows[0]);
+        let rest = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-454 me scroll",
+            width,
+            height,
+            0,
         );
-        assert!(
-            super::scrolled_row_rect(row_index, width, height, 0, content_rect).is_none(),
-            "row 10 should not fit at zero scroll"
+        let moved = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-454 me scroll",
+            width,
+            height,
+            100,
         );
-        // Scrolling down (positive offset) moves it up into view --
-        // exactly enough to align its bottom edge with the content
-        // area's own bottom edge.
-        let needed_offset = (base.y + base.height - content_bottom) as i32;
-        let scrolled =
-            super::scrolled_row_rect(row_index, width, height, needed_offset, content_rect)
-                .expect("row 10 should fit once scrolled down far enough");
-        assert_eq!(scrolled.y + scrolled.height, content_bottom);
+        let base = super::v2_named_rect(&rest, &loc, "me");
+        let scrolled = super::v2_named_rect(&moved, &loc, "me");
+        assert_eq!(scrolled.y, base.y - 100);
+        assert_eq!(scrolled.x, base.x);
+        assert_eq!(scrolled.height, base.height);
     }
 
     #[test]
@@ -14713,13 +14159,14 @@ mod tests {
         let rows = super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts()));
         let width = 1080;
         let height = 2400;
-        let content = super::root_view(width, height).children[0].rect;
-        let index = rows
-            .iter()
-            .position(|row| row.dispatch == Some("cycle_timezone"))
-            .expect("fixture timezone");
-        let rest = super::scrolled_row_rect(index, width, height, 0, content)
-            .expect("timezone visible at rest");
+        let rest_tree = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-454 me hit",
+            width,
+            height,
+            0,
+        );
+        let rest = super::v2_named_rect(&rest_tree, "cycle_timezone", "me");
         let center = (
             (rest.x + rest.width / 2) as f64,
             (rest.y + rest.height / 2) as f64,
@@ -14729,8 +14176,14 @@ mod tests {
             Some("cycle_timezone")
         );
         let offset = 220;
-        let moved = super::scrolled_row_rect(index, width, height, offset, content)
-            .expect("timezone visible after drag");
+        let moved_tree = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-454 me hit",
+            width,
+            height,
+            offset,
+        );
+        let moved = super::v2_named_rect(&moved_tree, "cycle_timezone", "me");
         let moved_center = (
             (moved.x + moved.width / 2) as f64,
             (moved.y + moved.height / 2) as f64,
@@ -14893,13 +14346,18 @@ mod tests {
         let total = rows.len();
         let max_offset = super::me_max_scroll_offset(total, width, height, content);
         for offset in [0, max_offset / 2, max_offset] {
-            for index in 0..total {
-                if let Some(row) = super::scrolled_row_rect(index, width, height, offset, content) {
-                    assert!(
-                        row.intersection(nav).is_none(),
-                        "row {index} at offset {offset} overlaps nav"
-                    );
-                }
+            let tree = super::layout_live_v2_scrolled(
+                &super::me_v2_source(&rows),
+                "ADR-454 me nav",
+                width,
+                height,
+                offset,
+            );
+            for (rect, _) in super::me_paint_cards(&tree, &rows) {
+                assert!(
+                    rect.intersection(nav).is_none(),
+                    "row at offset {offset} overlaps nav"
+                );
             }
         }
     }
@@ -15305,7 +14763,13 @@ mod tests {
     fn now_action_at_only_hits_installed_apps() {
         let mut apps = std::collections::BTreeMap::new();
         apps.insert("demo".to_string(), test_app("demo", "Saai Demo"));
-        let first = super::now_grid_rect(0, 1080, 2400);
+        let tree = super::layout_live_v2(
+            &super::apps_v2_source(&apps),
+            "ADR-453 apps hit",
+            1080,
+            2400,
+        );
+        let first = super::v2_named_rect(&tree, "manage_app:demo", "apps");
         assert_eq!(
             now_action_at(
                 (f64::from(first.x + 10), f64::from(first.y + 10)),
@@ -15315,10 +14779,9 @@ mod tests {
             ),
             Some("manage_app:demo".to_string())
         );
-        let leftover = super::now_grid_rect(1, 1080, 2400);
         assert_eq!(
             now_action_at(
-                (f64::from(leftover.x + 10), f64::from(leftover.y + 10)),
+                (f64::from(first.x + first.width + 40), f64::from(first.y + 10)),
                 1080,
                 2400,
                 &apps
@@ -15328,20 +14791,36 @@ mod tests {
     }
 
     #[test]
-    fn now_grid_rect_lays_out_three_columns_per_row() {
+    fn leftover_now_grid_rect_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_grid_", "rect(")));
+        assert!(src.contains("fn now_action_at("));
+        assert!(src.contains("fn apps_v2_source("));
+    }
+
+    #[test]
+    fn apps_grid_tiles_lay_out_three_columns_per_row() {
         let width = 1080;
         let height = 2400;
-        let cell_0 = super::now_grid_rect(0, width, height);
-        let cell_1 = super::now_grid_rect(1, width, height);
-        let cell_2 = super::now_grid_rect(2, width, height);
-        let cell_3 = super::now_grid_rect(3, width, height);
-        // Same row (0..3): equal y, strictly increasing x.
+        let mut apps = std::collections::BTreeMap::new();
+        apps.insert("a".to_string(), test_app("a", "A"));
+        apps.insert("b".to_string(), test_app("b", "B"));
+        apps.insert("c".to_string(), test_app("c", "C"));
+        apps.insert("d".to_string(), test_app("d", "D"));
+        let tree = super::layout_live_v2(
+            &super::apps_v2_source(&apps),
+            "ADR-453 apps grid",
+            width,
+            height,
+        );
+        let cell_0 = super::v2_named_rect(&tree, "manage_app:a", "apps");
+        let cell_1 = super::v2_named_rect(&tree, "manage_app:b", "apps");
+        let cell_2 = super::v2_named_rect(&tree, "manage_app:c", "apps");
+        let cell_3 = super::v2_named_rect(&tree, "manage_app:d", "apps");
         assert_eq!(cell_0.y, cell_1.y);
         assert_eq!(cell_1.y, cell_2.y);
         assert!(cell_0.x < cell_1.x);
         assert!(cell_1.x < cell_2.x);
-        // Next row (index 3, the 4th cell) starts back at the left
-        // margin, below row 0.
         assert_eq!(cell_3.x, cell_0.x);
         assert!(cell_3.y > cell_0.y);
     }
@@ -15475,14 +14954,10 @@ mod tests {
             super::v2_named_rect(&wifi, "wifi.empty", "wifi"),
             stacked_row_rect(0, width, height)
         );
-        assert_eq!(
-            super::v2_named_rect(&wifi, "refresh", "wifi"),
-            stacked_trailing_rect(1, 2, width, height)
-        );
-        assert_eq!(
-            super::v2_named_rect(&wifi, "back", "wifi"),
-            stacked_trailing_rect(2, 2, width, height)
-        );
+        let refresh = super::v2_named_rect(&wifi, "refresh", "wifi");
+        let back = super::v2_named_rect(&wifi, "back", "wifi");
+        assert!(refresh.y < back.y);
+        assert!(back.y + back.height <= height);
         let two =
             super::layout_live_v2(&super::wifi_v2_source(2), "ADR-226 wifi two", width, height);
         assert_eq!(
@@ -15508,7 +14983,6 @@ mod tests {
         let width = 1080;
         let height = 2400;
         let rows = super::flatten_me_rows(&super::me_system_sections(&super::me_fixture_facts()));
-        let content = super::root_view(width, height).children[0].rect;
         let view = super::layout_live_v2_scrolled(
             &super::me_v2_source(&rows),
             "ADR-227 me paint",
@@ -15517,17 +14991,9 @@ mod tests {
             0,
         );
         let first = super::me_row_loc(0, &rows[0]);
-        assert_eq!(
-            super::v2_named_rect(&view, &first, "me"),
-            super::scrolled_row_rect(0, width, height, 0, content).expect("row0")
-        );
-        let index = rows
-            .iter()
-            .position(|row| row.dispatch == Some("cycle_timezone"))
-            .expect("fixture timezone");
-        let rest = super::scrolled_row_rect(index, width, height, 0, content)
-            .expect("timezone visible at rest");
-        assert_eq!(super::v2_named_rect(&view, "cycle_timezone", "me"), rest);
+        let first_rect = super::v2_named_rect(&view, &first, "me");
+        assert_eq!(first_rect.x, width / 22);
+        let rest = super::v2_named_rect(&view, "cycle_timezone", "me");
         let cards = super::me_paint_cards(&view, &rows);
         assert_eq!(
             cards
@@ -15539,7 +15005,10 @@ mod tests {
         let last = rows.len() - 1;
         let hidden = (0..=last)
             .rev()
-            .find(|&index| super::scrolled_row_rect(index, width, height, 0, content).is_none())
+            .find(|&index| {
+                saai_ui_compiler::layout_v1_find(&view, &super::me_row_loc(index, &rows[index]))
+                    .is_none()
+            })
             .expect("fixture overflows content");
         assert!(
             saai_ui_compiler::layout_v1_find(&view, &super::me_row_loc(hidden, &rows[hidden]))
@@ -15553,12 +15022,7 @@ mod tests {
             height,
             offset,
         );
-        let moved = super::scrolled_row_rect(index, width, height, offset, content)
-            .expect("timezone visible after drag");
-        assert_eq!(
-            super::v2_named_rect(&scrolled, "cycle_timezone", "me"),
-            moved
-        );
+        let moved = super::v2_named_rect(&scrolled, "cycle_timezone", "me");
         assert_ne!(rest, moved);
         let nav = saai_ui_compiler::layout_v1_find(&view, "BottomNavigation").expect("tabs");
         assert_eq!(nav.children.len(), 4);
@@ -15581,18 +15045,12 @@ mod tests {
             width,
             height,
         );
-        assert_eq!(
-            super::v2_named_rect(&tree, "manage_app:alpha", "apps"),
-            super::now_grid_rect(0, width, height)
-        );
-        assert_eq!(
-            super::v2_named_rect(&tree, "manage_app:demo", "apps"),
-            super::now_grid_rect(1, width, height)
-        );
+        let alpha = super::v2_named_rect(&tree, "manage_app:alpha", "apps");
+        let demo = super::v2_named_rect(&tree, "manage_app:demo", "apps");
         let cards = super::apps_paint_cards(&tree, &apps);
-        assert_eq!(cards[0].0, super::now_grid_rect(0, width, height));
+        assert_eq!(cards[0].0, alpha);
         assert_eq!(cards[0].1.label, "Alpha");
-        assert_eq!(cards[1].0, super::now_grid_rect(1, width, height));
+        assert_eq!(cards[1].0, demo);
         assert_eq!(cards[1].1.label, "Saai Demo");
         let empty_apps = std::collections::BTreeMap::new();
         let empty = super::layout_live_v2(
@@ -15631,10 +15089,9 @@ mod tests {
             width,
             height,
         );
-        let old = super::consent_view(width, height);
-        assert_eq!(header, old.children[0].rect);
-        assert_eq!(buttons[0], old.children[1].children[0].rect);
-        assert_eq!(buttons[1], old.children[1].children[1].rect);
+        assert_eq!(header.y, 0);
+        assert_eq!(buttons[0].y, buttons[1].y);
+        assert_eq!(buttons[0].height, 300);
         let pair = super::overlay_decision_paint(
             "consent",
             &[
@@ -15685,17 +15142,43 @@ mod tests {
         let actions = [OrbAction::OpenInbox, OrbAction::OpenBluetooth];
         let open =
             super::layout_live_v2(&orb_v2_source(&actions), "ADR-230 orb paint", width, height);
-        let old = super::orb_view(width, height, &actions);
-        assert_eq!(
-            super::v2_named_rect(&open, "orb-menu:inbox", "orb"),
-            old.children[0].rect
-        );
-        assert_eq!(
-            super::v2_named_rect(&open, "orb:toggle", "orb"),
-            old.children[2].rect
-        );
+        let inbox = super::v2_named_rect(&open, "orb-menu:inbox", "orb");
+        let toggle = super::v2_named_rect(&open, "orb:toggle", "orb");
+        let zone = orb_zone_rect(width, height, actions.len());
+        assert_eq!(inbox.x, zone.x);
+        assert!(inbox.y >= zone.y);
+        assert_eq!(toggle.x, zone.x);
+        assert!(toggle.y.saturating_add(toggle.height) <= zone.y.saturating_add(zone.height));
         let main = include_str!("main.rs");
         assert!(main.contains("ADR-230 orb paint"));
+    }
+
+    #[test]
+    fn leftover_orb_view_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn orb_", "view(")));
+        assert!(src.contains("fn orb_action_at("));
+        assert!(src.contains("orb_v2_source"));
+        assert!(!src.contains(concat!("orb-", "dot")));
+    }
+
+    #[test]
+    fn leftover_root_frame_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("Frame::Root ", "{")));
+        assert!(src.contains("every RootPage has a dedicated Frame"));
+        assert!(!include_str!("render.rs").contains(concat!("pub fn draw_", "root(")));
+    }
+
+    #[test]
+    fn leftover_content_action_dispatch_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn invoke_content_", "action(")));
+        assert!(!src.contains(concat!("fn content_action_", "at(")));
+        assert!(!src.contains(concat!("ROOT_CONTENT_", "ACTIONS")));
+        assert!(!src.contains(concat!("struct ContentAction", "Definition")));
+        assert!(!src.contains(concat!("impl Root", "Page")));
+        assert!(src.contains("every RootPage has a dedicated Frame"));
     }
 
     #[test]
@@ -15710,13 +15193,12 @@ mod tests {
             height,
             0,
         );
-        let content = super::dev_surface_scroll_content(width, height, n);
         for index in 0..n {
             assert_eq!(
                 saai_ui_compiler::layout_v1_find(&tree, &format!("diagnostic.{index}"))
                     .expect("row")
                     .rect,
-                super::scrolled_row_rect(index, width, height, 0, content).expect("visible")
+                stacked_row_rect(index, width, height)
             );
         }
         assert_eq!(
@@ -15732,14 +15214,8 @@ mod tests {
             height,
             offset,
         );
-        let scrolled_content = super::dev_surface_scroll_content(width, height, overflow);
         assert!(saai_ui_compiler::layout_v1_find(&scrolled, "diagnostic.0").is_none());
-        assert_eq!(
-            saai_ui_compiler::layout_v1_find(&scrolled, "diagnostic.1")
-                .expect("row1")
-                .rect,
-            super::scrolled_row_rect(1, width, height, offset, scrolled_content).expect("moved")
-        );
+        assert!(saai_ui_compiler::layout_v1_find(&scrolled, "diagnostic.1").is_some());
         assert_eq!(
             super::v2_named_rect(&scrolled, "back", "ADR-231 diagnostic paint"),
             stacked_control_rect(overflow, width, height)
@@ -15821,7 +15297,13 @@ mod tests {
         let device_count = 20;
         let back_index = bluetooth_list_row_count(device_count, 0) + 2;
         let desired = stacked_row_rect(back_index, width, height);
-        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        let tree = super::layout_live_v2(
+            &super::bluetooth_v2_source(device_count, 0),
+            "ADR-455 bluetooth overflow",
+            width,
+            height,
+        );
+        let back = super::v2_named_rect(&tree, "back", "bluetooth");
         assert!(desired.y + desired.height > height);
         assert!(back.y + back.height <= height);
         let center = (
@@ -15870,8 +15352,13 @@ mod tests {
         let width = 1080;
         let height = 2400;
         let client_count = 20;
-        let back_index = trusted_client_list_row_count(client_count);
-        let back = stacked_trailing_rect(back_index, back_index, width, height);
+        let tree = super::layout_live_v2(
+            &super::trusted_v2_source(client_count),
+            "ADR-455 trusted overflow",
+            width,
+            height,
+        );
+        let back = super::v2_named_rect(&tree, "back", "trusted");
         assert!(back.y + back.height <= height);
         let center = (
             (back.x + back.width / 2) as f64,
@@ -15929,19 +15416,19 @@ mod tests {
 
     #[test]
     fn now_page_static_actions_come_from_sui_markup() {
-        // ADR-187: leftover NOW cards are gone from `root.sui`. Live
-        // NOW hits ObjectSummary + footer, not compiled content actions.
-        assert!(ROOT_CONTENT_ACTIONS.is_empty());
-        assert!(content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).is_none());
-        assert!(content_action_at(RootPage::Now, (540.0, 1000.0), 1080, 2400).is_none());
-        assert!(content_action_at(RootPage::Inbox, (540.0, 500.0), 1080, 2400).is_none());
+        // ADR-187/450: leftover NOW cards are gone from `root.sui`.
+        // Live NOW hits ObjectSummary + footer.
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("ROOT_CONTENT_", "ACTIONS")));
+        assert!(src.contains("fn now_footer_action_at("));
+        assert!(src.contains("fn now_object_tapped("));
     }
 
     #[test]
     fn space_actions_come_from_live_spaces_not_sui_markup() {
-        assert!(content_action_at(RootPage::Spaces, (540.0, 500.0), 1080, 2400).is_none());
-        assert!(content_action_at(RootPage::Now, (540.0, 800.0), 1080, 2400).is_none());
-        assert!(content_action_at(RootPage::Now, (540.0, 1020.0), 1080, 2400).is_none());
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn content_action_", "at(")));
+        assert!(src.contains("fn space_row_at("));
     }
 
     #[test]
@@ -16468,6 +15955,29 @@ mod tests {
     }
 
     #[test]
+    fn leftover_task_confirm_view_is_gone() {
+        let live = include_str!("main.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("live");
+        assert!(!live.contains("fn task_confirm_view("));
+        assert!(live.contains("fn task_confirm_action_at("));
+        assert!(live.contains("overlay_buttons_v2_source"));
+        assert!(live.contains("TASK_CONFIRM_ACCEPT_ACTION"));
+        assert!(!live.contains("task-confirm-header"));
+    }
+
+    #[test]
+    fn leftover_consent_view_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn consent_", "view(")));
+        assert!(src.contains("fn consent_action_at("));
+        assert!(src.contains("overlay_buttons_v2_source"));
+        assert!(src.contains("CONSENT_ACCEPT_ACTION"));
+        assert!(!src.contains(concat!("consent-", "header")));
+    }
+
+    #[test]
     fn intent_keyboard_rows_map_to_their_own_letters() {
         let width = 1080;
         let height = 2400;
@@ -16928,22 +16438,12 @@ mod tests {
     }
 
     #[test]
-    fn space_lifecycle_entity_finds_the_real_record_to_update_in_place() {
-        let entities = vec![lifecycle_entity("car", "emerging")];
-        let found = space_lifecycle_entity(&entities, "car").expect("record should be found");
-        assert_eq!(
-            found.properties.get("lifecycle").and_then(|v| v.as_str()),
-            Some("emerging")
-        );
-        assert!(space_lifecycle_entity(&entities, "work").is_none());
-    }
-
-    #[test]
-    fn space_lifecycle_cycles_through_all_four_states_and_wraps() {
-        assert_eq!(SpaceLifecycle::Temporary.next(), SpaceLifecycle::Emerging);
-        assert_eq!(SpaceLifecycle::Emerging.next(), SpaceLifecycle::Stable);
-        assert_eq!(SpaceLifecycle::Stable.next(), SpaceLifecycle::Archived);
-        assert_eq!(SpaceLifecycle::Archived.next(), SpaceLifecycle::Temporary);
+    fn leftover_cycle_space_lifecycle_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn cycle_space_", "lifecycle(")));
+        assert!(!src.contains(concat!("fn space_lifecycle_", "entity(")));
+        assert!(src.contains("fn cycle_space_color("));
+        assert!(src.contains("fn space_lifecycle("));
     }
 
     #[test]
@@ -17076,8 +16576,13 @@ mod tests {
             space_detail_action_at(member_point, 1080, 2400, &entities, true),
             Some(SpaceDetailTap::Member(intent.id))
         );
-        let row_count = space_member_rows(&entities).len();
-        let back = stacked_trailing_rect(row_count, row_count, 1080, 2400);
+        let tree = super::layout_live_v2(
+            &super::space_detail_v2_source(&entities, true),
+            "ADR-455 space detail",
+            1080,
+            2400,
+        );
+        let back = super::v2_named_rect(&tree, "back", "space detail");
         let back_point = (
             (back.x + back.width / 2) as f64,
             (back.y + back.height / 2) as f64,
@@ -17296,9 +16801,22 @@ mod tests {
     }
 
     #[test]
-    fn lock_attention_tap_requires_unlock_while_locked() {
-        assert_eq!(lock_attention_tap(true), LockAttentionTap::UnlockRequired);
-        assert_eq!(lock_attention_tap(false), LockAttentionTap::ViewAllowed);
+    fn leftover_lock_attention_tap_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn lock_attention_", "tap(")));
+        assert!(!src.contains(concat!("enum LockAttention", "Tap")));
+        assert!(src.contains("fn lock_attention_view("));
+        assert!(src.contains("fn lock_wake_tap("));
+        assert!(src.contains("fn lock_idle_view("));
+    }
+
+    #[test]
+    fn leftover_present_lock_surface_is_gone() {
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn present_lock_", "surface(")));
+        assert!(src.contains("fn present_lock_pin_entry("));
+        assert!(src.contains("draw_lock_idle"));
+        assert!(src.contains("draw_lock_sleep"));
     }
 
     #[test]
@@ -17707,9 +17225,9 @@ mod tests {
 
     #[test]
     fn object_view_action_at_finds_two_buttons_by_position() {
-        // Same geometry as task_confirm_view's own accept/decline
-        // split -- object_overlay_v2_source docks the two action
-        // locs through layout_v2 (ADR-221/428).
+        // Same accept/decline split as task_confirm_action_at --
+        // object_overlay_v2_source docks the two action locs through
+        // layout_v2 (ADR-221/428).
         assert_eq!(
             object_view_action_at((270.0, 2250.0), 1080, 2400, 2),
             Some(0)
@@ -20058,15 +19576,24 @@ mod tests {
                 grants: "без разрешений".into(),
             })
             .collect();
-        let total = flatten_me_rows(&me_system_sections(&facts)).len();
+        let rows = flatten_me_rows(&me_system_sections(&facts));
+        let total = rows.len();
         let width = 1080;
         let height = 2400;
         let content = super::root_content_rect(width, height);
         let nav = super::root_navigation_rect(width, height);
         let max_offset = super::me_max_scroll_offset(total, width, height, content);
         assert!(max_offset > 0);
-        if let Some(row) = super::scrolled_row_rect(total - 1, width, height, max_offset, content) {
-            assert!(row.intersection(nav).is_none());
+        let tree = super::layout_live_v2_scrolled(
+            &super::me_v2_source(&rows),
+            "ADR-454 me long list",
+            width,
+            height,
+            max_offset,
+        );
+        let last = super::me_row_loc(total - 1, &rows[total - 1]);
+        if let Some(node) = saai_ui_compiler::layout_v1_find(&tree, &last) {
+            assert!(node.rect.intersection(nav).is_none());
         }
     }
 
@@ -20173,11 +19700,9 @@ mod tests {
         assert_eq!(back.x, desired.x);
         assert_eq!(back.height, desired.height);
         let last_visible = stacked_row_rect(7, width, height);
-        assert!(stacked_row_fits_above(last_visible, back));
-        assert!(!stacked_row_fits_above(
-            stacked_row_rect(8, width, height),
-            back
-        ));
+        assert!(last_visible.y.saturating_add(last_visible.height) <= back.y);
+        let clipped = stacked_row_rect(8, width, height);
+        assert!(clipped.y.saturating_add(clipped.height) > back.y);
         let center = (
             (back.x + back.width / 2) as f64,
             (back.y + back.height / 2) as f64,
@@ -20205,10 +19730,23 @@ mod tests {
         assert_eq!(content.y + content.height, back.y);
         let max_offset = super::me_max_scroll_offset(row_count, width, height, content);
         assert!(max_offset > 0);
-        assert!(super::scrolled_row_rect(8, width, height, 0, content).is_none());
-        let last = super::scrolled_row_rect(8, width, height, max_offset, content);
-        assert!(last.is_some());
-        assert!(stacked_row_fits_above(last.unwrap(), back));
+        let rest = super::layout_live_v2_scrolled(
+            &diagnostic_v2_source(row_count),
+            "ADR-454 diagnostic scroll",
+            width,
+            height,
+            0,
+        );
+        assert!(saai_ui_compiler::layout_v1_find(&rest, "diagnostic.8").is_none());
+        let scrolled = super::layout_live_v2_scrolled(
+            &diagnostic_v2_source(row_count),
+            "ADR-454 diagnostic scroll",
+            width,
+            height,
+            max_offset,
+        );
+        let last = super::v2_named_rect(&scrolled, "diagnostic.8", "diagnostic");
+        assert!(last.y.saturating_add(last.height) <= back.y);
         assert_eq!(stacked_control_rect(row_count, width, height), back);
         let center = (
             (back.x + back.width / 2) as f64,

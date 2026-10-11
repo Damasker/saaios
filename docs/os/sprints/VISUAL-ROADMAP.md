@@ -115,7 +115,7 @@ contains:
 | VUI-06 | `Система` information architecture and settings components | **Host + panther complete** (`1d191d7a…`, label `Система`) |
 | VUI-07 | Remaining system surfaces and state patterns | **Complete** (`693e77c7…`; Space detail deferred; MEM-08 omitted) |
 | VUI-08 | Motion, haptics, and measured frame pacing | **Complete** (`37a8014d…`; ADR-167–179) |
-| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–439; production `compile_v2()`; named chrome paint from `layout_v2`; Object View, overlays, lists, and apps headings from `layout_v2`; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
+| VUI-09 | `.sui` v2, public library, legacy cleanup, and release gate | In progress (ADR-180–232, 427–460; production `compile_v2()`; named chrome paint from `layout_v2`; leftover unused chrome closed; public Search hits, list/overlay headers, and compose-without-Keyboard host-locked; leftover formulas recorded; public subset Experimental; not Visual v1 sign-off) |
 
 ---
 
@@ -1191,7 +1191,29 @@ pair fingerprint slot (ADR-432); overlay `ContextHeader` paint
 (ADR-433); compose `ContextHeader` paint (ADR-434); list / apps
 `ContextHeader` paint (ADR-435); Object View identity / facts
 margin (ADR-436); apps empty `SurfacePattern` (ADR-437); NOW empty
-loc `now.empty` (ADR-438); wifi-password surface (ADR-439). Release
+loc `now.empty` (ADR-438); wifi-password surface (ADR-439);
+pair fingerprint wrap (ADR-440); leftover heading
+painter dropped (ADR-441); leftover
+`task_confirm_view` dropped (ADR-442);
+leftover `now_object_summary_rect` dropped (ADR-443);
+leftover `consent_view` dropped (ADR-444);
+leftover `orb_view` dropped (ADR-445);
+leftover live `Frame::Root` dropped (ADR-446);
+leftover `draw_root` dropped (ADR-447);
+leftover `content_action_at` live dispatch dropped (ADR-448);
+leftover `cycle_space_lifecycle` dropped (ADR-449);
+leftover `content_action_at` table dropped (ADR-450);
+leftover `lock_attention_tap` dropped (ADR-451);
+leftover `present_lock_surface` dropped (ADR-452);
+leftover `now_grid_rect` dropped (ADR-453);
+leftover `scrolled_row_rect` dropped (ADR-454);
+leftover `stacked_trailing_rect` dropped (ADR-455);
+leftover named chrome closed (ADR-456);
+public Search hits host-locked (ADR-457);
+public list headers host-locked (ADR-458);
+public compose omits `Keyboard` (ADR-459);
+public overlay headers host-locked (ADR-460).
+Release
 gate remains. Not Visual v1 sign-off.
 
 **Depends on:** VUI-01 through VUI-08
@@ -1331,6 +1353,55 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Dock Wi-Fi password compose on surface `wifi-password`
   (ADR-439). Public `wifi-password-public.sui` / `pin-setup-public.sui`.
   Keyboard keys stay a formula. Not Visual v1 sign-off.
+- [x] Wrap pair fingerprint from the compiled `pair.fingerprint`
+  slot (ADR-440). Inset matches ActionCard. Status invents no
+  action. Not Visual v1 sign-off.
+- [x] Drop leftover `paint_context_header` (ADR-441). NOW uses the
+  same slot painter as overlay / compose / list. Not Visual v1
+  sign-off.
+- [x] Drop leftover `task_confirm_view` (ADR-442). Confirm / pair
+  hits stay `layout_v2`. Not Visual v1 sign-off.
+- [x] Drop leftover `now_object_summary_rect` (ADR-443). NOW object
+  paint/hits stay `layout_v2`. Not Visual v1 sign-off.
+- [x] Drop leftover `consent_view` (ADR-444). Consent hits stay
+  `layout_v2`. Not Visual v1 sign-off.
+- [x] Drop leftover `orb_view` (ADR-445). Orb paint/hits stay
+  `layout_v2`. Not Visual v1 sign-off.
+- [x] Drop leftover live `Frame::Root` (ADR-446). `draw_root` stays
+  the test painter. Not Visual v1 sign-off.
+- [x] Drop leftover `draw_root` (ADR-447). Tab tests call
+  `draw_tab_bar`. Not Visual v1 sign-off.
+- [x] Drop leftover live `content_action_at` dispatch (ADR-448).
+  Leftover table stays empty. Not Visual v1 sign-off.
+- [x] Drop leftover `cycle_space_lifecycle` (ADR-449). Live color
+  cycle stays `cycle_space_color`. Not Visual v1 sign-off.
+- [x] Drop leftover `content_action_at` table (ADR-450). Footer
+  and space hits stay. Not Visual v1 sign-off.
+- [x] Drop leftover `lock_attention_tap` (ADR-451). Lock idle/wake
+  stay formulas. Not Visual v1 sign-off.
+- [x] Drop leftover `present_lock_surface` (ADR-452). Live lock
+  stays `present_lock_pin_entry`. Not Visual v1 sign-off.
+- [x] Drop leftover `now_grid_rect` (ADR-453). Apps tiles stay
+  `layout_v2`. Not Visual v1 sign-off.
+- [x] Drop leftover `scrolled_row_rect` (ADR-454). Me / diagnostic
+  stay `layout_v2_scrolled`. Not Visual v1 sign-off.
+- [x] Drop leftover `stacked_trailing_rect` (ADR-455). Overflow
+  Back stays `layout_v2`. Not Visual v1 sign-off.
+- [x] Close leftover named chrome (ADR-456). Drop leftover
+  `stacked_row_fits_above`. Keyboard keys, gallery page, and lock
+  idle/wake stay formulas. Not Visual v1 sign-off.
+- [x] Host-lock public Search hits (ADR-457). Button `DataRow`
+  action is interned `loc`. Status invents no action. Still
+  Experimental. Not Visual v1 sign-off.
+- [x] Host-lock public list headers (ADR-458). Search / Spaces /
+  Me / Wi-Fi / Bluetooth match Inbox stacked top. Status invents
+  no heading hit. Still Experimental. Not Visual v1 sign-off.
+- [x] Host-lock public compose without `Keyboard` (ADR-459).
+  Intent / Wi-Fi password / PIN setup stay header plus Status
+  `Field`. Still Experimental. Not Visual v1 sign-off.
+- [x] Host-lock public overlay headers (ADR-460). Consent /
+  remote-pair match Inbox stacked top. Status invents no heading
+  hit. Still Experimental. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1442,8 +1513,10 @@ After each completed task group, report:
 
 ## Next action
 
-VUI-09 host release gate remains: public subset stays Experimental
-(ADR-185/265/427–439); leftover formulas stay Keyboard keys, gallery
-page, lock idle/wake (ADR-232); do not promote Stable; do not
-flash for sign-off. Space detail still deferred. MEM-08 stays
-omitted. Thin tuning stays last (ADR-213).
+VUI-09 host release gate remains: leftover named chrome is closed
+(ADR-456); public Search hits, list/overlay headers, and
+compose-without-Keyboard are host-locked (ADR-457–460); public
+subset stays Experimental (ADR-185/265/427–460); leftover formulas
+stay Keyboard keys, gallery page, lock idle/wake (ADR-232); do not
+promote Stable; do not flash for sign-off. Space detail still
+deferred. MEM-08 stays omitted. Thin tuning stays last (ADR-213).
