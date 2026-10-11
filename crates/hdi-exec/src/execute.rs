@@ -61,6 +61,9 @@ pub enum ExecError {
 
 pub struct Executor {
     fixture: PathBuf,
+    /// Filesystem root for `sysfs_read`. Logical `/sys/...` is read from
+    /// `{sys_root}/sys/...` and must stay inside this directory.
+    sys_root: PathBuf,
     campaign: PathBuf,
 }
 
@@ -70,13 +73,29 @@ impl Executor {
         campaign: impl Into<PathBuf>,
     ) -> std::io::Result<Self> {
         let fixture = fixture.into();
+        Self::open_sys_root(fixture.clone(), fixture, campaign)
+    }
+
+    /// `fixture` still holds the named snapshot files. `sys_root` is the
+    /// directory that corresponds to `/` for `sysfs_read`.
+    pub fn open_sys_root(
+        fixture: impl Into<PathBuf>,
+        sys_root: impl Into<PathBuf>,
+        campaign: impl Into<PathBuf>,
+    ) -> std::io::Result<Self> {
+        let fixture = fixture.into();
+        let sys_root = sys_root.into();
         let campaign = campaign.into();
         fs::create_dir_all(campaign.join("evidence"))?;
         let journal = campaign.join("journal.jsonl");
         if !journal.exists() {
             fs::write(&journal, "")?;
         }
-        Ok(Self { fixture, campaign })
+        Ok(Self {
+            fixture,
+            sys_root,
+            campaign,
+        })
     }
 
     pub fn execute(&mut self, raw: &str) -> Result<Evidence, ExecError> {
@@ -230,8 +249,8 @@ impl Executor {
                 reason: "path_escape".into(),
             });
         }
-        let candidate = self.fixture.join("sys").join(relative);
-        self.read_inside_fixture(&candidate)
+        let candidate = self.sys_root.join("sys").join(relative);
+        self.read_inside(&self.sys_root, &candidate)
     }
 
     fn read_named(&self, name: &str) -> Result<Vec<u8>, ExecError> {
@@ -240,16 +259,16 @@ impl Executor {
                 reason: "path_escape".into(),
             });
         }
-        self.read_inside_fixture(&self.fixture.join(name))
+        self.read_inside(&self.fixture, &self.fixture.join(name))
     }
 
-    fn read_inside_fixture(&self, candidate: &Path) -> Result<Vec<u8>, ExecError> {
+    fn read_inside(&self, root: &Path, candidate: &Path) -> Result<Vec<u8>, ExecError> {
         if !candidate.is_file() {
             return Err(ExecError::Denied {
                 reason: "missing_fixture".into(),
             });
         }
-        let root = self.fixture.canonicalize()?;
+        let root = root.canonicalize()?;
         let canon = candidate.canonicalize()?;
         if !canon.starts_with(&root) {
             return Err(ExecError::Denied {

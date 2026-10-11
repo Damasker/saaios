@@ -32,6 +32,7 @@
 
 pub mod client;
 pub mod graph;
+pub mod hardware;
 pub mod model;
 pub mod replan;
 pub mod runtime_bridge;
@@ -46,19 +47,20 @@ use intent_resolution::{
 use model::{
     action_properties, dangerous_action_of, evidence_from_fresh_rows, find_action_for_task,
     has_open_task_for_intent, has_task_for_intent, intent_id_of, is_schedule_due_with,
-    observation_threshold_of, result_id_of, result_properties, safe_title, schedule_every_secs, schedule_fire_count, schedule_properties,
-    schedule_text, should_retry_failed_task, status_after_verification, status_of, task_properties,
-    task_properties_after_result, verification_key_of, with_depends_on, with_failure_class,
-    with_observation_threshold, FailureClass, ObservationEvidence, WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND,
+    observation_threshold_of, result_id_of, result_properties, safe_title, schedule_every_secs,
+    schedule_fire_count, schedule_properties, schedule_text, should_retry_failed_task,
+    status_after_verification, status_of, task_properties, task_properties_after_result,
+    verification_key_of, with_depends_on, with_failure_class, with_observation_threshold,
+    FailureClass, ObservationEvidence, WorkflowStatus, ACTION_TYPE, DELETE_ENTITY_ACTION_KIND,
     INTENT_TYPE, NOTIFICATION_TYPE, PROPOSAL_ID_PROPERTY, RESULT_TYPE, RUNTIME_ACTION_KIND,
     SCHEDULE_TYPE, SEMANTIC_ACTION_KIND, TASK_TYPE,
 };
+use replan::{should_issue_replan, REPLAN_COUNT_PROPERTY};
 use saai_entity_protocol::{
     Entity, EntitydEvent, RELATION_EXECUTES, RELATION_PRODUCES, RELATION_REALIZES,
 };
 use saai_entity_store::EventPayload;
 use saai_object_actions::{display_inspect_spec, ObjectActionRegistry};
-use replan::{should_issue_replan, REPLAN_COUNT_PROPERTY};
 use scheduler::{admit_frontier, derive_ready_set, mutating_in_flight, MAX_MUTATING_IN_FLIGHT};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -298,9 +300,7 @@ impl Daemon {
             if let Some((key, gte)) = observation_threshold_of(&schedule) {
                 fired_properties = with_observation_threshold(fired_properties, &key, gte);
             }
-            self.conn
-                .update_entity(&schedule, fired_properties)
-                .await?;
+            self.conn.update_entity(&schedule, fired_properties).await?;
             let mut intent_properties = serde_json::Map::new();
             intent_properties.insert("text".into(), json!(text));
             intent_properties.insert("schedule_id".into(), json!(schedule.id.to_string()));
@@ -351,6 +351,14 @@ impl Daemon {
     }
 
     async fn process_intent(&mut self, intent: &Entity) -> Result<(), ClientError> {
+        if intent
+            .properties
+            .get(SEMANTIC_ACTION_PROPERTY)
+            .and_then(Value::as_str)
+            == Some(hdi_campaign::INVESTIGATE_HARDWARE)
+        {
+            return self.process_hardware_campaign(intent).await;
+        }
         if let Some(target) = dangerous_action_of(intent) {
             return self.process_dangerous_intent(intent, target).await;
         }
@@ -422,6 +430,157 @@ impl Daemon {
                 self.process_planner_intent(intent, &text).await
             }
         }
+    }
+
+    /// Explicit `investigate_hardware` runs one read-only campaign and
+    /// stores its metrics on the Result. A missing fixture directory
+    /// records a refusal and does not open a probe journal.
+    async fn process_hardware_campaign(&mut self, intent: &Entity) -> Result<(), ClientError> {
+        let redacted = intent
+            .properties
+            .get("redacted_dir")
+            .and_then(Value::as_str)
+            .map(std::path::PathBuf::from);
+        let key = intent
+            .properties
+            .get("verifier_key")
+            .and_then(Value::as_str)
+            .map(std::path::PathBuf::from);
+        let campaign = std::env::temp_dir().join(format!("hdi-{}", intent.id));
+        let started = hardware::start_hardware_campaign(
+            hdi_campaign::INVESTIGATE_HARDWARE,
+            redacted.as_deref(),
+            &campaign,
+            key.as_deref(),
+        );
+        let (summary, executed, metrics) = match started {
+            hardware::HardwareStart::MissingDirectory => (
+                "HDI refused: redacted directory was not supplied".to_string(),
+                false,
+                None,
+            ),
+            hardware::HardwareStart::Failed => ("HDI failed".to_string(), false, None),
+            hardware::HardwareStart::NotThisAction => return Ok(()),
+            hardware::HardwareStart::Finished(run) => {
+                let summary = run.summary.clone();
+                (summary, true, Some(run))
+            }
+        };
+        let asks_user = metrics.as_ref().is_some_and(|run| run.asks_user);
+        let task_status = if asks_user {
+            WorkflowStatus::WaitingConfirmation
+        } else {
+            WorkflowStatus::Running
+        };
+        let task_title = if asks_user {
+            "Подтвердите: пробел драйвера"
+        } else {
+            "Задача: investigate_hardware"
+        };
+        let task = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                TASK_TYPE,
+                &safe_title(task_title, "Задача"),
+                task_properties(intent.id, task_status),
+            )
+            .await?;
+        self.remember_task(task.clone());
+        self.record_lineage(task.id, intent.id, RELATION_REALIZES)
+            .await;
+        let mut action_output = json!({
+            "summary": summary,
+            "executed": executed,
+            "loaded_module": false,
+        });
+        if let Some(run) = &metrics {
+            if let Some(output) = action_output.as_object_mut() {
+                output.insert("discovery_gain".into(), json!(run.discovery_gain));
+                output.insert(
+                    "identification_accuracy".into(),
+                    json!(run.identification_accuracy),
+                );
+                output.insert("evidence_coverage".into(), json!(run.evidence_coverage));
+                output.insert("probe_efficiency".into(), json!(run.probe_efficiency));
+                output.insert("loaded_module".into(), json!(run.loaded_module));
+                if let Some(verdict) = &run.verdict {
+                    output.insert("verdict".into(), json!(verdict));
+                }
+            }
+        }
+        let action_status = if asks_user {
+            WorkflowStatus::WaitingConfirmation
+        } else {
+            WorkflowStatus::Done
+        };
+        let action_title = if asks_user {
+            "Подтвердите: пробел драйвера"
+        } else {
+            "Действие: investigate_hardware"
+        };
+        let action_input = if asks_user {
+            json!({
+                "semantic_action_id": hdi_campaign::ADAPT_HARDWARE,
+                "loaded_module": false,
+            })
+        } else {
+            json!({ "semantic_action_id": hdi_campaign::INVESTIGATE_HARDWARE })
+        };
+        let stored_action = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                ACTION_TYPE,
+                action_title,
+                action_properties(
+                    task.id,
+                    SEMANTIC_ACTION_KIND,
+                    action_status,
+                    &action_input,
+                    Some(&action_output),
+                ),
+            )
+            .await?;
+        self.record_lineage(stored_action.id, task.id, RELATION_EXECUTES)
+            .await;
+        if asks_user {
+            eprintln!(
+                "saai-taskd: task {} hardware gap waiting, loaded_module=false",
+                task.id
+            );
+            return Ok(());
+        }
+        let mut result_props = result_properties(task.id, stored_action.id, &summary);
+        if let Some(run) = &metrics {
+            result_props.insert("discovery_gain".into(), json!(run.discovery_gain));
+            result_props.insert(
+                "identification_accuracy".into(),
+                json!(run.identification_accuracy),
+            );
+            result_props.insert("evidence_coverage".into(), json!(run.evidence_coverage));
+            result_props.insert("probe_efficiency".into(), json!(run.probe_efficiency));
+            result_props.insert("loaded_module".into(), json!(run.loaded_module));
+            if let Some(verdict) = &run.verdict {
+                result_props.insert("verdict".into(), json!(verdict));
+            }
+        }
+        let result = self
+            .conn
+            .create_entity(
+                &self.space_id,
+                RESULT_TYPE,
+                &safe_title(&summary, "Результат"),
+                result_props,
+            )
+            .await?;
+        self.record_lineage(stored_action.id, result.id, RELATION_PRODUCES)
+            .await;
+        let done = task_properties_after_result(&task, intent.id, result.id, WorkflowStatus::Done);
+        let updated = self.conn.update_entity(&task, done).await?;
+        self.remember_task(updated);
+        eprintln!("saai-taskd: task {} hardware campaign recorded", task.id);
+        Ok(())
     }
 
     /// Creates the Task/Action pair for a dangerous intent and stops --

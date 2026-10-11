@@ -1196,6 +1196,7 @@ dependencies = [
  "saai-entity-store",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.19",
  "uuid",
@@ -2569,6 +2570,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "hdi-campaign",
  "intent-resolution",
  "saai-entity-protocol",
  "saai-entity-store",

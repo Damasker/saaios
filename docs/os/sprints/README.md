@@ -44,9 +44,9 @@ USB-gadget — отдельные факты прохода 4. Проход 5 з
 `aoc` у `19000000.aoc` и модуль `aoc_core`. У TPU и ISP ссылки драйвера нет.
 `mali_kbase` путём DRM не назван.
 HDI-06 не начат: снимка MacBook нет.
-HDI-17 в Verify: accuracy на снимке Pixel равна 1 по ключу стенда и 0 по ключу MacBook. Внедрение в ОС дальше — HDI-18…23 в Backlog: один Task
+HDI-18 в Verify: `campaign_from_action` запускает одну кампанию только на `investigate_hardware`. HDI-19 в Verify на R620: уже запущенный `saai-taskd` пишет Result этой кампании. HDI-20 в Verify: `sysfs_read` читает временный корень, а не живой `/sys`. HDI-21 в Verify на panther: один Intent дал Result, повторная загрузка кампанию не повторила. HDI-22 в Verify на panther: тот же Result на существующем экране, холодная загрузка лабораторию не открывает. HDI-23 в Verify на panther: привязанный `exynos_drm` вопрос не задаёт, пробел на host ждёт человека, модуль не загружается. Один Task
 внутри уже запущенного `saai-taskd`, без демона и без пункта
-`native-init`. Образ телефона меняет только HDI-21.
+`native-init`. Образ init не менялся.
 
 **Shell queue:** [Visual Language v1](../architecture/visual-language-v1.md)
 ([VISUAL-ROADMAP.md](VISUAL-ROADMAP.md)). VUI-00…06 закрыты на host;

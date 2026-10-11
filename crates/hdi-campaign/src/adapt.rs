@@ -18,6 +18,12 @@ pub struct AdaptationProposal {
     pub gap: Option<Claim>,
 }
 
+/// A gap waits for a person. A bound driver and a missing card do not ask.
+/// This does not load a module.
+pub fn confirmation_required(proposal: &AdaptationProposal) -> bool {
+    matches!(proposal.display, DisplayAdaptation::DriverGap) && !proposal.loaded_module
+}
+
 /// A bound DRM driver ends the proposal. A present card with no driver is a
 /// gap record. Nothing here is an executable load.
 pub fn propose_display_adaptation(claims: &[Claim]) -> AdaptationProposal {

@@ -2,13 +2,17 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use hdi_contract::{control_from_redacted, discovery_gain, Claim, ProbeName, ProbeRequest};
+use hdi_contract::{
+    control_from_redacted, discovery_gain, Claim, ClaimKind, ProbeName, ProbeRequest,
+};
+use sha2::{Digest, Sha256};
 use hdi_exec::Executor;
 use serde::Serialize;
 use serde_json::{json, Value};
 use thiserror::Error;
 
-use crate::investigator::Investigator;
+use crate::intent_gate::INVESTIGATE_HARDWARE;
+use crate::investigator::{Hunter, Investigator};
 use crate::metrics::Metrics;
 
 const MAX_PASSES: u32 = 5;
@@ -24,6 +28,9 @@ pub struct InvestigatorInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunStatus {
     Completed,
+    /// The fixture directory changed after the campaign opened it.
+    /// Later probes are not executed.
+    PackageChanged,
 }
 
 #[derive(Debug)]
@@ -48,6 +55,25 @@ pub enum CampaignError {
     Io(#[from] std::io::Error),
 }
 
+/// One campaign for `investigate_hardware`. Any other action id returns
+/// `Ok(None)` and does not create a probe journal.
+pub fn campaign_from_action(
+    action_id: &str,
+    fixture: &Path,
+    campaign: &Path,
+) -> Result<Option<RunReport>, CampaignError> {
+    if action_id != INVESTIGATE_HARDWARE {
+        return Ok(None);
+    }
+    let mut hunter = Hunter::new();
+    Ok(Some(run_campaign(
+        fixture,
+        campaign,
+        &["pci.txt"],
+        &mut hunter,
+    )?))
+}
+
 pub fn run_campaign(
     fixture: &Path,
     campaign: &Path,
@@ -65,6 +91,8 @@ pub fn run_campaign(
     }
 
     let mut executor = Executor::open(fixture, campaign)?;
+    let opened = package_digest(fixture)?;
+    let mut status = RunStatus::Completed;
     let mut inputs = Vec::new();
     let mut requests = Vec::new();
     let mut rejected = HashSet::new();
@@ -87,6 +115,10 @@ pub fn run_campaign(
         if !rejected.contains(&raw) {
             if let Some(stamped) = stamp_pass(&raw, pass) {
                 if let Ok(request) = ProbeRequest::parse(&stamped) {
+                    if package_digest(fixture)? != opened {
+                        status = RunStatus::PackageChanged;
+                        break;
+                    }
                     match executor.execute(&stamped) {
                         Ok(evidence) => {
                             executed += 1;
@@ -117,10 +149,12 @@ pub fn run_campaign(
         };
         let seen_json = serde_json::to_string(&seen).map_err(io_invalid)?;
         for claim in investigator.observe(&seen_json) {
-            if storable(&claim)
-                && investigator_claims
-                    .iter()
-                    .all(|known| !known.same_fact(&claim))
+            let Some(claim) = admit_claim(claim, &files) else {
+                continue;
+            };
+            if investigator_claims
+                .iter()
+                .all(|known| !known.same_fact(&claim))
             {
                 investigator_claims.push(claim);
             }
@@ -132,7 +166,7 @@ pub fn run_campaign(
     let control = control_from_redacted(&bundle_dir)?;
     let metrics = Metrics::from_run(&investigator_claims, &control, executed, &[]);
     Ok(RunReport {
-        status: RunStatus::Completed,
+        status,
         metrics,
         inputs,
         requests,
@@ -142,6 +176,60 @@ pub fn run_campaign(
         claims: investigator_claims,
         control_facts: control.len(),
     })
+}
+
+/// `DeviceAbsent` is kept only when every cited file is already in the
+/// bundle. An unread file becomes `InsufficientEvidence` with value `unread`.
+fn admit_claim(mut claim: Claim, files: &BTreeMap<String, String>) -> Option<Claim> {
+    if claim.kind == ClaimKind::DeviceAbsent
+        && claim
+            .evidence_ids
+            .iter()
+            .any(|id| !files.contains_key(id))
+    {
+        claim.kind = ClaimKind::InsufficientEvidence;
+        claim.value = "unread".to_string();
+    }
+    if storable(&claim) {
+        Some(claim)
+    } else {
+        None
+    }
+}
+
+fn package_digest(root: &Path) -> Result<String, CampaignError> {
+    let mut paths = Vec::new();
+    collect_files(root, root, &mut paths)?;
+    paths.sort();
+    let mut hasher = Sha256::new();
+    for relative in paths {
+        hasher.update(relative.as_bytes());
+        hasher.update([0]);
+        let bytes = fs::read(root.join(&relative))?;
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(&bytes);
+    }
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
+fn collect_files(root: &Path, dir: &Path, paths: &mut Vec<String>) -> Result<(), CampaignError> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(root, &path, paths)?;
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|error| CampaignError::Io(std::io::Error::new(std::io::ErrorKind::Other, error)))?;
+        paths.push(relative.to_string_lossy().replace('\\', "/"));
+    }
+    Ok(())
 }
 
 fn storable(claim: &Claim) -> bool {

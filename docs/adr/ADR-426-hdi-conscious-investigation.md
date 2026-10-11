@@ -3,13 +3,13 @@
 ## Статус
 
 Принято, 2026-10-10. HDI-00 и HDI-01 живут в `crates/hdi-contract`.
-HDI-02 — `crates/hdi-exec`. HDI-03, HDI-04, HDI-05 и HDI-07…HDI-17 —
+HDI-02 — `crates/hdi-exec`. HDI-03, HDI-04, HDI-05 и HDI-07…HDI-18 —
 `crates/hdi-campaign`. Пробы `pci_drivers`, `platform_nodes` и
 `platform_drivers` добавлены в белый список v1.
 Шлюз намерения живёт в `intent_gate` и не подключён к `native-init`.
 Демона и образа нет. Внедрение в ОС расписано спринтами HDI-17…23:
 один Task внутри уже запущенного `saai-taskd`, без нового демона и
-без пункта init. Эти спринты ещё в Backlog.
+без пункта init. HDI-17…20 в Verify на host. HDI-21, HDI-22 и HDI-23 в Verify на panther.
 Физический прогон на MacBookPro11,3 ещё не начат: диагностического снимка нет.
 
 ## Нумерация

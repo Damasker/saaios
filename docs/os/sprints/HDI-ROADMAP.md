@@ -1,6 +1,6 @@
 # HDI — лаборатория аппаратного исследования
 
-Статус трека: **HDI-17 в Verify на host. Внедрение в ОС — HDI-18…23 в Backlog. HDI-06 не начат: нет снимка MacBook.**
+Статус трека: **HDI-23 в Verify на panther. HDI-06 не начат: нет снимка MacBook.**
 Активный аппаратный эксперимент на Pixel этот трек не открывает и
 модемный трек не сдвигает. HDI-00…05 — host. HDI-06 — одна
 read-only команда на MacBookPro11,3, когда снимок уже собран и
@@ -21,6 +21,14 @@ read-only команда на MacBookPro11,3, когда снимок уже с�
 запечатанный ключ и абзац в индексе спринтов. После появления кода
 откат каждого спринта записан в его паспорте и не включает образ
 телефона.
+
+Непрочитанный файл не становится `DeviceAbsent`: это
+`InsufficientEvidence` со значением `unread`. `DeviceAbsent` остаётся
+только когда названный файл уже лежит в пакете. Если каталог фикстуры
+меняется после открытия кампании, статус `PackageChanged` и следующие
+пробы не исполняются. Отрицательный рецепт `8086:0d26` закрыт только
+при исходе A и свидетельствах `pci.txt` и `dmi.txt`. Исход C и
+выдуманный `gmux` его не закрывают.
 
 ## Sprint HDI-00 — контракт кампании
 
@@ -1406,7 +1414,7 @@ accuracy 0. `Metrics::from_run` считает accuracy по списку клю
 
 ## Sprint HDI-18 — один вызов кампании из действия
 
-- Состояние: `Backlog`
+- Состояние: `Verify`
 - Зависит от: HDI-05 и HDI-17 в Verify
 - Архитектурные решения: ADR-426, ADR-120
 - Рабочий fallback: неизвестное действие кампанию не создаёт
@@ -1459,11 +1467,15 @@ accuracy 0. `Metrics::from_run` считает accuracy по списку клю
 
 ### Evidence
 
-Заполняется при закрытии.
+2026-10-10, этот Windows-хост, toolchain `1.97.1-x86_64-pc-windows-gnu`:
+`cargo test -p hdi-campaign --test hdi18` — 2 passed.
+`cargo clippy -p hdi-campaign --all-targets -- -D warnings` — чисто.
+`native-init.c` не содержит `investigate_hardware`. `saai-taskd` не менялся.
+Образ panther не собирался.
 
 ## Sprint HDI-19 — saai-taskd выполняет это действие
 
-- Состояние: `Backlog`
+- Состояние: `Verify`
 - Зависит от: HDI-18 в Verify
 - Архитектурные решения: ADR-426, ADR-030, ADR-120
 - Рабочий fallback: прежний путь diagnose для текста без explicit id
@@ -1476,9 +1488,13 @@ investigate_hardware` вызывает функцию HDI-18 и пишет от�
 
 ### Current state
 
-`saai-taskd` резолвит известные действия и для прочего текста зовёт
-runtime diagnose. Лаборатория в эту ветку не входит. На Windows-хосте
-taskd не собирается из-за `tokio::net::unix`.
+Уже запущенный `saai-taskd` на Intent с `semantic_action_id =
+investigate_hardware` зовёт `start_hardware_campaign`. Каталог берётся
+из свойства `redacted_dir`, ключ — из `verifier_key` и только если он
+вне этого каталога. Result получает gain, efficiency, accuracy,
+coverage и вердикт. Без каталога журнал проб не создаётся. Свободный
+текст в эту ветку не входит. Сборка и тесты прошли на R620. Образ
+panther не прошит.
 
 ### Scope
 
@@ -1518,11 +1534,24 @@ Task не получает права сверх белого списка. Чу
 
 ### Evidence
 
-Заполняется при закрытии.
+2026-10-10, R620 `192.168.168.110`, toolchain
+`1.97.1-x86_64-unknown-linux-gnu`, дерево `/home/mike/worktrees/hdi-lab`
+(коммит HDI-17 `7385d2f` и незакоммиченная ветка HDI-18/19):
+`cargo test -p saai-taskd --lib` — 108 passed, включая
+`explicit_fixture_finishes_one_campaign`,
+`free_text_does_not_open_a_journal`,
+`missing_directory_does_not_open_a_journal`.
+`cargo test -p hdi-campaign --test hdi18` — 2 passed.
+`cargo clippy -p hdi-campaign --all-targets --no-deps -- -D warnings` — чисто.
+`cargo clippy -p saai-taskd --all-targets --no-deps -- -D warnings` останавливается
+на прежних замечаниях `too_many_arguments` в `runtime_bridge.rs` и
+`cloned_ref_to_slice_refs` в `replan.rs` / `scheduler.rs`. С теми же
+двумя allow новая ветка собирается чисто. `native-init.c` не менялся.
+Образ panther не собирался.
 
 ## Sprint HDI-20 — белый список читает корень sysfs
 
-- Состояние: `Backlog`
+- Состояние: `Verify`
 - Зависит от: HDI-02 и HDI-18 в Verify
 - Архитектурные решения: ADR-426
 - Рабочий fallback: корень фикстуры, как сейчас
@@ -1535,8 +1564,9 @@ Task не получает права сверх белого списка. Чу
 
 ### Current state
 
-`hdi-exec` читает только файлы фикстуры. Шаблоны — статический argv
-`read-fixture` без оболочки.
+`sysfs_read` читает `{sys_root}/sys/...`. Без отдельного корня
+`sys_root` совпадает с каталогом фикстуры. Имена проб те же, белый
+список по-прежнему из 14 имён. Живой `/sys` host-тест не открывает.
 
 ### Scope
 
@@ -1571,11 +1601,17 @@ Task не получает права сверх белого списка. Чу
 
 ### Evidence
 
-Заполняется при закрытии.
+2026-10-10, Windows-хост, toolchain `1.97.1-x86_64-pc-windows-gnu`:
+`cargo test -p hdi-exec --tests` — hdi02 8 passed, hdi20 1 passed.
+`cargo clippy -p hdi-exec --all-targets -- -D warnings` — чисто.
+2026-10-10, R620 `192.168.168.110`, toolchain
+`1.97.1-x86_64-unknown-linux-gnu`: те же команды, hdi20 2 passed,
+включая отказ по символической ссылке за пределы корня.
+Белый список — 14 имён. Образ panther не собирался.
 
 ## Sprint HDI-21 — одна команда на panther
 
-- Состояние: `Backlog`
+- Состояние: `Verify`
 - Зависит от: HDI-19 и HDI-20 в Verify
 - Архитектурные решения: ADR-426
 - Рабочий fallback: taskd без ветки HDI, телефон как до прошивки
@@ -1588,8 +1624,9 @@ Task не получает права сверх белого списка. Чу
 
 ### Current state
 
-Снимок Pixel снят с консоли и посчитан на Windows. На телефоне бинарник
-лаборатории не прошит. `native-init` её не знает.
+На `/data/saaios/system/saai-taskd` стоит бинарник с веткой HDI.
+`native-init.c` не менялся и лабораторию не вызывает. Один явный Intent
+уже дал Result. Повторная загрузка второй кампании не создала.
 
 ### Scope
 
@@ -1630,12 +1667,28 @@ Task не получает права сверх белого списка. Чу
 
 ### Evidence
 
-Заполняется при закрытии. Зелёная сборка без физического Intent эту
-галочку не закрывает.
+2026-10-10, panther, userspace-бинарник
+`/data/saaios/system/saai-taskd`, sha256
+`2535b4578a8e996dc20bbeb13a70ea9ac7e70ef2ded95a78ba9ab22e71505e44`.
+Образ `init_boot` не прошивался. `native-init.c` не менялся.
+`dmesg` не содержит `investigate_hardware`.
+
+Один Intent `3d4fd277-751d-430a-9d3f-1e47a64d35d2`. Result:
+`HDI gain=19 efficiency=3.8 accuracy=1 coverage=1 verdict=PlatformGraphicsMatched loaded_module=false`.
+Журнал: пять Allow — `drm_class`, `modules`, `pci_drivers`,
+`platform_nodes`, `platform_drivers`. Привязка `exynos_drm`, драйвер
+`mali` / модуль `mali_kbase`, драйвер `aoc` / модуль `aoc_core`
+совпали со снимком. Класс USB на этом запуске не пуст
+(`11210000.dwc3`), поэтому утверждения `usb:udc absent` нет: gain 19,
+а не 20. Модуль не загружался.
+
+После `reboot` pid taskd новый, тот же sha256, в `/tmp` нового журнала
+нет, Result тот же один, лог taskd не содержит повторной кампании.
+HDI-06 не закрыт. Модемный трек не сдвинут.
 
 ## Sprint HDI-22 — Result на существующем экране
 
-- Состояние: `Backlog`
+- Состояние: `Verify`
 - Зависит от: HDI-21 в Verify
 - Архитектурные решения: ADR-426, ADR-301
 - Рабочий fallback: Result остаётся в журнале taskd, экран не меняется
@@ -1647,8 +1700,9 @@ Task не получает права сверх белого списка. Чу
 
 ### Current state
 
-Result других Task уже рисуется оболочкой. Отчёт лаборатории туда
-не подставлен.
+Экран Result этого Task берёт вердикт и записанные числа метрики.
+Result без этих чисел остаётся на прежнем `summary`. Холодная загрузка
+без нового Intent лабораторию не открывает.
 
 ### Scope
 
@@ -1684,11 +1738,13 @@ init. Повторный холодный старт без Intent экран л
 
 ### Evidence
 
-Заполняется при закрытии.
+Host, R620, `cargo test -p saai-shell --bin saai-shell object_view_`: 34 passed, включая `object_view_shows_hdi_verdict_and_metrics_without_identifiers` и `object_view_empty_result_keeps_the_previous_empty_observation`. Совпавший Result даёт строку `Вердикт: PlatformGraphicsMatched · точность 1 · покрытие 1 · прирост 19 · эффективность 3.8 · ложные 0`. Токен `IMEI` и 14-значный номер на экран не попадают. Result без чисел метрики оставляет прежнее пустое наблюдение. Task без HDI по-прежнему показывает свой `summary`.
+
+На panther заменён только `/data/saaios/system/saai-shell`, sha256 `e3aaf0fcd365240ba225d0cca22e6658c93b2d2338bf35e6b61bc0315426dc40` (1531592 байта). Предыдущий бинарник сохранён как `saai-shell.hdi22-prev`. `init_boot` и `native-init` не менялись. После `reboot -f` процесс `saai-shell` pid 397, `/proc/397/exe` с тем же хешем. В `dmesg` нет `investigate_hardware`, каталога `/tmp/hdi-*` нет. Result один: `36875cf5-c782-4497-b90d-13bc36518441`, `verdict=PlatformGraphicsMatched`, `discovery_gain=19`, `identification_accuracy=1.0`, `evidence_coverage=1.0`, `probe_efficiency=3.8`. Поля `false_hypotheses` в этом Result нет, поэтому на телефоне четыре записанных числа и вердикт; пятое число экран показывает, когда оно записано. Кадр экрана с хоста не снимался.
 
 ## Sprint HDI-23 — адаптация на устройстве останавливается
 
-- Состояние: `Backlog`
+- Состояние: `Verify`
 - Зависит от: HDI-21 в Verify
 - Архитектурные решения: ADR-426, ADR-260
 - Рабочий fallback: AskUser без подтверждения не загружает модуль
@@ -1702,8 +1758,9 @@ init. Повторный холодный старт без Intent экран л
 
 ### Current state
 
-На снимке Pixel адаптация — `AlreadyBound` для `exynos_drm`,
-`loaded_module=false`. На устройстве эта остановка не проверена.
+На panther `card0` привязан к `exynos_drm`. Кампания завершила Task
+без вопроса, `loaded_module=false`. Пробел драйвера на host-фикстуре
+останавливается в `waiting_confirmation` и модуль не грузит.
 Предусловие `graphics_class_incomplete` выключено.
 
 ### Scope
@@ -1742,7 +1799,9 @@ init. Повторный холодный старт без Intent экран л
 
 ### Evidence
 
-Заполняется при закрытии.
+Host, Windows и R620, `cargo test -p hdi-campaign --test hdi23`: 3 passed. Пробел `exec-root` — `DriverGap`, `confirmation_required`, `loaded_module=false`, в тексте нет `insmod`/`modprobe`/`.ko`. Снимок Pixel с строкой `card0 -> …/exynos-drm/…` — `AlreadyBound { exynos_drm }`, вопроса нет. `SHIPPED_PRECONDITIONS` для `graphics_class_incomplete` остаётся `enabled=false`. R620, `cargo test -p saai-taskd --lib finishes`: пробел ставит `asks_user`, привязанный драйвер — нет. Журнал пробела не содержит `insmod`.
+
+На panther заменён только `/data/saaios/system/saai-taskd`, sha256 `3837e7e4d8af15d582a1e65ba1829084a746769bb58981d1dac60f414536d403`. Предыдущий бинарник — `saai-taskd.hdi23-prev`. Init не менялся. Один Intent `c0b9e44a-4bfe-405a-9b44-9d28135b8979` дал Task `f64b4c6d-6d47-4229-be8f-e383634e35b3` со статусом `done`. Result `33f9d1de-8ad8-429b-959d-ee15f182690c`: `verdict=PlatformGraphicsMatched`, `loaded_module=false`. Action — `investigate_hardware`, не `adapt_hardware`. Сущностей `waiting_confirmation` нет, подтверждение не отправлялось. До и после кампании `/proc/modules` sha256 `6d862c26e9ab48455290f0e9a16b656ad42b828ca7ace4478014548432f8975d`. После `reboot -f` taskd pid 548 с тем же хешем, Task остался `done`, нового `/tmp/hdi-*` нет, в `dmesg` нет `investigate_hardware`. Хеш `/proc/modules` после новой загрузки другой (`096f232eb54d98733eaf32f9c6b890a87d6060d3dddfcbc613a2652577a86b4f`): это набор модулей свежей загрузки, не запись лаборатории между двумя хешами одного сеанса.
 
 ## Каталог фикстур
 

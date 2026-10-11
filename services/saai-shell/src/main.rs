@@ -3495,7 +3495,12 @@ fn object_view_content(
             let lineage = workflow_lineage_for(entity, selected_entities, relationships);
             let (state, status) = result_universal_facts(entity, lineage.task, selected_entities);
             let actions = workflow_follow_actions(entity, &lineage, selected_entities);
-            finish_workflow_view(entity, selected_entities, lineage, state, status, actions)
+            let mut content =
+                finish_workflow_view(entity, selected_entities, lineage, state, status, actions);
+            if hdi_result_caption(entity).is_some() {
+                content.title = "Результат".to_string();
+            }
+            content
         }
         NOTIFICATION_ENTITY_TYPE => ObjectViewContent {
             title: entity.title.clone(),
@@ -5520,7 +5525,11 @@ fn workflow_path_caption(entity: &Entity, lineage: &WorkflowLineage<'_>) -> Opti
     if entity.entity_type != RESULT_ENTITY_TYPE {
         if let Some(result) = lineage.result {
             if !task_is_in_flight(lineage.task) {
-                parts.push(format!("Результат: {}", result.title));
+                if hdi_result_caption(result).is_some() {
+                    parts.push("Результат".to_string());
+                } else {
+                    parts.push(format!("Результат: {}", result.title));
+                }
             }
         }
     }
@@ -5663,13 +5672,71 @@ fn result_summary_text(entity: &Entity) -> Option<String> {
         .map(str::to_string)
 }
 
+fn metric_number(entity: &Entity, key: &str) -> Option<String> {
+    match entity.properties.get(key)? {
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+fn public_verdict(text: &str) -> String {
+    text.split_whitespace()
+        .filter(|token| {
+            let lower = token.to_ascii_lowercase();
+            !lower.contains("imei")
+                && !lower.contains("imsi")
+                && !lower.contains("iccid")
+                && !lower.contains("iserial")
+                && token.chars().filter(|c| c.is_ascii_digit()).count() < 14
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// HDI-22: verdict and the metric numbers already stored on this Result.
+/// A Result without those numbers stays on the previous summary path.
+/// `false_hypotheses` is included when the recorded Result has it.
+fn hdi_result_caption(entity: &Entity) -> Option<String> {
+    if entity.entity_type != RESULT_ENTITY_TYPE {
+        return None;
+    }
+    let accuracy = metric_number(entity, "identification_accuracy")?;
+    let coverage = metric_number(entity, "evidence_coverage")?;
+    let gain = metric_number(entity, "discovery_gain")?;
+    let efficiency = metric_number(entity, "probe_efficiency")?;
+    let mut caption = String::new();
+    if let Some(verdict) = entity
+        .properties
+        .get("verdict")
+        .and_then(Value::as_str)
+        .map(public_verdict)
+        .filter(|text| !text.is_empty())
+    {
+        caption.push_str("Вердикт: ");
+        caption.push_str(&verdict);
+        caption.push_str(" · ");
+    }
+    caption.push_str(&format!(
+        "точность {accuracy} · покрытие {coverage} · прирост {gain} · эффективность {efficiency}"
+    ));
+    if let Some(false_hypotheses) = metric_number(entity, "false_hypotheses") {
+        caption.push_str(" · ложные ");
+        caption.push_str(&false_hypotheses);
+    }
+    Some(caption)
+}
+
+fn result_observation(entity: &Entity) -> Option<String> {
+    hdi_result_caption(entity).or_else(|| result_summary_text(entity))
+}
+
 fn workflow_activity_or_observation(
     entity: &Entity,
     lineage: &WorkflowLineage<'_>,
 ) -> (Option<String>, Option<String>) {
     // Running Action is `AgentSummary`, not a second activity string.
     if entity.entity_type == RESULT_ENTITY_TYPE {
-        return (None, result_summary_text(entity));
+        return (None, result_observation(entity));
     }
     let task_open = lineage.task.is_some_and(|task| {
         matches!(
@@ -5680,7 +5747,7 @@ fn workflow_activity_or_observation(
     if task_open {
         return (None, None);
     }
-    (None, lineage.result.and_then(result_summary_text))
+    (None, lineage.result.and_then(result_observation))
 }
 
 /// 0–1 disposable execution from a real Action entity. No Action →
@@ -17710,6 +17777,73 @@ mod tests {
         assert_eq!(content.activity, None);
         assert_eq!(content.observation.as_deref(), Some("файл на диске"));
         assert_eq!(content.blocker, None);
+        assert_eq!(
+            content.related.as_deref(),
+            Some("Действие: Экспорт PDF → Результат: PDF готов")
+        );
+    }
+
+    #[test]
+    fn object_view_shows_hdi_verdict_and_metrics_without_identifiers() {
+        let mut task = task_entity("Задача: investigate_hardware", None);
+        task.properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let action = action_entity("Действие: investigate_hardware", task.id, "done");
+        let mut result = result_entity(
+            "HDI gain=19 efficiency=3.8 accuracy=1 coverage=1 verdict=PlatformGraphicsMatched loaded_module=false",
+            task.id,
+            action.id,
+            "HDI gain=19 efficiency=3.8 accuracy=1 coverage=1 verdict=PlatformGraphicsMatched IMEI 490154203237518 loaded_module=false",
+        );
+        result.properties.insert(
+            "verdict".into(),
+            serde_json::Value::String("PlatformGraphicsMatched IMEI 490154203237518".into()),
+        );
+        result
+            .properties
+            .insert("identification_accuracy".into(), serde_json::json!(1));
+        result
+            .properties
+            .insert("evidence_coverage".into(), serde_json::json!(1));
+        result
+            .properties
+            .insert("discovery_gain".into(), serde_json::json!(19));
+        result
+            .properties
+            .insert("false_hypotheses".into(), serde_json::json!(0));
+        result.properties.insert(
+            "probe_efficiency".into(),
+            serde_json::from_str("3.8").expect("efficiency"),
+        );
+        let entities = vec![task.clone(), action.clone(), result.clone()];
+        let task_view = object_view_content(&task, &entities, &[]);
+        let caption = "Вердикт: PlatformGraphicsMatched · точность 1 · покрытие 1 · прирост 19 · эффективность 3.8 · ложные 0";
+        assert_eq!(task_view.observation.as_deref(), Some(caption));
+        assert_eq!(
+            task_view.related.as_deref(),
+            Some("Действие: Действие: investigate_hardware → Результат")
+        );
+        assert!(!task_view.observation.unwrap().contains("IMEI"));
+        assert!(!task_view.related.unwrap().contains("490154203237518"));
+        let result_view = object_view_content(&result, &entities, &[]);
+        assert_eq!(result_view.title, "Результат");
+        assert_eq!(result_view.observation.as_deref(), Some(caption));
+        assert_eq!(result_view.status, "Готово");
+        let details = object_view_details(&result_view);
+        assert!(!details.iter().any(|line| line.contains("IMEI") || line.contains("4901")));
+    }
+
+    #[test]
+    fn object_view_empty_result_keeps_the_previous_empty_observation() {
+        let mut task = task_entity("Пустая задача", None);
+        task.properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let action = action_entity("Пустое действие", task.id, "done");
+        let result = result_entity("Результат", task.id, action.id, "");
+        let entities = vec![task.clone(), action, result];
+        let content = object_view_content(&task, &entities, &[]);
+        assert_eq!(content.observation, None);
+        assert_eq!(content.state, UniversalState::Complete);
     }
 
     #[test]

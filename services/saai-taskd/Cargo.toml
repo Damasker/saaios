@@ -10,6 +10,7 @@ repository.workspace = true
 saai-entity-protocol.workspace = true
 saai-entity-store.workspace = true
 intent-resolution.workspace = true
+hdi-campaign.workspace = true
 saai-object-actions.workspace = true
 chrono.workspace = true
 clap.workspace = true

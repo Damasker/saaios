@@ -296,15 +296,15 @@ diagnose (ADR-238, `351b0b6f…`).
 
 ## HDI — лаборатория в ОС
 
-Host-кампания доведена до HDI-16 (Verify). В ОС её ещё нет.
+Host-кампания доведена до HDI-20 (Verify). На panther HDI-21 в Verify: один Intent, Result записан, init лабораторию не вызывает. HDI-22 в Verify: тот же Result читает существующий экран; userspace `saai-shell` заменён, init нет. HDI-23 в Verify: привязанный драйвер вопрос не задаёт, модуль не загружен.
 
 Очередь [HDI-ROADMAP.md](HDI-ROADMAP.md) HDI-17…23: метрика ключа, один
 вызов из действия, ветка уже запущенного `saai-taskd`, тот же белый
 список на корне sysfs, одна сознательная команда на panther, Result на
 существующем экране, AskUser без загрузки модуля. `native-init` и udev
 лабораторию не запускают. Предусловие `graphics_class_incomplete`
-остаётся выключенным. Прошивка — только HDI-21 и только userspace
-`saai-taskd`.
+остаётся выключенным. Прошивка init нет. На `/data` заменены
+userspace `saai-taskd` (HDI-21 и HDI-23) и `saai-shell` (HDI-22).
 
 HDI-06 (снимок MacBook) в эту очередь не входит. Модемный трек она не
 сдвигает и bearer не объявляет.

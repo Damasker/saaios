@@ -98,6 +98,32 @@ impl Verification {
         self.knowledge.all_text()
     }
 
+    /// Outcome A is closed only by a negative recipe whose pci and dmi
+    /// files were cited. A bound driver, including an invented `gmux`,
+    /// does not close it. Outcome C stays open.
+    pub fn negative_recipe_closed(&self) -> bool {
+        if self.verdict != StandVerdict::FirmwareUnenumerated {
+            return false;
+        }
+        let confirmed = self.confirmed_for(&self.machine_id);
+        let recipe = confirmed.iter().any(|claim| {
+            claim.kind == ClaimKind::NegativeRecipe
+                && claim.subject == IGD_SUBJECT
+                && claim.value.eq_ignore_ascii_case("8086:0d26")
+                && claim.evidence_ids.iter().any(|id| id == "pci.txt")
+                && claim.evidence_ids.iter().any(|id| id == "dmi.txt")
+        });
+        let invented = confirmed.iter().any(|claim| {
+            claim.kind == ClaimKind::DriverBound
+                || claim
+                    .value
+                    .to_ascii_lowercase()
+                    .contains("gmux")
+                || claim.subject.to_ascii_lowercase().contains("gmux")
+        });
+        recipe && !invented
+    }
+
     pub fn merge_into_control(&self, machine_id: &str, control: &mut Vec<Claim>) {
         self.knowledge.merge_into_control(machine_id, control);
     }
