@@ -3231,6 +3231,7 @@ enum Frame {
         header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
         focus: Option<(Rect, DataRow)>,
+        members: Vec<(Rect, DataRow)>,
     },
     /// ADR-240: Поиск lists live objects in the selected space.
     /// Inbox stays an Orb destination, not a primary tab.
@@ -7178,11 +7179,11 @@ fn space_detail_v2_source(entities: &[Entity], store_connected: bool) -> String 
                 "spaces.detail.empty",
             ));
         } else {
-            for entity in &rows {
+            for index in 0..rows.len() {
                 src.push_str(&v2_stacked_block(
                     "DataRow",
                     "Button",
-                    &entity.id.to_string(),
+                    &format!("spaces.member.{index}"),
                 ));
             }
         }
@@ -7200,9 +7201,9 @@ fn space_detail_action_at(
     entities: &[Entity],
     store_connected: bool,
 ) -> Option<SpaceDetailTap> {
-    let (id, action) = live_v2_hit(
+    let (_, action) = live_v2_hit(
         &space_detail_v2_source(entities, store_connected),
-        "ADR-243 space detail",
+        "ADR-482 space detail",
         pos,
         width,
         height,
@@ -7210,11 +7211,10 @@ fn space_detail_action_at(
     match action.as_deref() {
         Some("list_back") => Some(SpaceDetailTap::Back),
         Some("spaces.focus") => space_focus_task(entities).map(|task| SpaceDetailTap::Member(task.id)),
-        Some(loc) if loc == id => {
-            let parsed = Uuid::parse_str(&id).ok()?;
+        Some(action) if action.starts_with("spaces.member.") => {
+            let index: usize = action.strip_prefix("spaces.member.")?.parse().ok()?;
             space_detail_member_rows(entities)
-                .into_iter()
-                .find(|entity| entity.id == parsed)
+                .get(index)
                 .map(|entity| SpaceDetailTap::Member(entity.id))
         }
         _ => None,
@@ -7245,12 +7245,46 @@ fn space_focus_paint_row(
     ))
 }
 
-fn space_member_card(entity: &Entity) -> render::ActionCardView {
-    render::ActionCardView::new(
-        entity.title.clone(),
-        space_member_kind_label(entity).to_string(),
-        "Открыть",
-    )
+fn space_member_paint_rows(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, DataRow)> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let tree = layout_live_v2(
+        &space_detail_v2_source(entities, store_connected),
+        "ADR-482 space members",
+        width,
+        height,
+    );
+    if !store_connected {
+        return vec![(
+            v2_named_rect(&tree, "spaces.offline", "ADR-482 space members"),
+            DataRow::new("Нет связи", DataRowVariant::Static),
+        )];
+    }
+    let rows = space_detail_member_rows(entities);
+    if rows.is_empty() && space_focus_task(entities).is_none() {
+        return vec![(
+            v2_named_rect(&tree, "spaces.detail.empty", "ADR-482 space members"),
+            DataRow::new("Нет объектов", DataRowVariant::Static),
+        )];
+    }
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, entity)| {
+            let loc = format!("spaces.member.{index}");
+            (
+                v2_named_rect(&tree, &loc, "ADR-482 space members"),
+                DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
+                    .with_secondary(space_member_kind_label(entity).to_string())
+                    .with_action(loc),
+            )
+        })
+        .collect()
 }
 
 fn space_detail_empty_card(store_connected: bool) -> render::ActionCardView {
@@ -11362,6 +11396,12 @@ impl Shell {
                     header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                     rows: self.space_detail_content_cards_from(&view),
                     focus: space_focus_paint_row(&self.selected_entities, connected, width, height),
+                    members: space_member_paint_rows(
+                        &self.selected_entities,
+                        connected,
+                        width,
+                        height,
+                    ),
                 }
             } else {
                 let view = layout_live_v2(
@@ -11381,6 +11421,7 @@ impl Shell {
                     header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                     rows: self.spaces_content_cards_from(&view),
                     focus: None,
+                    members: Vec::new(),
                 }
             }
         } else if self.current_page == RootPage::Me {
@@ -11801,6 +11842,7 @@ impl Shell {
                     header_rect,
                     rows,
                     focus,
+                    members,
                 } => {
                     let mut surface = render::Canvas::new(canvas, width, height);
                     render::draw_context_row_list(
@@ -11813,9 +11855,14 @@ impl Shell {
                         true,
                         fonts,
                     );
-                    if let (Some((rect, row)), Some(fonts)) = (focus.as_ref(), fonts) {
+                    if let Some(fonts) = fonts {
                         surface.set_clip(Some(content_rect));
-                        render::draw_data_row(&mut surface, fonts, row, *rect);
+                        for (rect, row) in &members {
+                            render::draw_data_row(&mut surface, fonts, row, *rect);
+                        }
+                        if let Some((rect, row)) = focus.as_ref() {
+                            render::draw_data_row(&mut surface, fonts, row, *rect);
+                        }
                         surface.set_clip(None);
                     }
                 }
@@ -13017,28 +13064,12 @@ impl Shell {
         &self,
         tree: &LayoutNode,
     ) -> Vec<(Rect, render::ActionCardView)> {
-        let connected = self.entityd.is_connected();
-        let rows = space_detail_member_rows(&self.selected_entities);
-        let has_focus = space_focus_task(&self.selected_entities).is_some();
-        let (mut cards, mut ids): (Vec<render::ActionCardView>, Vec<String>) = if !connected {
-            (
-                vec![space_detail_empty_card(false)],
-                vec!["spaces.offline".into()],
-            )
-        } else if rows.is_empty() && !has_focus {
-            (
-                vec![space_detail_empty_card(true)],
-                vec!["spaces.detail.empty".into()],
-            )
-        } else {
-            (
-                rows.iter().copied().map(space_member_card).collect(),
-                rows.iter().map(|entity| entity.id.to_string()).collect(),
-            )
-        };
-        ids.push("back".into());
-        cards.push(render::ActionCardView::new("Назад", "", "Назад"));
-        list_paint_cards(tree, "ADR-243 space detail paint", cards, &ids)
+        list_paint_cards(
+            tree,
+            "ADR-243 space detail paint",
+            vec![render::ActionCardView::new("Назад", "", "Назад")],
+            &[String::from("back")],
+        )
     }
 
     fn me_facts(&self) -> MeFacts {
@@ -14472,7 +14503,7 @@ mod tests {
         remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
         search_rows, space_color, space_color_entity, space_detail_action_at,
         space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row,
-        space_focus_task, space_for_wifi_ssid,
+        space_focus_task, space_for_wifi_ssid, space_member_paint_rows,
         space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
         space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
@@ -20373,6 +20404,35 @@ mod tests {
         assert_eq!(rows.0, saai_ui_core::Rect::new(49, 430, 982, 190));
         assert!(space_focus_task(&[intent]).is_none());
         assert!(space_focus_paint_row(&entities, false, 1080, 2400).is_none());
+    }
+
+    #[test]
+    fn space_member_rows_hit_live_som_peers() {
+        let intent = intent_entity("Подготовить демо");
+        let entities = vec![intent.clone()];
+        let rows = space_member_paint_rows(&entities, true, 1080, 2400);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.primary, "Подготовить демо");
+        assert_eq!(rows[0].1.secondary.as_deref(), Some("Намерение"));
+        assert_eq!(rows[0].1.action.as_deref(), Some("spaces.member.0"));
+        assert_eq!(rows[0].0, saai_ui_core::Rect::new(49, 430, 982, 190));
+        let first = stacked_row_rect(0, 1080, 2400);
+        let point = (
+            (first.x + first.width / 2) as f64,
+            (first.y + first.height / 2) as f64,
+        );
+        assert_eq!(
+            space_detail_action_at(point, 1080, 2400, &entities, true),
+            Some(SpaceDetailTap::Member(intent.id))
+        );
+        let empty = space_member_paint_rows(&[], true, 1080, 2400);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].1.primary, "Нет объектов");
+        assert!(!empty[0].1.is_actionable());
+        let offline = space_member_paint_rows(&entities, false, 1080, 2400);
+        assert_eq!(offline.len(), 1);
+        assert_eq!(offline[0].1.primary, "Нет связи");
+        assert!(!offline[0].1.is_actionable());
     }
 
     #[test]

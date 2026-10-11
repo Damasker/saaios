@@ -252,6 +252,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 now next action | live `now.next.{i}` Buttons; empty caption among other work **host** (ADR-479; Experimental; leave Сейчас) |
 | VUI-09 space focus task | live `spaces.focus` Button when in-space work is running **host** (ADR-480; Experimental; leave Сейчас) |
 | VUI-09 system runtimes | Android VM / notebook Status «Недоступно · нет среды» **host** (ADR-481; Experimental; leave Сейчас) |
+| VUI-09 space member rows | live `spaces.member.{i}` Buttons; empty/offline Status **host** (ADR-482; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

@@ -116,8 +116,9 @@ The Field fills to the panel bottom. Still Experimental.
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 `a11y = Button` (ADR-203), and the same nested tabs. The heading
 matches Inbox stacked top (ADR-458). Status `SpaceRow` invents no
-`select_space`. Live `spaces.focus` is interned on Space detail
-(ADR-480); this example does not name it.
+`select_space`. Live `spaces.focus` and `spaces.member.{i}` are
+interned on Space detail (ADR-480/482); this example does not
+name them.
 
 [`examples/me-public.sui`](examples/me-public.sui) is the
 labelled Me sample: `ContextHeader`, a `SystemSection` header, the

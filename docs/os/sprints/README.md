@@ -155,6 +155,7 @@ ADR-478 NOW current task rows are live running Buttons.
 ADR-479 NOW next-action rows are live `now.next.{i}` Buttons.
 ADR-480 Space focus is a live `spaces.focus` Button.
 ADR-481 Система Android VM / notebook are Status Unavailable.
+ADR-482 Space members are live `spaces.member.{i}` Buttons.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

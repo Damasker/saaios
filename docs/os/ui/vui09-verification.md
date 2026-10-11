@@ -133,6 +133,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   NOW next-action rows are live `now.next.{i}` Buttons (ADR-479).
   Space focus is a live `spaces.focus` Button (ADR-480).
   Система Android VM / notebook are Status Unavailable (ADR-481).
+  Space members are live `spaces.member.{i}` Buttons (ADR-482).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

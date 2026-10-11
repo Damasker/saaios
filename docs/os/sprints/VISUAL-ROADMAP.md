@@ -1471,6 +1471,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Система Android VM / notebook are Status Unavailable
   (ADR-481). Never Ready. Still Experimental. Not Visual v1
   sign-off.
+- [x] Space members are live `spaces.member.{i}` Buttons (ADR-482).
+  Empty/offline stay Status. Still Experimental. Not Visual v1
+  sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1582,10 +1585,9 @@ After each completed task group, report:
 
 ## Next action
 
-VUI-09 concept-board chrome is open (ADR-470). Система Android VM
-/ notebook are Status Unavailable (ADR-481). Named board chrome
-for Object / Intent / NOW / Space / Система runtimes is host-
-locked. Keyboard keys, gallery page, and lock idle/wake stay
-formulas until a board names them. Public subset stays
-Experimental. Acceptance stays unchecked until panther evidence.
-Do not fake weather / voice / Android VM Ready.
+VUI-09 concept-board chrome is open (ADR-470). Space members are
+live `spaces.member.{i}` Buttons (ADR-482). Keyboard keys, gallery
+page, and lock idle/wake stay formulas until a board names them.
+Public subset stays Experimental. Acceptance stays unchecked
+until panther evidence. Do not fake weather / voice / Android VM
+Ready.
