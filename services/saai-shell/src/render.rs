@@ -478,6 +478,7 @@ pub fn draw_object_view(
     _header: Rect,
     summary_rect: Rect,
     permission_rect: Option<Rect>,
+    progress: Option<(Rect, Progress)>,
     actions: &[(Rect, &str)],
     fonts: Option<&Fonts>,
 ) {
@@ -495,6 +496,9 @@ pub fn draw_object_view(
                 theme_color(ColorRole::Surface)
             },
         );
+    }
+    if let Some((rect, progress)) = progress {
+        draw_progress_track(canvas, &progress, rect);
     }
 
     let Some(fonts) = fonts else {
@@ -1631,19 +1635,35 @@ fn draw_status_indicator(
     }
 }
 
-fn draw_gallery_progress(canvas: &mut Canvas<'_>, progress: &Progress, rect: Rect) {
-    canvas.fill_rect(rect, theme_color(ColorRole::Grid));
+fn draw_progress_track(canvas: &mut Canvas<'_>, progress: &Progress, rect: Rect) {
+    let track_height = physical(Progress::MIN_TRACK_HEIGHT).max(1);
+    if rect.height < track_height {
+        return;
+    }
+    let track = Rect::new(
+        rect.x,
+        rect.y + rect.height.saturating_sub(track_height) / 2,
+        rect.width,
+        track_height,
+    );
+    canvas.fill_rect(track, theme_color(ColorRole::Grid));
     let filled_width = match progress.percent() {
-        Some(percent) => (u64::from(rect.width) * u64::from(percent) / 100) as u32,
-        // Indeterminate: a static snapshot of the restrained motion section
-        // 6.5 describes -- this gallery draws one still frame, not the
-        // animation itself (VUI-08's job).
-        None => rect.width / 4,
+        Some(percent) => (u64::from(track.width) * u64::from(percent) / 100) as u32,
+        // Indeterminate: a static snapshot of the restrained motion
+        // section 6.5 describes -- one still frame, not the animation.
+        None => track.width / 4,
     };
+    if filled_width == 0 {
+        return;
+    }
     canvas.fill_rect(
-        Rect::new(rect.x, rect.y, filled_width, rect.height),
+        Rect::new(track.x, track.y, filled_width, track.height),
         theme_color(ColorRole::Accent),
     );
+}
+
+fn draw_gallery_progress(canvas: &mut Canvas<'_>, progress: &Progress, rect: Rect) {
+    draw_progress_track(canvas, progress, rect);
 }
 
 fn draw_gallery_button(canvas: &mut Canvas<'_>, fonts: &Fonts, button: &Button, rect: Rect) {
@@ -4221,6 +4241,7 @@ mod tests {
             None,
             Rect::new(0, 0, width, 2200),
             Rect::new(0, 140, width, 144),
+            None,
             None,
             &[(accept, "Подтвердить"), (decline, "Отклонить")],
             None,

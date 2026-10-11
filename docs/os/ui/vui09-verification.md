@@ -154,6 +154,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Apps grid overflow tiles scroll above the tab strip (ADR-498).
   Object View history stays behind Disclosure (ADR-499).
   Intent Confirm only when AskUser exists (ADR-500).
+  Intent Progress is sourced or indeterminate (ADR-501).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

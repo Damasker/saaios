@@ -3235,7 +3235,8 @@ enum Frame {
     /// consequence lines that actually exist. ADR-157: confirmation
     /// is `DecisionOverlay`, not flattened into `details`. ADR-158:
     /// OAM permission is `SurfacePattern::blocked`, not a Caption dump.
-    /// History is omitted until entity events load.
+    /// History sits behind Disclosure (ADR-499). Progress is sourced
+    /// or indeterminate (ADR-501).
     ObjectView {
         summary: ObjectSummary,
         decision: Option<DecisionOverlay>,
@@ -3244,6 +3245,7 @@ enum Frame {
         summary_rect: Rect,
         fact_rows: Vec<(Rect, String)>,
         permission_rect: Option<Rect>,
+        progress: Option<(Rect, Progress)>,
         actions: Vec<(Rect, &'static str)>,
     },
     /// ADR-144: SSH pairing is no longer a free-floating title.
@@ -3592,6 +3594,9 @@ struct ObjectViewContent {
     /// Disposable execution from a live `saaios.action`. Hidden when
     /// no Action exists (ADR-490). Not a worker count.
     agent: Option<AgentSummary>,
+    /// Sourced track only (ADR-501). Running without a numeric
+    /// property stays Indeterminate. Never N-of-M.
+    progress: Option<Progress>,
     actions: Vec<&'static str>,
 }
 
@@ -3634,6 +3639,7 @@ fn object_view_content_with(
             permission: None,
             decision: None,
             agent: None,
+            progress: None,
             actions: Vec::new(),
         },
         "saaios.intent" => {
@@ -3698,6 +3704,7 @@ fn object_view_content_with(
             permission: object_view_permission(entity),
             decision: None,
             agent: None,
+            progress: None,
             actions: vec!["Скрыть"],
         },
         _ => {
@@ -3714,6 +3721,7 @@ fn object_view_content_with(
                 permission: object_view_permission(entity),
                 decision: None,
                 agent: None,
+                progress: None,
                 actions: Vec::new(),
             }
         }
@@ -5931,8 +5939,39 @@ fn finish_workflow_view(
         permission: object_view_permission(entity),
         decision,
         agent: agent_summary_from_lineage(&lineage, entities),
+        progress: sourced_workflow_progress(lineage.task),
         actions,
     }
+}
+
+/// ADR-501: determinate only from a live numeric property. Running
+/// or verifying without that property is Indeterminate. Step counts
+/// never become a percent.
+fn sourced_progress_percent(entity: &Entity) -> Option<u8> {
+    entity
+        .properties
+        .get("progress")
+        .or_else(|| entity.properties.get("percent"))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+        })
+        .and_then(|n| u8::try_from(n.min(100)).ok())
+}
+
+fn sourced_workflow_progress(task: Option<&Entity>) -> Option<Progress> {
+    let task = task.filter(|task| {
+        matches!(
+            workflow_status_of(task),
+            Some(TASK_STATUS_RUNNING | TASK_STATUS_VERIFYING)
+        )
+    })?;
+    Some(
+        sourced_progress_percent(task)
+            .map(Progress::determinate)
+            .unwrap_or(Progress::Indeterminate),
+    )
 }
 
 fn task_is_in_flight(task: Option<&Entity>) -> bool {
@@ -9333,6 +9372,10 @@ fn object_overlay_v2_source(locs: &[&str], facts: &[&str], permission: bool) -> 
             src.push_str(&v2_stacked_block("Disclosure", "Button", fact));
             continue;
         }
+        if *fact == "object.progress" {
+            src.push_str(&v2_stacked_block("Progress", "Status", fact));
+            continue;
+        }
         let a11y = if fact.starts_with("object.related") || fact.starts_with("object.step") {
             "Button"
         } else {
@@ -9362,6 +9405,7 @@ fn object_overlay_fact_locs(
     history_open: bool,
     detail_count: usize,
     decision_count: usize,
+    progress: bool,
 ) -> Vec<String> {
     let mut facts = Vec::new();
     for index in 0..related_count {
@@ -9380,6 +9424,9 @@ fn object_overlay_fact_locs(
                 facts.push(format!("object.history.{index}"));
             }
         }
+    }
+    if progress {
+        facts.push("object.progress".into());
     }
     for index in 0..detail_count {
         facts.push(format!("object.detail.{index}"));
@@ -12078,6 +12125,7 @@ impl Shell {
                 self.object_history_open,
                 details.len(),
                 decision_facts.len(),
+                content.progress.is_some(),
             );
             let fact_refs: Vec<&str> = fact_locs.iter().map(String::as_str).collect();
             let permission = object_view_permission_pattern(&content);
@@ -12100,8 +12148,18 @@ impl Shell {
                     fact_texts.extend(history_lines);
                 }
             }
+            if content.progress.is_some() {
+                fact_texts.push(String::new());
+            }
             fact_texts.extend(details);
             fact_texts.extend(decision_facts);
+            let progress = content.progress.and_then(|progress| {
+                fact_locs
+                    .iter()
+                    .position(|loc| loc == "object.progress")
+                    .and_then(|index| fact_rects.get(index).copied().flatten())
+                    .map(|rect| (rect, progress))
+            });
             let fact_rows = fact_rects
                 .into_iter()
                 .zip(fact_texts)
@@ -12121,6 +12179,7 @@ impl Shell {
                 summary_rect,
                 fact_rows,
                 permission_rect,
+                progress,
                 actions,
             }
         } else if let Some(pending) = &self.pending_pair_request {
@@ -12738,6 +12797,7 @@ impl Shell {
                     summary_rect,
                     fact_rows,
                     permission_rect,
+                    progress,
                     actions,
                 } => {
                     let facts: Vec<(Rect, &str)> = fact_rows
@@ -12753,6 +12813,7 @@ impl Shell {
                         header,
                         summary_rect,
                         permission_rect,
+                        progress,
                         &actions,
                         fonts,
                     );
@@ -14705,6 +14766,7 @@ impl Shell {
             + step_count
             + object_view_quick_action_lines(entity).len()
             + history_rows
+            + usize::from(content.progress.is_some())
             + details.len()
             + decision_count;
         object_overlay_scroll_max(
@@ -23223,6 +23285,69 @@ mod tests {
         assert!(content.agent.is_none());
         assert!(content.decision.is_none());
         assert!(content.actions.is_empty());
+        assert_eq!(content.progress, Some(super::Progress::Indeterminate));
+    }
+
+    #[test]
+    fn object_view_progress_is_sourced_or_indeterminate() {
+        let mut running = task_entity("Копирует файлы", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let running_view = object_view_content(&running, &[running.clone()], &[]);
+        assert_eq!(running_view.progress, Some(super::Progress::Indeterminate));
+
+        running
+            .properties
+            .insert("progress".into(), serde_json::json!(40));
+        let determined = object_view_content(&running, &[running.clone()], &[]);
+        assert_eq!(determined.progress, Some(super::Progress::determinate(40)));
+
+        let waiting = task_entity("Подтвердите: удалить объект", None);
+        assert_eq!(
+            object_view_content(&waiting, &[waiting.clone()], &[]).progress,
+            None
+        );
+
+        let intent = intent_entity("Подготовить демо");
+        running.properties.insert(
+            "intent_id".into(),
+            serde_json::Value::String(intent.id.to_string()),
+        );
+        assert_eq!(
+            object_view_content(&intent, &[intent.clone(), running.clone()], &[]).progress,
+            Some(super::Progress::determinate(40))
+        );
+        assert_eq!(
+            object_view_content(&intent, &[intent.clone()], &[]).progress,
+            None
+        );
+
+        let mut draft = task_entity("Черновик", Some(intent.id));
+        draft
+            .properties
+            .insert("status".into(), serde_json::Value::String("done".into()));
+        let mut send = task_entity("Отправить", Some(intent.id));
+        send.properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let plan = object_view_content(&intent, &[intent.clone(), draft, send], &[]);
+        assert_eq!(plan.progress, Some(super::Progress::Indeterminate));
+        assert_ne!(plan.progress, Some(super::Progress::determinate(50)));
+
+        let offline = object_view_content_with(&intent, &[intent.clone(), running], &[], false);
+        assert_eq!(offline.progress, None);
+
+        let locs = super::object_overlay_fact_locs(0, 0, 0, 0, false, 0, 0, true);
+        assert_eq!(locs, vec!["object.progress".to_string()]);
+        let tree = super::layout_live_v2(
+            &super::object_overlay_v2_source(&[], &["object.progress"], false),
+            "ADR-501 progress",
+            1080,
+            2400,
+        );
+        let row = super::v2_named_rect(&tree, "object.progress", "progress");
+        assert!(row.height >= 48);
+        assert!(tree.hit_test(540.0, (row.y + 8) as f64).is_none());
     }
 
     #[test]
@@ -23543,9 +23668,9 @@ mod tests {
             vec!["Исполнение: Экспорт PDF".to_string()]
         );
         assert!(object_view_details(&content).is_empty());
-        let closed = super::object_overlay_fact_locs(0, 0, 0, 1, false, 0, 0);
+        let closed = super::object_overlay_fact_locs(0, 0, 0, 1, false, 0, 0, false);
         assert_eq!(closed, vec!["object.history".to_string()]);
-        let open = super::object_overlay_fact_locs(0, 0, 0, 1, true, 0, 0);
+        let open = super::object_overlay_fact_locs(0, 0, 0, 1, true, 0, 0, false);
         assert_eq!(
             open,
             vec![

@@ -1506,6 +1506,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Still Experimental. Not Visual v1 sign-off.
 - [x] Intent Confirm only when AskUser exists (ADR-500).
   Still Experimental. Not Visual v1 sign-off.
+- [x] Intent Progress is sourced or indeterminate (ADR-501).
+  Still Experimental. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1625,7 +1627,8 @@ overflow devices scroll above pinned Искать (ADR-496). Trusted-client
 overflow scrolls above pinned Назад (ADR-497). Apps grid overflow
 tiles scroll above the tab strip (ADR-498). Object View history
 stays behind Disclosure (ADR-499). Intent Confirm
-only when AskUser exists (ADR-500). Keyboard keys,
+only when AskUser exists (ADR-500). Intent Progress
+is sourced or indeterminate (ADR-501). Keyboard keys,
 gallery page, and lock idle/wake stay formulas until a board
 names them. Public subset stays Experimental. Acceptance stays
 unchecked until panther evidence. Do not fake weather / voice /
