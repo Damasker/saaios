@@ -7315,6 +7315,34 @@ fn search_v2_source(entities: &[Entity], store_connected: bool) -> String {
     src
 }
 
+fn search_stacked_count(entities: &[Entity], store_connected: bool) -> usize {
+    if !store_connected {
+        return 1;
+    }
+    search_rows(entities).len().max(1)
+}
+
+fn search_scroll_content(width: u32, height: u32) -> Rect {
+    let top = stacked_row_rect(0, width, height).y;
+    let content = root_content_rect(width, height);
+    let floor = content.y.saturating_add(content.height);
+    Rect::new(0, top, width, floor.saturating_sub(top))
+}
+
+fn search_scroll_max(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+) -> i32 {
+    me_max_scroll_offset(
+        search_stacked_count(entities, store_connected),
+        width,
+        height,
+        search_scroll_content(width, height),
+    )
+}
+
 fn search_row_at(
     pos: (f64, f64),
     width: u32,
@@ -7322,15 +7350,27 @@ fn search_row_at(
     entities: &[Entity],
     store_connected: bool,
 ) -> Option<Uuid> {
+    search_row_at_scrolled(pos, width, height, entities, store_connected, 0)
+}
+
+fn search_row_at_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    entities: &[Entity],
+    store_connected: bool,
+    scroll_offset: i32,
+) -> Option<Uuid> {
     if !store_connected || width == 0 || height == 0 {
         return None;
     }
-    let (_, action) = live_v2_hit(
+    let (_, action) = live_v2_hit_scrolled(
         &search_v2_source(entities, true),
-        "ADR-484 search",
+        "ADR-491 search",
         pos,
         width,
         height,
+        scroll_offset,
     )?;
     let index: usize = action
         .as_deref()?
@@ -7348,38 +7388,59 @@ fn search_paint_rows(
     width: u32,
     height: u32,
 ) -> Vec<(Rect, DataRow)> {
+    search_paint_rows_scrolled(entities, store_connected, width, height, 0)
+}
+
+fn search_paint_rows_scrolled(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Vec<(Rect, DataRow)> {
     if width == 0 || height == 0 {
         return Vec::new();
     }
-    let tree = layout_live_v2(
+    let tree = layout_live_v2_scrolled(
         &search_v2_source(entities, store_connected),
-        "ADR-484 search",
+        "ADR-491 search",
         width,
         height,
+        scroll_offset,
     );
     if !store_connected {
-        return vec![(
-            v2_named_rect(&tree, "search.offline", "ADR-484 search"),
-            DataRow::new("Нет связи", DataRowVariant::Static),
-        )];
+        return saai_ui_compiler::layout_v1_find(&tree, "search.offline")
+            .map(|node| {
+                vec![(
+                    node.rect,
+                    DataRow::new("Нет связи", DataRowVariant::Static),
+                )]
+            })
+            .unwrap_or_default();
     }
     let rows = search_rows(entities);
     if rows.is_empty() {
-        return vec![(
-            v2_named_rect(&tree, "search.empty", "ADR-484 search"),
-            DataRow::new("Нет объектов", DataRowVariant::Static),
-        )];
+        return saai_ui_compiler::layout_v1_find(&tree, "search.empty")
+            .map(|node| {
+                vec![(
+                    node.rect,
+                    DataRow::new("Нет объектов", DataRowVariant::Static),
+                )]
+            })
+            .unwrap_or_default();
     }
     rows.into_iter()
         .enumerate()
-        .map(|(index, entity)| {
+        .filter_map(|(index, entity)| {
             let loc = format!("search.item.{index}");
-            (
-                v2_named_rect(&tree, &loc, "ADR-484 search"),
-                DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
-                    .with_secondary(search_kind_label(entity).to_string())
-                    .with_action(loc),
-            )
+            saai_ui_compiler::layout_v1_find(&tree, &loc).map(|node| {
+                (
+                    node.rect,
+                    DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
+                        .with_secondary(search_kind_label(entity).to_string())
+                        .with_action(loc),
+                )
+            })
         })
         .collect()
 }
@@ -9667,6 +9728,7 @@ fn main() {
         object_scroll_offset: 0,
         now_scroll_offset: 0,
         space_scroll_offset: 0,
+        search_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -10033,6 +10095,9 @@ struct Shell {
     /// docked Назад stay at offset 0 (ADR-489). Reset when detail
     /// opens or closes.
     space_scroll_offset: i32,
+    /// Vertical drag-to-scroll for Search results. Header and tabs
+    /// stay at offset 0 (ADR-491). Reset when leaving Search.
+    search_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10533,6 +10598,12 @@ impl TouchHandler for Shell {
         {
             Some((position.1, self.space_scroll_offset))
         } else if self.tab_touch_pending
+            && self.current_page == RootPage::Search
+            && !self.any_modal_open()
+            && search_scroll_content(self.width, self.height).contains(position.0, position.1)
+        {
+            Some((position.1, self.search_scroll_offset))
+        } else if self.tab_touch_pending
             && self.current_page == RootPage::Me
             && !self.any_modal_open()
             && root_view(self.width, self.height).children[0]
@@ -10925,6 +10996,7 @@ impl TouchHandler for Shell {
                     self.current_page = page;
                     self.apps_open = false;
                     self.set_space_detail_open(false);
+                    self.search_scroll_offset = 0;
                     self.draw(conn, qh);
                 } else if page == RootPage::Now && self.apps_open {
                     // VUI-03 (ADR-113): re-tapping the already-selected
@@ -10960,12 +11032,13 @@ impl TouchHandler for Shell {
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Search {
-                if let Some(id) = search_row_at(
+                if let Some(id) = search_row_at_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     &self.selected_entities,
                     self.entityd.is_connected(),
+                    self.search_scroll_offset,
                 ) {
                     self.set_viewing_entity_id(Some(id));
                     self.draw(conn, qh);
@@ -11185,6 +11258,13 @@ impl TouchHandler for Shell {
                 let clamped = new_offset.clamp(0, max_offset);
                 if clamped != self.space_scroll_offset {
                     self.space_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
+            } else if self.current_page == RootPage::Search && !self.dev_surface_open {
+                let max_offset = self.search_live_scroll_max();
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.search_scroll_offset {
+                    self.search_scroll_offset = clamped;
                     self.me_scroll_dirty = true;
                 }
             } else {
@@ -11975,7 +12055,13 @@ impl Shell {
                 ),
                 header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                 rows: Vec::new(),
-                items: search_paint_rows(&self.selected_entities, connected, width, height),
+                items: search_paint_rows_scrolled(
+                    &self.selected_entities,
+                    connected,
+                    width,
+                    height,
+                    self.search_scroll_offset,
+                ),
             }
         } else if self.current_page == RootPage::Spaces {
             let connected = self.entityd.is_connected();
@@ -14013,6 +14099,15 @@ impl Shell {
 
     fn space_detail_live_scroll_max(&self) -> i32 {
         space_detail_scroll_max(
+            &self.selected_entities,
+            self.entityd.is_connected(),
+            self.width,
+            self.height,
+        )
+    }
+
+    fn search_live_scroll_max(&self) -> i32 {
+        search_scroll_max(
             &self.selected_entities,
             self.entityd.is_connected(),
             self.width,
@@ -16337,6 +16432,63 @@ mod tests {
         let offline = search_paint_rows(&[intent], false, 1080, 2400);
         assert_eq!(offline[0].1.primary, "Нет связи");
         assert!(!offline[0].1.is_actionable());
+    }
+
+    #[test]
+    fn search_overflow_rows_scroll_above_the_tab_strip() {
+        let entities: Vec<_> = (0..12)
+            .map(|index| intent_entity(&format!("Находка {index:02}")))
+            .collect();
+        let ranked = super::search_rows(&entities);
+        let last = ranked.last().expect("12");
+        let last_id = last.id;
+        let last_title = last.title.clone();
+        let max = super::search_scroll_max(&entities, true, 1080, 2400);
+        assert!(max > 0, "12 search rows must cross the tab strip");
+        let tree = super::layout_live_v2(
+            &super::search_v2_source(&entities, true),
+            "ADR-491 search overflow",
+            1080,
+            2400,
+        );
+        let header = super::v2_named_rect(&tree, "ContextHeader", "search header");
+        assert!(saai_ui_compiler::layout_v1_find(&tree, "search.item.11").is_none());
+        let last_slot = stacked_row_rect(11, 1080, 2400);
+        let last_point = (
+            (last_slot.x + last_slot.width / 2) as f64,
+            (last_slot.y + last_slot.height / 2) as f64,
+        );
+        assert!(search_row_at(last_point, 1080, 2400, &entities, true).is_none());
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::search_v2_source(&entities, true),
+            "ADR-491 search overflow",
+            1080,
+            2400,
+            max,
+        );
+        let found = saai_ui_compiler::layout_v1_find(&scrolled, "search.item.11")
+            .expect("scrolled last search");
+        let content = super::root_content_rect(1080, 2400);
+        assert!(found.rect.y + found.rect.height <= content.y + content.height);
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "ContextHeader", "search header scrolled"),
+            header
+        );
+        let hit = (
+            (found.rect.x + found.rect.width / 2) as f64,
+            (found.rect.y + 8) as f64,
+        );
+        assert_eq!(
+            super::search_row_at_scrolled(hit, 1080, 2400, &entities, true, max),
+            Some(last_id)
+        );
+        let painted = super::search_paint_rows_scrolled(&entities, true, 1080, 2400, max);
+        assert!(painted
+            .iter()
+            .any(|(rect, row)| row.primary == last_title && *rect == found.rect));
+        assert!(search_paint_rows(&entities, true, 1080, 2400)
+            .iter()
+            .all(|(_, row)| row.primary != last_title));
     }
 
     #[test]

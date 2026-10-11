@@ -58,7 +58,9 @@ labelled Search sample: `ContextHeader`, `DataRow` with
 heading matches Inbox stacked top (ADR-458). The Button row
 matches `stacked_row_rect`; action is interned `loc`
 `search.item`. Live Search uses `search.item.{i}` (ADR-484); this
-example does not name the index. Status `DataRow` invents no
+example does not name the index. Live overflow results scroll
+above the tab strip (ADR-491); this example does not name the
+offset. Status `DataRow` invents no
 action. Inbox remains
 a surface opened from Orb, not a primary tab.
 

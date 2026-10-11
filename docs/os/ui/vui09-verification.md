@@ -144,6 +144,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   NOW overflow rows scroll above the pinned footer (ADR-488).
   Space overflow members scroll above pinned Назад (ADR-489).
   Object View hides workers/queue without an Action (ADR-490).
+  Search overflow results scroll above the tab strip (ADR-491).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
