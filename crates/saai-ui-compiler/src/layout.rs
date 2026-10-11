@@ -232,14 +232,19 @@ fn v2_is_trailing_row(id: &str) -> bool {
 
 /// Live `me_action_at` uses `scrolled_row_rect` at offset 0: a stacked
 /// row that does not sit wholly inside the content pane (above tabs)
-/// is neither drawn nor hittable. Inbox EventRows honor the same clip
-/// (ADR-492). Space list SpaceRows stay unclipped until that slice.
+/// is neither drawn nor hittable. Inbox EventRows and Space list
+/// SpaceRows honor the same clip (ADR-492/493).
 fn v2_me_scroll_clip(screen: &SuiV2Screen) -> bool {
     !v2_named_tabs(screen).is_empty()
         && screen.components.iter().any(|component| {
             matches!(
                 component.type_name.as_str(),
-                "SystemSection" | "SettingRow" | "DataRow" | "CapabilityRow" | "EventRow"
+                "SystemSection"
+                    | "SettingRow"
+                    | "DataRow"
+                    | "CapabilityRow"
+                    | "EventRow"
+                    | "SpaceRow"
             )
         })
 }
@@ -1489,6 +1494,52 @@ mod tests {
         assert!(layout_v1_find(&rest, "inbox.0").is_some());
         let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 1200);
         assert!(layout_v1_find(&scrolled, "inbox.11").is_some());
+        let header = layout_v1_find(&rest, "ContextHeader").expect("header");
+        let header_scrolled = layout_v1_find(&scrolled, "ContextHeader").expect("header scrolled");
+        assert_eq!(header_scrolled.rect, header.rect);
+    }
+
+    #[test]
+    fn layout_v2_spaces_list_overflow_rows_scroll_above_tabs() {
+        let mut src = String::from(
+            r#"
+            sui 2
+            screen spaces {
+              component ContextHeader {
+                text = Title
+                a11y = Heading
+                loc = spaces.header
+                focus = 0
+                inset = safe
+              }
+            "#,
+        );
+        for index in 0..12 {
+            src.push_str(&format!(
+                "              component SpaceRow {{\n                text = Body\n                a11y = Button\n                loc = space{index:02}\n              }}\n"
+            ));
+        }
+        src.push_str(
+            r#"
+              component BottomNavigation {
+                a11y = Button
+                focus = 1
+                scroll = none
+                inset = safe
+                tab now { loc = now }
+                tab spaces { loc = spaces }
+                tab search { loc = search }
+                tab me { loc = me }
+              }
+            }
+            "#,
+        );
+        let screen = compile_v2(&src).expect("spaces list overflow");
+        let rest = layout_v2(&screen, 1080, 2400);
+        assert!(layout_v1_find(&rest, "space11").is_none());
+        assert!(layout_v1_find(&rest, "space00").is_some());
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 1200);
+        assert!(layout_v1_find(&scrolled, "space11").is_some());
         let header = layout_v1_find(&rest, "ContextHeader").expect("header");
         let header_scrolled = layout_v1_find(&scrolled, "ContextHeader").expect("header scrolled");
         assert_eq!(header_scrolled.rect, header.rect);

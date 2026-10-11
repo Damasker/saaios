@@ -1497,6 +1497,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Still Experimental. Not Visual v1 sign-off.
 - [x] Inbox overflow EventRows scroll above the tab strip (ADR-492).
   Still Experimental. Not Visual v1 sign-off.
+- [x] Space switcher overflow scrolls above the tab strip (ADR-493).
+  Still Experimental. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1608,8 +1610,8 @@ After each completed task group, report:
 
 ## Next action
 
-VUI-09 concept-board chrome is open (ADR-470). Inbox overflow
-scrolls above the tab strip (ADR-492). Keyboard keys,
+VUI-09 concept-board chrome is open (ADR-470). Space switcher
+overflow scrolls above the tab strip (ADR-493). Keyboard keys,
 gallery page, and lock idle/wake stay formulas until a board
 names them. Public subset stays Experimental. Acceptance stays
 unchecked until panther evidence. Do not fake weather / voice /

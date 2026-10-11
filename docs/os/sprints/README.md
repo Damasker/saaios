@@ -166,6 +166,7 @@ ADR-489 Space overflow members scroll above pinned Назад.
 ADR-490 Object View hides workers/queue without an Action.
 ADR-491 Search overflow results scroll above the tab strip.
 ADR-492 Inbox overflow EventRows scroll above the tab strip.
+ADR-493 Space switcher overflow scrolls above the tab strip.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

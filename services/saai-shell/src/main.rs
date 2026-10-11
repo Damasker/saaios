@@ -7522,6 +7522,23 @@ fn spaces_v2_source(spaces: &[Space], store_connected: bool) -> String {
     src
 }
 
+fn spaces_list_stacked_count(spaces: &[Space], store_connected: bool) -> usize {
+    if !store_connected || spaces.is_empty() {
+        1
+    } else {
+        spaces.len()
+    }
+}
+
+fn spaces_list_scroll_max(spaces: &[Space], store_connected: bool, width: u32, height: u32) -> i32 {
+    me_max_scroll_offset(
+        spaces_list_stacked_count(spaces, store_connected),
+        width,
+        height,
+        search_scroll_content(width, height),
+    )
+}
+
 fn space_row_at(
     pos: (f64, f64),
     width: u32,
@@ -7529,15 +7546,27 @@ fn space_row_at(
     spaces: &[Space],
     store_connected: bool,
 ) -> Option<String> {
+    space_row_at_scrolled(pos, width, height, spaces, store_connected, 0)
+}
+
+fn space_row_at_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    spaces: &[Space],
+    store_connected: bool,
+    scroll_offset: i32,
+) -> Option<String> {
     if !store_connected {
         return None;
     }
-    let (_, action) = live_v2_hit(
+    let (_, action) = live_v2_hit_scrolled(
         &spaces_v2_source(spaces, true),
-        "ADR-218 spaces",
+        "ADR-493 spaces list",
         pos,
         width,
         height,
+        scroll_offset,
     )?;
     action
         .as_deref()
@@ -9763,6 +9792,7 @@ fn main() {
         space_scroll_offset: 0,
         search_scroll_offset: 0,
         inbox_scroll_offset: 0,
+        spaces_list_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -10135,6 +10165,9 @@ struct Shell {
     /// Vertical drag-to-scroll for Inbox EventRows. Header and tabs
     /// stay at offset 0 (ADR-492). Reset when leaving Inbox.
     inbox_scroll_offset: i32,
+    /// Vertical drag-to-scroll for the Space switcher. Header and tabs
+    /// stay at offset 0 (ADR-493). Reset when leaving the list.
+    spaces_list_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10635,6 +10668,13 @@ impl TouchHandler for Shell {
         {
             Some((position.1, self.space_scroll_offset))
         } else if self.tab_touch_pending
+            && self.current_page == RootPage::Spaces
+            && !self.space_detail_open
+            && !self.any_modal_open()
+            && search_scroll_content(self.width, self.height).contains(position.0, position.1)
+        {
+            Some((position.1, self.spaces_list_scroll_offset))
+        } else if self.tab_touch_pending
             && self.current_page == RootPage::Search
             && !self.any_modal_open()
             && search_scroll_content(self.width, self.height).contains(position.0, position.1)
@@ -11041,6 +11081,7 @@ impl TouchHandler for Shell {
                     self.set_space_detail_open(false);
                     self.search_scroll_offset = 0;
                     self.inbox_scroll_offset = 0;
+                    self.spaces_list_scroll_offset = 0;
                     self.draw(conn, qh);
                 } else if page == RootPage::Now && self.apps_open {
                     // VUI-03 (ADR-113): re-tapping the already-selected
@@ -11108,12 +11149,13 @@ impl TouchHandler for Shell {
                         }
                         None => {}
                     }
-                } else if let Some(space_id) = space_row_at(
+                } else if let Some(space_id) = space_row_at_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     &self.spaces,
                     self.entityd.is_connected(),
+                    self.spaces_list_scroll_offset,
                 ) {
                     self.invoke_select_space(&space_id);
                     self.draw(conn, qh);
@@ -11317,6 +11359,16 @@ impl TouchHandler for Shell {
                 let clamped = new_offset.clamp(0, max_offset);
                 if clamped != self.inbox_scroll_offset {
                     self.inbox_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
+            } else if self.current_page == RootPage::Spaces
+                && !self.space_detail_open
+                && !self.dev_surface_open
+            {
+                let max_offset = self.spaces_list_live_scroll_max();
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.spaces_list_scroll_offset {
+                    self.spaces_list_scroll_offset = clamped;
                     self.me_scroll_dirty = true;
                 }
             } else {
@@ -12167,7 +12219,7 @@ impl Shell {
                         archived,
                     ),
                     header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
-                    rows: self.spaces_content_cards_from(&view),
+                    rows: self.spaces_content_cards_scrolled(self.spaces_list_scroll_offset),
                     focus: None,
                     members: Vec::new(),
                 }
@@ -13791,8 +13843,18 @@ impl Shell {
             .collect()
     }
 
-    fn spaces_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
+    fn spaces_content_cards_scrolled(
+        &self,
+        scroll_offset: i32,
+    ) -> Vec<(Rect, render::ActionCardView)> {
         let connected = self.entityd.is_connected();
+        let tree = layout_live_v2_scrolled(
+            &spaces_v2_source(&self.spaces, connected),
+            "ADR-493 spaces list paint",
+            self.width,
+            self.height,
+            scroll_offset,
+        );
         let rows = space_list_rows(
             &self.spaces,
             &self.selected_space_id,
@@ -13807,12 +13869,13 @@ impl Shell {
         } else {
             self.spaces.iter().map(|space| space.id.clone()).collect()
         };
-        list_paint_cards(
-            tree,
-            "ADR-226 spaces paint",
-            rows.iter().map(space_card_from_row).collect(),
-            &ids,
-        )
+        rows.into_iter()
+            .zip(ids)
+            .filter_map(|(row, id)| {
+                saai_ui_compiler::layout_v1_find(&tree, &id)
+                    .map(|node| (node.rect, space_card_from_row(&row)))
+            })
+            .collect()
     }
 
     fn space_detail_content_cards_from(
@@ -14182,6 +14245,15 @@ impl Shell {
     fn inbox_live_scroll_max(&self) -> i32 {
         inbox_scroll_max(
             &self.selected_entities,
+            self.entityd.is_connected(),
+            self.width,
+            self.height,
+        )
+    }
+
+    fn spaces_list_live_scroll_max(&self) -> i32 {
+        spaces_list_scroll_max(
+            &self.spaces,
             self.entityd.is_connected(),
             self.width,
             self.height,
@@ -21274,6 +21346,53 @@ mod tests {
         assert_eq!(
             space_row_at(point, 1080, 2400, &spaces, true).as_deref(),
             Some("home")
+        );
+    }
+
+    #[test]
+    fn spaces_list_overflow_rows_scroll_above_the_tab_strip() {
+        let spaces: Vec<_> = (0..12)
+            .map(|index| test_space(&format!("space{index:02}"), &format!("Место {index:02}")))
+            .collect();
+        let last_id = spaces[11].id.clone();
+        let max = super::spaces_list_scroll_max(&spaces, true, 1080, 2400);
+        assert!(max > 0, "12 spaces must cross the tab strip");
+        let tree = super::layout_live_v2(
+            &super::spaces_v2_source(&spaces, true),
+            "ADR-493 spaces list overflow",
+            1080,
+            2400,
+        );
+        let header = super::v2_named_rect(&tree, "ContextHeader", "spaces header");
+        assert!(saai_ui_compiler::layout_v1_find(&tree, "space11").is_none());
+        let last_slot = stacked_row_rect(11, 1080, 2400);
+        let last_point = (
+            (last_slot.x + last_slot.width / 2) as f64,
+            (last_slot.y + last_slot.height / 2) as f64,
+        );
+        assert!(space_row_at(last_point, 1080, 2400, &spaces, true).is_none());
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::spaces_v2_source(&spaces, true),
+            "ADR-493 spaces list overflow",
+            1080,
+            2400,
+            max,
+        );
+        let found = saai_ui_compiler::layout_v1_find(&scrolled, "space11")
+            .expect("scrolled last space");
+        let content = super::root_content_rect(1080, 2400);
+        assert!(found.rect.y + found.rect.height <= content.y + content.height);
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "ContextHeader", "spaces header scrolled"),
+            header
+        );
+        let hit = (
+            (found.rect.x + found.rect.width / 2) as f64,
+            (found.rect.y + 8) as f64,
+        );
+        assert_eq!(
+            super::space_row_at_scrolled(hit, 1080, 2400, &spaces, true, max).as_deref(),
+            Some(last_id.as_str())
         );
     }
 
