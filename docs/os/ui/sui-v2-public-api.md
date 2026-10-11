@@ -113,7 +113,8 @@ matches the Field margin. The Field fills to the panel bottom.
 [`examples/apps-public.sui`](examples/apps-public.sui) is the
 labelled apps sample: `ContextHeader`, Status `SurfacePattern`
 (ADR-437), and the same nested tabs. Status invents no tile.
-Empty docks below the header.
+Empty docks below the header. Live overflow tiles scroll above
+the tab strip (ADR-498); this example does not name the offset.
 
 [`examples/wifi-password-public.sui`](examples/wifi-password-public.sui)
 is the labelled Wi-Fi password sample: `ContextHeader` plus a Status

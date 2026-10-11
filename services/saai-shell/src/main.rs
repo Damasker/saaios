@@ -4827,7 +4827,9 @@ fn list_paint_cards(
     cards
         .into_iter()
         .zip(ids)
-        .map(|(card, id)| (v2_named_rect(tree, id, why), card))
+        .filter_map(|(card, id)| {
+            saai_ui_compiler::layout_v1_find(tree, id).map(|node| (node.rect, card))
+        })
         .collect()
 }
 
@@ -4858,20 +4860,22 @@ fn apps_paint_cards(
     apps: &BTreeMap<String, AppSummary>,
 ) -> Vec<(Rect, render::ActionCardView)> {
     apps.values()
-        .map(|app| {
+        .filter_map(|app| {
             let id = format!("manage_app:{}", app.id);
-            (
-                v2_named_rect(tree, &id, "ADR-228 apps paint"),
-                render::ActionCardView::new(
-                    app.name.clone(),
-                    app_state_label(&app.state),
-                    if app.state == "running" {
-                        "Работает"
-                    } else {
-                        "Запустить"
-                    },
-                ),
-            )
+            saai_ui_compiler::layout_v1_find(tree, &id).map(|node| {
+                (
+                    node.rect,
+                    render::ActionCardView::new(
+                        app.name.clone(),
+                        app_state_label(&app.state),
+                        if app.state == "running" {
+                            "Работает"
+                        } else {
+                            "Запустить"
+                        },
+                    ),
+                )
+            })
         })
         .collect()
 }
@@ -7947,18 +7951,47 @@ fn space_detail_empty_card(store_connected: bool) -> render::ActionCardView {
 /// `installed_apps`. Intent compose stays on the composed footer,
 /// not as extra tiles. Hits come from generated `compile_v2()`
 /// `Button` tiles from generated `layout_v2`.
+fn apps_grid_scroll_content(width: u32, height: u32) -> Rect {
+    let first = saai_ui_compiler::v2_grid_rect(0, width, height);
+    let content = root_content_rect(width, height);
+    let floor = content.y.saturating_add(content.height);
+    Rect::new(0, first.y, width, floor.saturating_sub(first.y))
+}
+
+fn apps_grid_scroll_max(app_count: usize, width: u32, height: u32) -> i32 {
+    if app_count == 0 {
+        return 0;
+    }
+    let last = saai_ui_compiler::v2_grid_rect(app_count - 1, width, height);
+    let content = apps_grid_scroll_content(width, height);
+    let last_bottom = last.y.saturating_add(last.height) as i32;
+    let floor = content.y.saturating_add(content.height) as i32;
+    (last_bottom - floor).max(0)
+}
+
 fn now_action_at(
     pos: (f64, f64),
     width: u32,
     height: u32,
     installed_apps: &BTreeMap<String, AppSummary>,
 ) -> Option<String> {
-    let (_, action) = live_v2_hit(
+    now_action_at_scrolled(pos, width, height, installed_apps, 0)
+}
+
+fn now_action_at_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    installed_apps: &BTreeMap<String, AppSummary>,
+    scroll_offset: i32,
+) -> Option<String> {
+    let (_, action) = live_v2_hit_scrolled(
         &apps_v2_source(installed_apps),
         "ADR-220 apps",
         pos,
         width,
         height,
+        scroll_offset,
     )?;
     action.filter(|value| value.starts_with("manage_app:"))
 }
@@ -9909,6 +9942,7 @@ fn main() {
         wifi_scroll_offset: 0,
         bluetooth_scroll_offset: 0,
         trusted_scroll_offset: 0,
+        apps_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -10296,6 +10330,9 @@ struct Shell {
     /// stay at offset 0 (ADR-497). Reset when the list opens or
     /// closes.
     trusted_scroll_offset: i32,
+    /// Vertical drag-to-scroll for the apps grid. Header and tabs stay
+    /// at offset 0 (ADR-498). Reset when the grid opens or closes.
+    apps_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10810,6 +10847,13 @@ impl TouchHandler for Shell {
             Some((position.1, self.object_scroll_offset))
         } else if self.tab_touch_pending
             && self.current_page == RootPage::Now
+            && self.apps_open
+            && !self.any_modal_open()
+            && apps_grid_scroll_content(self.width, self.height).contains(position.0, position.1)
+        {
+            Some((position.1, self.apps_scroll_offset))
+        } else if self.tab_touch_pending
+            && self.current_page == RootPage::Now
             && !self.apps_open
             && !self.any_modal_open()
             && now_scroll_content(self.width, self.height).contains(position.0, position.1)
@@ -11247,6 +11291,7 @@ impl TouchHandler for Shell {
                     println!("saai-shell: switched to {page:?}");
                     self.current_page = page;
                     self.apps_open = false;
+                    self.apps_scroll_offset = 0;
                     self.set_space_detail_open(false);
                     self.search_scroll_offset = 0;
                     self.inbox_scroll_offset = 0;
@@ -11259,6 +11304,7 @@ impl TouchHandler for Shell {
                     // now doing something the first time it's pressed
                     // while the grid is open over the composed screen.
                     self.apps_open = false;
+                    self.apps_scroll_offset = 0;
                     self.draw(conn, qh);
                 } else if page == RootPage::Spaces && self.space_detail_open {
                     self.set_space_detail_open(false);
@@ -11428,6 +11474,7 @@ impl TouchHandler for Shell {
                     now_footer_action_at(self.last_touch_pos, self.width, self.height)
                 {
                     if action == NOW_FOOTER_OPEN_APPS_ACTION {
+                        self.apps_scroll_offset = 0;
                         self.apps_open = true;
                         self.draw(conn, qh);
                     } else if action == "open_intent_input" {
@@ -11442,11 +11489,12 @@ impl TouchHandler for Shell {
                 // once "Приложения" has opened the grid
                 // (`self.apps_open`) over the composed screen -- same
                 // grid, same handling either way.
-                if let Some(action_str) = now_action_at(
+                if let Some(action_str) = now_action_at_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     &self.installed_apps,
+                    self.apps_scroll_offset,
                 ) {
                     if let Some(app_id) = action_str.strip_prefix("manage_app:") {
                         let app_id = app_id.to_string();
@@ -11529,6 +11577,17 @@ impl TouchHandler for Shell {
                 let clamped = new_offset.clamp(0, max_offset);
                 if clamped != self.object_scroll_offset {
                     self.object_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
+            } else if self.current_page == RootPage::Now
+                && self.apps_open
+                && !self.dev_surface_open
+            {
+                let max_offset =
+                    apps_grid_scroll_max(self.installed_apps.len(), self.width, self.height);
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.apps_scroll_offset {
+                    self.apps_scroll_offset = clamped;
                     self.me_scroll_dirty = true;
                 }
             } else if self.current_page == RootPage::Now
@@ -12311,11 +12370,12 @@ impl Shell {
                 footer_actions: now_footer_action_views_from(&view),
             }
         } else if self.current_page == RootPage::Now && self.apps_open {
-            let view = layout_live_v2(
+            let view = layout_live_v2_scrolled(
                 &apps_v2_source(&self.installed_apps),
                 "ADR-228 apps paint",
                 width,
                 height,
+                self.apps_scroll_offset,
             );
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
@@ -17224,6 +17284,62 @@ mod tests {
         assert!(cell_1.x < cell_2.x);
         assert_eq!(cell_3.x, cell_0.x);
         assert!(cell_3.y > cell_0.y);
+    }
+
+    #[test]
+    fn apps_overflow_tiles_scroll_above_the_tab_strip() {
+        let width = 1080;
+        let height = 2400;
+        let mut apps = std::collections::BTreeMap::new();
+        for index in 0..18 {
+            let id = format!("app{index:02}");
+            apps.insert(id.clone(), test_app(&id, &format!("Приложение {index:02}")));
+        }
+        let max = super::apps_grid_scroll_max(apps.len(), width, height);
+        assert!(max > 0, "18 app tiles must cross the tab strip");
+        let tree = super::layout_live_v2(
+            &super::apps_v2_source(&apps),
+            "ADR-498 apps overflow",
+            width,
+            height,
+        );
+        let header = super::v2_named_rect(&tree, "ContextHeader", "apps header");
+        assert!(saai_ui_compiler::layout_v1_find(&tree, "manage_app:app17").is_none());
+        let last_slot = saai_ui_compiler::v2_grid_rect(17, width, height);
+        let last_point = (
+            (last_slot.x + last_slot.width / 2) as f64,
+            (last_slot.y + last_slot.height / 2) as f64,
+        );
+        assert!(now_action_at(last_point, width, height, &apps).is_none());
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::apps_v2_source(&apps),
+            "ADR-498 apps overflow",
+            width,
+            height,
+            max,
+        );
+        let found = saai_ui_compiler::layout_v1_find(&scrolled, "manage_app:app17")
+            .expect("scrolled last app");
+        let content = super::root_content_rect(width, height);
+        assert!(found.rect.y >= header.y + header.height);
+        assert!(found.rect.y + found.rect.height <= content.y + content.height);
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "ContextHeader", "apps header scrolled"),
+            header
+        );
+        let hit = (
+            (found.rect.x + found.rect.width / 2) as f64,
+            (found.rect.y + 8) as f64,
+        );
+        assert_eq!(
+            super::now_action_at_scrolled(hit, width, height, &apps, max),
+            Some("manage_app:app17".to_string())
+        );
+        let painted = super::apps_paint_cards(&scrolled, &apps);
+        assert!(painted.iter().any(|(rect, _)| *rect == found.rect));
+        assert!(super::apps_paint_cards(&tree, &apps)
+            .iter()
+            .all(|(rect, _)| *rect != found.rect));
     }
 
     #[test]

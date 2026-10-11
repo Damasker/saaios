@@ -309,7 +309,7 @@ const V2_GRID_TOP_2400: u32 = 430;
 
 /// Live `now_grid_rect`: 3 columns, design-canvas tops scaled by panel
 /// height. Column gap is `margin / 2`, same as the shell paint formula.
-fn v2_grid_rect(index: usize, width: u32, height: u32) -> Rect {
+pub fn v2_grid_rect(index: usize, width: u32, height: u32) -> Rect {
     let margin = width / 22;
     let columns = V2_GRID_COLUMNS;
     let gap = margin / 2;
@@ -335,9 +335,11 @@ fn v2_placed_grid_slot(
     action: Option<String>,
     panel_width: u32,
     panel_height: u32,
+    top: u32,
 ) -> Node {
     let margin = panel_width / 22;
-    let rect = v2_grid_rect(index, panel_width, panel_height);
+    let mut rect = v2_grid_rect(index, panel_width, panel_height);
+    rect.y = top;
     let inner_x = rect.x.saturating_sub(margin);
     let y_spacer = Node::leaf(format!("{screen_id}-grid-y-{index}"))
         .with_size(Length::Fill, Length::Px(rect.y));
@@ -892,7 +894,12 @@ fn v2_content_node(
     let stacked_height = v2_stacked_row_height(height);
     let clip_to_content = v2_me_scroll_clip(screen);
     let clip_to_first_slot = v2_diagnostic_scroll_clip(screen);
-    let scroll = if clip_to_content || clip_to_first_slot || trailing_first_top.is_some() {
+    let clip_grid = !grid.is_empty() && !v2_named_tabs(screen).is_empty();
+    let scroll = if clip_to_content
+        || clip_to_first_slot
+        || trailing_first_top.is_some()
+        || clip_grid
+    {
         scroll_offset.max(0)
     } else {
         0
@@ -972,12 +979,26 @@ fn v2_content_node(
             ));
         }
     }
+    let grid_min_top = if grid.is_empty() {
+        0
+    } else {
+        v2_grid_rect(0, width, height).y
+    };
     for (index, tile) in grid.iter().enumerate() {
         let id = tile
             .props
             .loc
             .clone()
             .unwrap_or_else(|| format!("Button-{index}"));
+        let base = v2_grid_rect(index, width, height).y as i64 - i64::from(scroll);
+        if clip_grid && base < i64::from(grid_min_top) {
+            continue;
+        }
+        let top = base.max(0) as u32;
+        let cell_height = v2_grid_rect(index, width, height).height;
+        if clip_grid && top.saturating_add(cell_height) > content_height {
+            continue;
+        }
         layers.push(v2_placed_grid_slot(
             &screen.id,
             index,
@@ -985,6 +1006,7 @@ fn v2_content_node(
             v2_grid_action(tile),
             width,
             height,
+            top,
         ));
     }
     for component in rest {
@@ -1986,6 +2008,59 @@ mod tests {
         assert_eq!(pattern.rect.width, 982);
         assert!(pattern.rect.height > 0);
         assert!(pattern.action.is_none());
+    }
+
+    #[test]
+    fn layout_v2_apps_overflow_tiles_scroll_above_tabs() {
+        let mut src = String::from(
+            r#"
+            sui 2
+            screen apps {
+              component ContextHeader {
+                text = Title
+                a11y = Heading
+                loc = apps.header
+              }
+            "#,
+        );
+        for index in 0..18 {
+            src.push_str(&format!(
+                "              component Button {{\n                a11y = Button\n                loc = \"manage_app:app{index:02}\"\n              }}\n"
+            ));
+        }
+        src.push_str(
+            r#"
+              component BottomNavigation {
+                tab now {}
+                tab inbox {}
+                tab spaces {}
+                tab me {}
+              }
+            }
+            "#,
+        );
+        let screen = compile_v2(&src).expect("apps overflow");
+        let rest = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&rest, "ContextHeader").expect("header");
+        let tabs = layout_v1_find(&rest, "BottomNavigation").expect("tabs");
+        assert!(layout_v1_find(&rest, "manage_app:app00").is_some());
+        assert!(layout_v1_find(&rest, "manage_app:app17").is_none());
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 400);
+        let found = layout_v1_find(&scrolled, "manage_app:app17").expect("scrolled last");
+        assert!(found.rect.y >= header.rect.y + header.rect.height);
+        assert!(found.rect.y + found.rect.height <= tabs.rect.y);
+        assert_eq!(
+            layout_v1_find(&scrolled, "ContextHeader")
+                .expect("header scrolled")
+                .rect,
+            header.rect
+        );
+        assert_eq!(
+            layout_v1_find(&scrolled, "BottomNavigation")
+                .expect("tabs scrolled")
+                .rect,
+            tabs.rect
+        );
     }
 
     #[test]

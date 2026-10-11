@@ -268,6 +268,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 wifi overflow scroll | Wi-Fi networks scroll above pinned Обновить **host** (ADR-495; Experimental; leave Сейчас) |
 | VUI-09 bluetooth overflow scroll | Bluetooth devices scroll above pinned Искать **host** (ADR-496; Experimental; leave Сейчас) |
 | VUI-09 trusted overflow scroll | trusted clients scroll above pinned Назад **host** (ADR-497; Experimental; leave Сейчас) |
+| VUI-09 apps overflow scroll | apps grid tiles scroll above the tab strip **host** (ADR-498; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

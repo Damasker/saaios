@@ -19,7 +19,7 @@ mod vocabulary;
 
 pub use layout::{
     layout_v1_find, layout_v1_root, layout_v2, layout_v2_scrolled, v1_root_node,
-    v1_tab_strip_height, v2_orb_dot_size, v2_orb_zone_rect, v2_root_node,
+    v1_tab_strip_height, v2_grid_rect, v2_orb_dot_size, v2_orb_zone_rect, v2_root_node,
 };
 pub use rollback::{compile_v1_rollback, V1_ROLLBACK_SOURCE};
 pub use vocabulary::{
