@@ -78,7 +78,12 @@ chrome reopened (ADR-470). Object related is a Button
 (ADR-471). Object related is one Button per SOM peer
 (ADR-472). Intent plan steps are live Task Buttons
 (ADR-473). NOW attention rows are live projection Buttons
-(ADR-474). NOW locality weather is a live Button (ADR-476). Public
+(ADR-474). NOW locality weather is a live Button (ADR-476).
+Object OAM quick actions and composer mic are host (ADR-477).
+NOW current task rows are live running Buttons (ADR-478).
+NOW next-action rows are live `now.next.{i}` Buttons (ADR-479).
+Space focus is a live `spaces.focus` Button (ADR-480).
+Система Android VM / notebook are Status Unavailable (ADR-481). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`

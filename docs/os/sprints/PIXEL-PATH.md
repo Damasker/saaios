@@ -247,6 +247,11 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 now attention rows | live `now.attention.{i}` Buttons; empty caption among other work **host** (ADR-474; Experimental; leave Сейчас) |
 | Locality weather telemetry | Open-Meteo `locality.weather.*` + query lat/lon; five attempts then reason; tap retries **host** (ADR-475; Experimental; leave Сейчас) |
 | VUI-09 now weather row | live `now.weather` Button; same status line as Местность **host** (ADR-476; Experimental; leave Сейчас) |
+| VUI-09 object OAM + mic | `object.action.{i}` from live OAM; composer help «Голос недоступен» **host** (ADR-477; Experimental; leave Сейчас) |
+| VUI-09 now current tasks | live `now.task.{i}` Buttons; empty caption among other work **host** (ADR-478; Experimental; leave Сейчас) |
+| VUI-09 now next action | live `now.next.{i}` Buttons; empty caption among other work **host** (ADR-479; Experimental; leave Сейчас) |
+| VUI-09 space focus task | live `spaces.focus` Button when in-space work is running **host** (ADR-480; Experimental; leave Сейчас) |
+| VUI-09 system runtimes | Android VM / notebook Status «Недоступно · нет среды» **host** (ADR-481; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

@@ -1456,8 +1456,21 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   stays AskUser. Compose `intent-public.sui` stays header+Field.
   Still Experimental. Not Visual v1 sign-off.
 - [x] NOW attention rows are live projection Buttons (ADR-474).
+- [x] Locality weather is Open-Meteo telemetry on Система and Сейчас
+      (ADR-475/476).
+- [x] Object OAM quick actions and composer mic disabled (ADR-477).
+- [x] NOW current task rows are live running Buttons (ADR-478).
   Empty caption only among other work. `now.empty` leftover stays.
   Still Experimental. Not Visual v1 sign-off.
+- [x] NOW next-action rows are live `now.next.{i}` Buttons (ADR-479).
+  Empty caption only among other work. Still Experimental. Not
+  Visual v1 sign-off.
+- [x] Space focus is a live `spaces.focus` Button (ADR-480). Omit
+  when no in-space running Task. Still Experimental. Not Visual
+  v1 sign-off.
+- [x] Система Android VM / notebook are Status Unavailable
+  (ADR-481). Never Ready. Still Experimental. Not Visual v1
+  sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1569,11 +1582,10 @@ After each completed task group, report:
 
 ## Next action
 
-VUI-09 concept-board chrome is open (ADR-470). Next named board
-regions: Object quick actions that already exist in OAM, composer
-mic disabled. Locality weather is Open-Meteo telemetry with query
-coordinates and tap-retry after five failures; Сейчас shows
-`now.weather` (ADR-475/476). Public subset stays Experimental.
-Acceptance stays unchecked until panther evidence. Do not fake
-weather / voice / Android VM. Keyboard keys, gallery page, and
-lock idle/wake stay formulas until a board names them.
+VUI-09 concept-board chrome is open (ADR-470). Система Android VM
+/ notebook are Status Unavailable (ADR-481). Named board chrome
+for Object / Intent / NOW / Space / Система runtimes is host-
+locked. Keyboard keys, gallery page, and lock idle/wake stay
+formulas until a board names them. Public subset stays
+Experimental. Acceptance stays unchecked until panther evidence.
+Do not fake weather / voice / Android VM Ready.

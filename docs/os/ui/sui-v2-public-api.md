@@ -39,7 +39,9 @@ footer hits. A screen without `ObjectSummary` invents no object
 hit (ADR-200). The empty `SurfacePattern` is loc `now.empty`
 (ADR-438); it stays Fill leftover behind `ObjectSummary`, not
 stacked row 0 (ADR-469). Live attention Buttons are interned
-`now.attention.{i}` (ADR-474) and `now.weather` (ADR-476); this
+`now.attention.{i}` (ADR-474), `now.weather` (ADR-476),
+`object.action.{i}` (ADR-477), `now.task.{i}` (ADR-478), and
+`now.next.{i}` (ADR-479), and `spaces.focus` (ADR-480); this
 example does not name them.
 Status invents no action. Public `Metric` /
 `Disclosure` / `StatusIndicator` / `Progress` dock on
@@ -114,14 +116,17 @@ The Field fills to the panel bottom. Still Experimental.
 labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 `a11y = Button` (ADR-203), and the same nested tabs. The heading
 matches Inbox stacked top (ADR-458). Status `SpaceRow` invents no
-`select_space`.
+`select_space`. Live `spaces.focus` is interned on Space detail
+(ADR-480); this example does not name it.
 
 [`examples/me-public.sui`](examples/me-public.sui) is the
 labelled Me sample: `ContextHeader`, a `SystemSection` header, the
 live «Устройство» prefix, and interned `cycle_timezone` at flatten
 index 4 (ADR-204/215), plus the same nested tabs. The heading
 matches Inbox stacked top (ADR-458). Status `SettingRow` and
-`SystemSection` invent no interned action. Rows that fail
+`SystemSection` invent no interned action. Live Android VM /
+notebook stay Status «Недоступно · нет среды» (ADR-481); this
+example does not name them. Rows that fail
 `layout_v2_scrolled` at offset 0 are not hittable.
 
 [`examples/wifi-public.sui`](examples/wifi-public.sui) is the

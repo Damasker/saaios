@@ -2660,9 +2660,9 @@ fn intent_submit(store_connected: bool, text: &str) -> IntentSubmit {
 
 fn intent_input_status(store_connected: bool) -> Option<&'static str> {
     if store_connected {
-        None
+        Some("Голос недоступен")
     } else {
-        Some("Нет связи")
+        Some("Нет связи · голос недоступен")
     }
 }
 
@@ -3230,6 +3230,7 @@ enum Frame {
         header: ContextHeader,
         header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
+        focus: Option<(Rect, DataRow)>,
     },
     /// ADR-240: Поиск lists live objects in the selected space.
     /// Inbox stays an Orb destination, not a primary tab.
@@ -3265,6 +3266,8 @@ enum Frame {
         object: Option<ObjectSummary>,
         weather: Option<(Rect, DataRow)>,
         attention_rows: Vec<(Rect, DataRow)>,
+        task_rows: Vec<(Rect, DataRow)>,
+        next_rows: Vec<(Rect, DataRow)>,
         footer_actions: Vec<(Rect, DataRow)>,
     },
 }
@@ -3301,6 +3304,7 @@ enum ObjectViewHit {
     Action(usize),
     Related(usize),
     Step(usize),
+    Quick(usize),
 }
 
 /// The tapped Object View control, or `None` if the tap missed.
@@ -3313,8 +3317,12 @@ fn object_view_hit(
     action_count: usize,
     related_count: usize,
     step_count: usize,
+    quick_count: usize,
 ) -> Option<ObjectViewHit> {
-    if width == 0 || height == 0 || (action_count == 0 && related_count == 0 && step_count == 0) {
+    if width == 0
+        || height == 0
+        || (action_count == 0 && related_count == 0 && step_count == 0 && quick_count == 0)
+    {
         return None;
     }
     let locs: Vec<String> = (0..action_count)
@@ -3327,9 +3335,13 @@ fn object_view_hit(
     let steps: Vec<String> = (0..step_count)
         .map(|index| format!("object.step.{index}"))
         .collect();
+    let quick: Vec<String> = (0..quick_count)
+        .map(|index| format!("object.action.{index}"))
+        .collect();
     let facts: Vec<&str> = related
         .iter()
         .chain(steps.iter())
+        .chain(quick.iter())
         .map(String::as_str)
         .collect();
     live_v2_hit(
@@ -3346,6 +3358,12 @@ fn object_view_hit(
             .and_then(|index| index.parse().ok())
         {
             return Some(ObjectViewHit::Step(index));
+        }
+        if let Some(index) = action
+            .strip_prefix("object.action.")
+            .and_then(|index| index.parse().ok())
+        {
+            return Some(ObjectViewHit::Quick(index));
         }
         action
             .strip_prefix("object.related.")
@@ -3367,7 +3385,7 @@ fn object_view_action_at(
     height: u32,
     action_count: usize,
 ) -> Option<usize> {
-    match object_view_hit(pos, width, height, action_count, 0, 0) {
+    match object_view_hit(pos, width, height, action_count, 0, 0, 0) {
         Some(ObjectViewHit::Action(index)) => Some(index),
         _ => None,
     }
@@ -3586,6 +3604,78 @@ fn object_view_permission_with(
         }
     }
     permission
+}
+
+const OBJECT_QUICK_ACTION_CAP: usize = 2;
+
+struct ObjectQuickAction {
+    title: String,
+    reason: Option<String>,
+}
+
+fn object_view_quick_actions(entity: &Entity) -> Vec<ObjectQuickAction> {
+    object_view_quick_actions_with(
+        entity,
+        &builtin_object_actions(),
+        &tool_registry::ToolRegistry::new(),
+        &policy_engine::PolicyEngine::new(),
+    )
+}
+
+fn object_view_quick_actions_with(
+    entity: &Entity,
+    registry: &ObjectActionRegistry,
+    tools: &tool_registry::ToolRegistry,
+    policy: &policy_engine::PolicyEngine,
+) -> Vec<ObjectQuickAction> {
+    let context = ActionResolveContext {
+        space_id: Some(entity.space_id.clone()),
+    };
+    let mut out = Vec::new();
+    for resolution in registry.resolve_for(entity, &context, tools) {
+        if out.len() == OBJECT_QUICK_ACTION_CAP {
+            break;
+        }
+        match resolution {
+            ActionResolution::Ambiguous { action_id, .. } => out.push(ObjectQuickAction {
+                title: action_id,
+                reason: Some("неоднозначно".into()),
+            }),
+            ActionResolution::Resolved(action) => {
+                let reason = match action.availability {
+                    ActionAvailability::Unavailable { reason } => {
+                        Some(explain_oam_reason(&reason))
+                    }
+                    ActionAvailability::Available => {
+                        let decision = preflight(policy, tools, &action);
+                        match decision.verdict {
+                            protocol::PolicyVerdict::Deny => {
+                                Some(explain_oam_reason(&decision.reason))
+                            }
+                            protocol::PolicyVerdict::AskUser | protocol::PolicyVerdict::Allow => {
+                                None
+                            }
+                        }
+                    }
+                };
+                out.push(ObjectQuickAction {
+                    title: action.title,
+                    reason,
+                });
+            }
+        }
+    }
+    out
+}
+
+fn object_view_quick_action_lines(entity: &Entity) -> Vec<String> {
+    object_view_quick_actions(entity)
+        .into_iter()
+        .map(|action| match action.reason {
+            Some(reason) => format!("{}: {reason}", action.title),
+            None => action.title,
+        })
+        .collect()
 }
 
 fn explain_oam_reason(reason: &str) -> String {
@@ -6407,6 +6497,7 @@ fn now_workflow_sections_with(
             relationships,
         )));
     }
+    let pending_empty_tasks = in_progress.is_empty() && store_connected;
     if !in_progress.is_empty() {
         sections.push(in_progress);
     }
@@ -6415,6 +6506,7 @@ fn now_workflow_sections_with(
     if let Some(work) = next_work(entities) {
         next = next.with_row(next_work_row(work, entities, relationships));
     }
+    let pending_empty_next = next.is_empty() && store_connected;
     if !next.is_empty() {
         sections.push(next);
     }
@@ -6438,8 +6530,39 @@ fn now_workflow_sections_with(
     if pending_empty_attention && !sections.is_empty() {
         sections.insert(0, now_attention_empty_section());
     }
+    if pending_empty_tasks && !sections.is_empty() {
+        let index = usize::from(sections[0].title == "Требует внимания");
+        sections.insert(index, now_task_empty_section());
+    }
+    if pending_empty_next && !sections.is_empty() {
+        let mut index = 0;
+        if sections.first().is_some_and(|section| section.title == "Требует внимания") {
+            index += 1;
+        }
+        if sections
+            .get(index)
+            .is_some_and(|section| section.title == "Продолжается")
+        {
+            index += 1;
+        }
+        sections.insert(index, now_next_empty_section());
+    }
 
     sections
+}
+
+fn now_next_empty_section() -> SystemSection {
+    SystemSection::new("Далее").with_row(SystemSectionRow::Data(DataRow::new(
+        "Нет следующего действия",
+        DataRowVariant::Static,
+    )))
+}
+
+fn now_task_empty_section() -> SystemSection {
+    SystemSection::new("Продолжается").with_row(SystemSectionRow::Data(DataRow::new(
+        "Нет текущих задач",
+        DataRowVariant::Static,
+    )))
 }
 
 fn now_attention_empty_section() -> SystemSection {
@@ -6465,11 +6588,22 @@ fn now_attention_reason(item: &AttentionItem) -> String {
 }
 
 fn now_attention_v2_source(follow: &[bool], empty_caption: bool) -> String {
+    now_body_v2_source(follow, empty_caption, 0, false, 0, false)
+}
+
+fn now_body_v2_source(
+    follow: &[bool],
+    empty_attention: bool,
+    task_count: usize,
+    empty_tasks: bool,
+    next_count: usize,
+    empty_next: bool,
+) -> String {
     let mut src = String::from("sui 2\nscreen now {\n");
     src.push_str(&v2_header_block("now.header"));
     src.push_str(&v2_stacked_block("ObjectSummary", "Status", "now.object"));
     src.push_str(&v2_stacked_block("DataRow", "Button", "now.weather"));
-    if empty_caption {
+    if empty_attention {
         src.push_str(&v2_stacked_block(
             "DataRow",
             "Status",
@@ -6482,6 +6616,26 @@ fn now_attention_v2_source(follow: &[bool], empty_caption: bool) -> String {
             "DataRow",
             a11y,
             &format!("now.attention.{index}"),
+        ));
+    }
+    if empty_tasks {
+        src.push_str(&v2_stacked_block("DataRow", "Status", "now.task.empty"));
+    }
+    for index in 0..task_count {
+        src.push_str(&v2_stacked_block(
+            "DataRow",
+            "Button",
+            &format!("now.task.{index}"),
+        ));
+    }
+    if empty_next {
+        src.push_str(&v2_stacked_block("DataRow", "Status", "now.next.empty"));
+    }
+    for index in 0..next_count {
+        src.push_str(&v2_stacked_block(
+            "DataRow",
+            "Button",
+            &format!("now.next.{index}"),
         ));
     }
     src.push_str(V2_ROOT_TABS);
@@ -6593,6 +6747,165 @@ fn now_attention_paint_rows(
             (v2_named_rect(&tree, &loc, "ADR-474 now attention"), row)
         })
         .collect()
+}
+
+fn now_task_hit(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    follow: &[bool],
+    empty_attention: bool,
+    task_count: usize,
+) -> Option<usize> {
+    if width == 0 || height == 0 || task_count == 0 {
+        return None;
+    }
+    live_v2_hit(
+        &now_body_v2_source(follow, empty_attention, task_count, false, 0, false),
+        "ADR-478 now tasks",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(id, action)| {
+        action
+            .filter(|value| value.starts_with("now.task."))
+            .and_then(|_| {
+                id.strip_prefix("now.task.")
+                    .and_then(|index| index.parse().ok())
+            })
+    })
+}
+
+fn now_task_paint_rows(
+    entities: &[Entity],
+    store_connected: bool,
+    has_other_now_content: bool,
+    follow: &[bool],
+    empty_attention: bool,
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, DataRow)> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let tasks = in_progress_work(entities);
+    let empty_caption = tasks.is_empty() && store_connected && has_other_now_content;
+    if tasks.is_empty() && !empty_caption {
+        return Vec::new();
+    }
+    let tree = layout_live_v2(
+        &now_body_v2_source(follow, empty_attention, tasks.len(), empty_caption, 0, false),
+        "ADR-478 now tasks",
+        width,
+        height,
+    );
+    if empty_caption {
+        return vec![(
+            v2_named_rect(&tree, "now.task.empty", "ADR-478 now tasks"),
+            DataRow::new("Нет текущих задач", DataRowVariant::Static),
+        )];
+    }
+    tasks
+        .into_iter()
+        .enumerate()
+        .map(|(index, entity)| {
+            let loc = format!("now.task.{index}");
+            (
+                v2_named_rect(&tree, &loc, "ADR-478 now tasks"),
+                DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
+                    .with_secondary(task_status_text(entity, entities))
+                    .with_action(loc),
+            )
+        })
+        .collect()
+}
+
+fn now_next_hit(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    follow: &[bool],
+    empty_attention: bool,
+    task_count: usize,
+    empty_tasks: bool,
+    next_count: usize,
+) -> Option<usize> {
+    if width == 0 || height == 0 || next_count == 0 {
+        return None;
+    }
+    live_v2_hit(
+        &now_body_v2_source(
+            follow,
+            empty_attention,
+            task_count,
+            empty_tasks,
+            next_count,
+            false,
+        ),
+        "ADR-479 now next",
+        pos,
+        width,
+        height,
+    )
+    .and_then(|(id, action)| {
+        action
+            .filter(|value| value.starts_with("now.next."))
+            .and_then(|_| {
+                id.strip_prefix("now.next.")
+                    .and_then(|index| index.parse().ok())
+            })
+    })
+}
+
+fn now_next_paint_rows(
+    entities: &[Entity],
+    store_connected: bool,
+    has_other_now_content: bool,
+    follow: &[bool],
+    empty_attention: bool,
+    task_count: usize,
+    empty_tasks: bool,
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, DataRow)> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+    let next = next_work(entities);
+    let empty_caption = next.is_none() && store_connected && has_other_now_content;
+    if next.is_none() && !empty_caption {
+        return Vec::new();
+    }
+    let next_count = usize::from(next.is_some());
+    let tree = layout_live_v2(
+        &now_body_v2_source(
+            follow,
+            empty_attention,
+            task_count,
+            empty_tasks,
+            next_count,
+            empty_caption,
+        ),
+        "ADR-479 now next",
+        width,
+        height,
+    );
+    if empty_caption {
+        return vec![(
+            v2_named_rect(&tree, "now.next.empty", "ADR-479 now next"),
+            DataRow::new("Нет следующего действия", DataRowVariant::Static),
+        )];
+    }
+    let Some(work) = next else {
+        return Vec::new();
+    };
+    vec![(
+        v2_named_rect(&tree, "now.next.0", "ADR-479 now next"),
+        DataRow::new(work.title.clone(), DataRowVariant::Navigation)
+            .with_secondary(task_status_text(work, entities))
+            .with_action("now.next.0"),
+    )]
 }
 
 fn attention_section_from_projection(projection: &AttentionProjection) -> Option<SystemSection> {
@@ -6833,14 +7146,32 @@ fn space_member_rows(entities: &[Entity]) -> Vec<&Entity> {
     search_rows(entities)
 }
 
+fn space_focus_task(entities: &[Entity]) -> Option<&Entity> {
+    let members = space_member_rows(entities);
+    in_progress_work(entities)
+        .into_iter()
+        .find(|task| members.iter().any(|member| member.id == task.id))
+}
+
+fn space_detail_member_rows<'a>(entities: &'a [Entity]) -> Vec<&'a Entity> {
+    let focus_id = space_focus_task(entities).map(|task| task.id);
+    space_member_rows(entities)
+        .into_iter()
+        .filter(|entity| focus_id != Some(entity.id))
+        .collect()
+}
+
 fn space_detail_v2_source(entities: &[Entity], store_connected: bool) -> String {
     let mut src = String::from("sui 2\nscreen spaces {\n");
     src.push_str(&v2_header_block("spaces.header"));
     if !store_connected {
         src.push_str(&v2_stacked_block("DataRow", "Status", "spaces.offline"));
     } else {
-        let rows = space_member_rows(entities);
-        if rows.is_empty() {
+        if space_focus_task(entities).is_some() {
+            src.push_str(&v2_stacked_block("DataRow", "Button", "spaces.focus"));
+        }
+        let rows = space_detail_member_rows(entities);
+        if rows.is_empty() && space_focus_task(entities).is_none() {
             src.push_str(&v2_stacked_block(
                 "DataRow",
                 "Status",
@@ -6878,15 +7209,40 @@ fn space_detail_action_at(
     )?;
     match action.as_deref() {
         Some("list_back") => Some(SpaceDetailTap::Back),
+        Some("spaces.focus") => space_focus_task(entities).map(|task| SpaceDetailTap::Member(task.id)),
         Some(loc) if loc == id => {
             let parsed = Uuid::parse_str(&id).ok()?;
-            space_member_rows(entities)
+            space_detail_member_rows(entities)
                 .into_iter()
                 .find(|entity| entity.id == parsed)
                 .map(|entity| SpaceDetailTap::Member(entity.id))
         }
         _ => None,
     }
+}
+
+fn space_focus_paint_row(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+) -> Option<(Rect, DataRow)> {
+    if width == 0 || height == 0 || !store_connected {
+        return None;
+    }
+    let task = space_focus_task(entities)?;
+    let tree = layout_live_v2(
+        &space_detail_v2_source(entities, store_connected),
+        "ADR-480 space focus",
+        width,
+        height,
+    );
+    Some((
+        v2_named_rect(&tree, "spaces.focus", "ADR-480 space focus"),
+        DataRow::new(task.title.clone(), DataRowVariant::Navigation)
+            .with_secondary(task_status_text(task, entities))
+            .with_action("spaces.focus"),
+    ))
 }
 
 fn space_member_card(entity: &Entity) -> render::ActionCardView {
@@ -7743,7 +8099,8 @@ fn read_runtime_live_facts() -> RuntimeLiveFacts {
 }
 
 /// Snapshot of every real `Я` fact `me_system_sections` needs.
-/// Android VM and battery-as-a-page-gauge stay absent (ADR-126).
+/// Android VM / notebook are Status «Недоступно» (ADR-481), never Ready.
+/// Battery-as-a-page-gauge stays absent (ADR-126).
 /// Memory review is status `memory_records` only (ADR-268), never JSONL.
 #[allow(dead_code)] // kernel/uptime/counts/boot attempts belong on DevSurface
 struct MeFacts {
@@ -8035,6 +8392,13 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 SettingRow::cycle("Меньше движения", motion_status, "toggle_reduced_motion").row,
             ],
         ),
+        me_section_data(
+            "Среды",
+            vec![
+                SettingRow::readout("Android VM", "Недоступно · нет среды").row,
+                SettingRow::readout("Блокнот", "Недоступно · нет среды").row,
+            ],
+        ),
     ];
     if !facts.observations.is_empty() {
         let rows = facts
@@ -8229,6 +8593,7 @@ fn object_overlay_v2_source(locs: &[&str], facts: &[&str], permission: bool) -> 
 fn object_overlay_fact_locs(
     related_count: usize,
     step_count: usize,
+    action_count: usize,
     detail_count: usize,
     decision_count: usize,
 ) -> Vec<String> {
@@ -8238,6 +8603,9 @@ fn object_overlay_fact_locs(
     }
     for index in 0..step_count {
         facts.push(format!("object.step.{index}"));
+    }
+    for index in 0..action_count {
+        facts.push(format!("object.action.{index}"));
     }
     for index in 0..detail_count {
         facts.push(format!("object.detail.{index}"));
@@ -9801,6 +10169,11 @@ impl TouchHandler for Shell {
                             .len()
                     })
                     .unwrap_or(0);
+                let quick_count = self
+                    .viewing_entity()
+                    .map(object_view_quick_actions)
+                    .map(|actions| actions.len())
+                    .unwrap_or(0);
                 match object_view_hit(
                     self.last_touch_pos,
                     self.width,
@@ -9808,6 +10181,7 @@ impl TouchHandler for Shell {
                     action_count,
                     related_count,
                     step_count,
+                    quick_count,
                 ) {
                     Some(ObjectViewHit::Action(index)) => {
                         self.handle_object_view_action(index);
@@ -9820,6 +10194,10 @@ impl TouchHandler for Shell {
                     Some(ObjectViewHit::Step(index)) => {
                         self.handle_object_view_step(index);
                         self.draw(conn, qh);
+                    }
+                    Some(ObjectViewHit::Quick(_)) => {
+                        // Unavailable OAM rows are Status. Enabled
+                        // execute waits for a live provider tool.
                     }
                     None => {}
                 }
@@ -10080,6 +10458,52 @@ impl TouchHandler for Shell {
                     {
                         self.viewing_entity_id = Some(id);
                         self.draw(conn, qh);
+                    }
+                } else if let Some(index) = now_task_hit(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    &follow,
+                    items.is_empty()
+                        && self.entityd.is_connected()
+                        && self
+                            .now_sections()
+                            .iter()
+                            .any(|section| section.title != "Требует внимания"),
+                    in_progress_work(&self.selected_entities).len(),
+                ) {
+                    if let Some(id) = in_progress_work(&self.selected_entities)
+                        .get(index)
+                        .map(|entity| entity.id)
+                    {
+                        self.viewing_entity_id = Some(id);
+                        self.draw(conn, qh);
+                    }
+                } else if let Some(index) = now_next_hit(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    &follow,
+                    items.is_empty()
+                        && self.entityd.is_connected()
+                        && self
+                            .now_sections()
+                            .iter()
+                            .any(|section| section.title != "Требует внимания"),
+                    in_progress_work(&self.selected_entities).len(),
+                    in_progress_work(&self.selected_entities).is_empty()
+                        && self.entityd.is_connected()
+                        && self.now_sections().iter().any(|section| {
+                            section.title != "Требует внимания" && section.title != "Продолжается"
+                        }),
+                    usize::from(next_work(&self.selected_entities).is_some()),
+                ) {
+                    if index == 0 {
+                        if let Some(id) = next_work(&self.selected_entities).map(|entity| entity.id)
+                        {
+                            self.viewing_entity_id = Some(id);
+                            self.draw(conn, qh);
+                        }
                     }
                 } else if now_object_tapped(
                     self.last_touch_pos,
@@ -10484,9 +10908,11 @@ impl Shell {
                     details.insert(0, related);
                 }
             }
+            let action_lines = object_view_quick_action_lines(entity);
             let fact_locs = object_overlay_fact_locs(
                 related_lines.len(),
                 step_lines.len(),
+                action_lines.len(),
                 details.len(),
                 decision_facts.len(),
             );
@@ -10502,6 +10928,7 @@ impl Shell {
             );
             let mut fact_texts = related_lines;
             fact_texts.extend(step_lines);
+            fact_texts.extend(action_lines);
             fact_texts.extend(details);
             fact_texts.extend(decision_facts);
             let fact_rows = fact_rects.into_iter().zip(fact_texts).collect();
@@ -10779,9 +11206,56 @@ impl Shell {
                 width,
                 height,
             );
+            let follow: Vec<bool> = project_with_health(
+                &self.selected_entities,
+                read_runtime_live_facts().health.as_ref(),
+            )
+            .now_items()
+            .map(|item| now_attention_follow_id(item).is_some())
+            .collect();
+            let empty_attention = follow.is_empty()
+                && self.entityd.is_connected()
+                && has_other;
+            let has_other_than_tasks = sections.iter().any(|section| {
+                section.title != "Требует внимания" && section.title != "Продолжается"
+            }) || !follow.is_empty()
+                || self.now_object_summary().is_some();
+            let task_rows = now_task_paint_rows(
+                &self.selected_entities,
+                self.entityd.is_connected(),
+                has_other_than_tasks,
+                &follow,
+                empty_attention,
+                width,
+                height,
+            );
+            let empty_tasks = task_rows
+                .first()
+                .is_some_and(|(_, row)| row.primary == "Нет текущих задач");
+            let next_rows = now_next_paint_rows(
+                &self.selected_entities,
+                self.entityd.is_connected(),
+                sections.iter().any(|section| {
+                    section.title != "Требует внимания"
+                        && section.title != "Продолжается"
+                        && section.title != "Далее"
+                }) || !follow.is_empty()
+                    || !in_progress_work(&self.selected_entities).is_empty()
+                    || self.now_object_summary().is_some(),
+                &follow,
+                empty_attention,
+                in_progress_work(&self.selected_entities).len(),
+                empty_tasks,
+                width,
+                height,
+            );
             let sections = sections
                 .into_iter()
-                .filter(|section| section.title != "Требует внимания")
+                .filter(|section| {
+                    section.title != "Требует внимания"
+                        && section.title != "Продолжается"
+                        && section.title != "Далее"
+                })
                 .collect();
             Frame::Now {
                 content_rect: view.children[0].rect,
@@ -10792,6 +11266,8 @@ impl Shell {
                 object: self.now_object_summary(),
                 weather: now_weather_paint_row(width, height),
                 attention_rows,
+                task_rows,
+                next_rows,
                 footer_actions: now_footer_action_views_from(&view),
             }
         } else if self.current_page == RootPage::Now && self.apps_open {
@@ -10885,6 +11361,7 @@ impl Shell {
                     ),
                     header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                     rows: self.space_detail_content_cards_from(&view),
+                    focus: space_focus_paint_row(&self.selected_entities, connected, width, height),
                 }
             } else {
                 let view = layout_live_v2(
@@ -10903,6 +11380,7 @@ impl Shell {
                     ),
                     header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                     rows: self.spaces_content_cards_from(&view),
+                    focus: None,
                 }
             }
         } else if self.current_page == RootPage::Me {
@@ -11239,6 +11717,8 @@ impl Shell {
                     object,
                     weather,
                     attention_rows,
+                    task_rows,
+                    next_rows,
                     footer_actions,
                 } => {
                     render::draw_now(
@@ -11251,6 +11731,8 @@ impl Shell {
                         object.as_ref(),
                         weather.as_ref(),
                         &attention_rows,
+                        &task_rows,
+                        &next_rows,
                         &footer_actions,
                         fonts,
                     );
@@ -11318,9 +11800,11 @@ impl Shell {
                     header,
                     header_rect,
                     rows,
+                    focus,
                 } => {
+                    let mut surface = render::Canvas::new(canvas, width, height);
                     render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        &mut surface,
                         content_rect,
                         &tabs,
                         &header,
@@ -11329,6 +11813,11 @@ impl Shell {
                         true,
                         fonts,
                     );
+                    if let (Some((rect, row)), Some(fonts)) = (focus.as_ref(), fonts) {
+                        surface.set_clip(Some(content_rect));
+                        render::draw_data_row(&mut surface, fonts, row, *rect);
+                        surface.set_clip(None);
+                    }
                 }
                 Frame::Me {
                     content_rect,
@@ -12529,13 +13018,14 @@ impl Shell {
         tree: &LayoutNode,
     ) -> Vec<(Rect, render::ActionCardView)> {
         let connected = self.entityd.is_connected();
-        let rows = space_member_rows(&self.selected_entities);
+        let rows = space_detail_member_rows(&self.selected_entities);
+        let has_focus = space_focus_task(&self.selected_entities).is_some();
         let (mut cards, mut ids): (Vec<render::ActionCardView>, Vec<String>) = if !connected {
             (
                 vec![space_detail_empty_card(false)],
                 vec!["spaces.offline".into()],
             )
-        } else if rows.is_empty() {
+        } else if rows.is_empty() && !has_focus {
             (
                 vec![space_detail_empty_card(true)],
                 vec!["spaces.detail.empty".into()],
@@ -13970,8 +14460,9 @@ mod tests {
         lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
         lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
         me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
-        now_attention_hit, now_object_tapped, now_weather_hit, now_weather_paint_row,
-        now_workflow_sections, object_view_action_at,
+        now_attention_hit, now_next_hit, now_next_paint_rows, now_object_tapped, now_task_hit,
+        now_task_paint_rows, now_weather_hit, now_weather_paint_row, now_workflow_sections,
+        object_view_action_at,
         object_view_content, object_view_details, object_view_hit, object_view_permission_pattern,
         object_view_related_peer_lines, object_view_step_lines, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
@@ -13980,7 +14471,8 @@ mod tests {
         related_object_first_peer, remote_pair_content_cards, remote_pair_header,
         remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
         search_rows, space_color, space_color_entity, space_detail_action_at,
-        space_detail_empty_card, space_detail_header, space_display_name, space_for_wifi_ssid,
+        space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row,
+        space_focus_task, space_for_wifi_ssid,
         space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
         space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
@@ -19605,8 +20097,11 @@ mod tests {
 
     #[test]
     fn intent_input_names_store_offline_instead_of_pretending_to_send() {
-        assert_eq!(super::intent_input_status(false), Some("Нет связи"));
-        assert_eq!(super::intent_input_status(true), None);
+        assert_eq!(
+            super::intent_input_status(false),
+            Some("Нет связи · голос недоступен")
+        );
+        assert_eq!(super::intent_input_status(true), Some("Голос недоступен"));
         assert_eq!(
             super::intent_compose_status(false),
             "Сервис пространств недоступен"
@@ -19842,6 +20337,42 @@ mod tests {
             Some(SpaceDetailTap::Back)
         );
         assert!(space_detail_action_at(member_point, 1080, 2400, &entities, false).is_none());
+    }
+
+    #[test]
+    fn space_focus_row_hits_live_running_member() {
+        let intent = intent_entity("Подготовить демо");
+        let mut running = task_entity("Собрать слайды", Some(intent.id));
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let entities = vec![intent.clone(), running.clone()];
+        assert_eq!(space_focus_task(&entities).map(|task| task.id), Some(running.id));
+        let first = stacked_row_rect(0, 1080, 2400);
+        let focus_point = (
+            (first.x + first.width / 2) as f64,
+            (first.y + first.height / 2) as f64,
+        );
+        assert_eq!(
+            space_detail_action_at(focus_point, 1080, 2400, &entities, true),
+            Some(SpaceDetailTap::Member(running.id))
+        );
+        let second = stacked_row_rect(1, 1080, 2400);
+        let member_point = (
+            (second.x + second.width / 2) as f64,
+            (second.y + second.height / 2) as f64,
+        );
+        assert_eq!(
+            space_detail_action_at(member_point, 1080, 2400, &entities, true),
+            Some(SpaceDetailTap::Member(intent.id))
+        );
+        let rows = space_focus_paint_row(&entities, true, 1080, 2400).expect("focus");
+        assert_eq!(rows.1.primary, "Собрать слайды");
+        assert_eq!(rows.1.secondary.as_deref(), Some("Выполняется"));
+        assert_eq!(rows.1.action.as_deref(), Some("spaces.focus"));
+        assert_eq!(rows.0, saai_ui_core::Rect::new(49, 430, 982, 190));
+        assert!(space_focus_task(&[intent]).is_none());
+        assert!(space_focus_paint_row(&entities, false, 1080, 2400).is_none());
     }
 
     #[test]
@@ -20510,12 +21041,12 @@ mod tests {
     #[test]
     fn object_view_related_button_hits_the_concept_row() {
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0, 0),
             Some(ObjectViewHit::Related(0))
         );
-        assert_eq!(object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0), None);
+        assert_eq!(object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0), None);
         assert_eq!(
-            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 2, 0),
+            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 2, 0, 0),
             Some(ObjectViewHit::Action(0))
         );
         assert_eq!(object_view_action_at((540.0, 292.0), 1080, 2400, 1), None);
@@ -20524,7 +21055,7 @@ mod tests {
     #[test]
     fn object_view_intent_step_button_hits_the_plan_row() {
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 1),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 1, 0),
             Some(ObjectViewHit::Step(0))
         );
         let painted = super::object_overlay_paint(
@@ -20548,13 +21079,39 @@ mod tests {
         );
         assert_eq!(painted.2[1].y, painted.2[0].y + painted.2[0].height);
         assert_eq!(
-            object_view_hit((540.0, (painted.2[4].y + 8) as f64), 1080, 2400, 0, 0, 5),
+            object_view_hit((540.0, (painted.2[4].y + 8) as f64), 1080, 2400, 0, 0, 5, 0),
             Some(ObjectViewHit::Step(4))
         );
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 1),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 1, 0),
             Some(ObjectViewHit::Related(0))
         );
+    }
+
+    #[test]
+    fn object_view_oam_quick_actions_stay_live_and_capped() {
+        let display = test_entity("saaios.display", serde_json::Map::new());
+        let actions = super::object_view_quick_actions(&display);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Состояние экрана");
+        assert_eq!(actions[0].reason.as_deref(), Some("нет инструмента"));
+        let lines = super::object_view_quick_action_lines(&display);
+        assert_eq!(lines, ["Состояние экрана: нет инструмента"]);
+        assert_eq!(
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 1),
+            None
+        );
+        let task = task_entity("Работает", None);
+        assert!(super::object_view_quick_actions(&task).is_empty());
+        let painted = super::object_overlay_paint(
+            &[],
+            &["object.action.0"],
+            false,
+            "ADR-477 object overlay",
+            1080,
+            2400,
+        );
+        assert_eq!(painted.2[0], saai_ui_core::Rect::new(49, 284, 982, painted.2[0].height));
     }
 
     #[test]
@@ -21556,13 +22113,45 @@ mod tests {
             .iter()
             .map(|section| section.title.as_str())
             .collect();
-        assert_eq!(titles, ["Требует внимания", "Продолжается"]);
+        assert_eq!(titles, ["Требует внимания", "Продолжается", "Далее"]);
         match &sections[0].rows[0] {
             SystemSectionRow::Data(row) => {
                 assert_eq!(row.primary, "Ничего не требует внимания");
                 assert!(!row.is_actionable());
             }
             other => panic!("expected empty attention caption, got {other:?}"),
+        }
+        match &sections[2].rows[0] {
+            SystemSectionRow::Data(row) => {
+                assert_eq!(row.primary, "Нет следующего действия");
+                assert!(!row.is_actionable());
+            }
+            other => panic!("expected empty next caption, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn now_sections_name_empty_current_tasks_among_other_work() {
+        let waiting = task_entity("Подтвердите удаление", None);
+        let sections = now_workflow_sections(std::slice::from_ref(&waiting), &[]);
+        let titles: Vec<&str> = sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Требует внимания", "Продолжается", "Далее"]);
+        match &sections[1].rows[0] {
+            SystemSectionRow::Data(row) => {
+                assert_eq!(row.primary, "Нет текущих задач");
+                assert!(!row.is_actionable());
+            }
+            other => panic!("expected empty task caption, got {other:?}"),
+        }
+        match &sections[2].rows[0] {
+            SystemSectionRow::Data(row) => {
+                assert_eq!(row.primary, "Нет следующего действия");
+                assert!(!row.is_actionable());
+            }
+            other => panic!("expected empty next caption, got {other:?}"),
         }
     }
 
@@ -21599,6 +22188,88 @@ mod tests {
         assert_eq!(rows[0].1.primary, "Подтвердите удаление");
         assert_eq!(rows[0].1.action.as_deref(), Some("now.attention.0"));
         assert_eq!(rows[0].0, saai_ui_core::Rect::new(49, 650, 982, 190));
+    }
+
+    #[test]
+    fn now_task_rows_hit_live_running_sources() {
+        assert_eq!(
+            now_task_hit((540.0, 658.0), 1080, 2400, &[], false, 1),
+            Some(0)
+        );
+        assert_eq!(
+            now_task_hit((540.0, 878.0), 1080, 2400, &[true], false, 1),
+            Some(0)
+        );
+        assert_eq!(now_task_hit((540.0, 438.0), 1080, 2400, &[], false, 1), None);
+        let mut running = task_entity("Собрать отчёт", None);
+        running
+            .properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let rows = now_task_paint_rows(
+            std::slice::from_ref(&running),
+            true,
+            false,
+            &[],
+            false,
+            1080,
+            2400,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.primary, "Собрать отчёт");
+        assert_eq!(rows[0].1.secondary.as_deref(), Some("Выполняется"));
+        assert_eq!(rows[0].1.action.as_deref(), Some("now.task.0"));
+        assert_eq!(rows[0].0, saai_ui_core::Rect::new(49, 650, 982, 190));
+        let empty = now_task_paint_rows(&[], true, true, &[], false, 1080, 2400);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].1.primary, "Нет текущих задач");
+        assert!(!empty[0].1.is_actionable());
+        assert!(now_task_paint_rows(&[], true, false, &[], false, 1080, 2400).is_empty());
+    }
+
+    #[test]
+    fn now_next_rows_hit_live_pending_action() {
+        assert_eq!(
+            now_next_hit((540.0, 658.0), 1080, 2400, &[], false, 0, false, 1),
+            Some(0)
+        );
+        assert_eq!(
+            now_next_hit((540.0, 878.0), 1080, 2400, &[true], false, 0, false, 1),
+            Some(0)
+        );
+        assert_eq!(
+            now_next_hit((540.0, 1098.0), 1080, 2400, &[true], false, 1, false, 1),
+            Some(0)
+        );
+        assert_eq!(
+            now_next_hit((540.0, 438.0), 1080, 2400, &[], false, 0, false, 1),
+            None
+        );
+        assert_eq!(
+            now_next_hit((540.0, 658.0), 1080, 2400, &[], false, 0, false, 0),
+            None
+        );
+        let action = action_entity("Экспорт PDF", uuid::Uuid::new_v4(), "pending");
+        let rows = now_next_paint_rows(
+            std::slice::from_ref(&action),
+            true,
+            true,
+            &[],
+            false,
+            0,
+            false,
+            1080,
+            2400,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.primary, "Экспорт PDF");
+        assert_eq!(rows[0].1.secondary.as_deref(), Some("Ожидает запуска"));
+        assert_eq!(rows[0].1.action.as_deref(), Some("now.next.0"));
+        assert_eq!(rows[0].0, saai_ui_core::Rect::new(49, 650, 982, 190));
+        let empty = now_next_paint_rows(&[], true, true, &[], false, 0, false, 1080, 2400);
+        assert_eq!(empty.len(), 1);
+        assert_eq!(empty[0].1.primary, "Нет следующего действия");
+        assert!(!empty[0].1.is_actionable());
+        assert!(now_next_paint_rows(&[], true, false, &[], false, 0, false, 1080, 2400).is_empty());
     }
 
     #[test]
@@ -21869,6 +22540,7 @@ mod tests {
                 "Приватность",
                 "Пространство",
                 "Интерфейс",
+                "Среды",
             ]
         );
         assert!(!titles.contains(&"Память"));
@@ -21923,6 +22595,26 @@ mod tests {
             .iter()
             .any(|row| row.card.label == "Устройство" && row.dispatch.is_none()));
         assert!(!rows.iter().any(|row| row.card.label.contains("Память")));
+    }
+
+    #[test]
+    fn me_runtime_rows_are_unavailable_not_ready() {
+        let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
+        let android = rows
+            .iter()
+            .find(|row| row.card.label == "Android VM")
+            .expect("android vm");
+        assert_eq!(android.card.status, "Недоступно · нет среды");
+        assert!(android.dispatch.is_none());
+        assert!(!android.card.status.contains("Готово"));
+        assert!(!android.card.status.contains("Ready"));
+        let notebook = rows
+            .iter()
+            .find(|row| row.card.label == "Блокнот")
+            .expect("notebook");
+        assert_eq!(notebook.card.status, "Недоступно · нет среды");
+        assert!(notebook.dispatch.is_none());
+        assert!(!notebook.card.status.contains("Готово"));
     }
 
     #[test]
@@ -22811,9 +23503,16 @@ mod tests {
                 || locality.card.status.starts_with("Нет наблюдения · ")
         );
         assert_eq!(locality.dispatch, Some("refresh_locality"));
-        assert!(!rows
+        let observations = flatten_me_rows(std::slice::from_ref(&sections[1]));
+        assert!(!observations.iter().any(|row| {
+            row.card.label.contains("Android") || row.card.status.contains("Android")
+        }));
+        let android = rows
             .iter()
-            .any(|row| row.card.label.contains("Android") || row.card.status.contains("Android")));
+            .find(|row| row.card.label == "Android VM")
+            .expect("android vm");
+        assert_eq!(android.card.status, "Недоступно · нет среды");
+        assert!(android.dispatch.is_none());
     }
 
     #[test]

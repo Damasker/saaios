@@ -128,6 +128,11 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   NOW attention rows are live projection Buttons (ADR-474).
   Locality weather is Open-Meteo telemetry (ADR-475).
   NOW weather is a live `now.weather` Button (ADR-476).
+  Object OAM quick actions and composer mic stay host (ADR-477).
+  NOW current task rows are live running Buttons (ADR-478).
+  NOW next-action rows are live `now.next.{i}` Buttons (ADR-479).
+  Space focus is a live `spaces.focus` Button (ADR-480).
+  Система Android VM / notebook are Status Unavailable (ADR-481).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

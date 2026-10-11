@@ -1726,7 +1726,7 @@ fn draw_gallery_field(
     );
 }
 
-fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) {
+pub(crate) fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) {
     canvas.fill_rect(rect, theme_color(ColorRole::Surface));
     let inset = physical(SpacingToken::Small.value());
     let top_inset = physical(SpacingToken::XSmall.value());
@@ -2488,6 +2488,8 @@ pub fn draw_now(
     object: Option<&ObjectSummary>,
     weather: Option<&(Rect, DataRow)>,
     attention_rows: &[(Rect, DataRow)],
+    task_rows: &[(Rect, DataRow)],
+    next_rows: &[(Rect, DataRow)],
     footer_actions: &[(Rect, DataRow)],
     fonts: Option<&Fonts>,
 ) {
@@ -2519,7 +2521,12 @@ pub fn draw_now(
             );
         }
 
-        if sections.is_empty() && object.is_none() && attention_rows.is_empty() {
+        if sections.is_empty()
+            && object.is_none()
+            && attention_rows.is_empty()
+            && task_rows.is_empty()
+            && next_rows.is_empty()
+        {
             // HIA-13's own second mockup: "Ничего срочного", centered, no
             // section chrome at all -- an empty `Сейчас` is a normal, calm
             // state, not a broken one, and `SystemSection` itself never
@@ -2571,6 +2578,42 @@ pub fn draw_now(
                 );
                 cursor_y += scaled_line_height(TextRole::Section);
                 for (rect, row) in attention_rows {
+                    draw_data_row(canvas, fonts, row, *rect);
+                    cursor_y = rect.y.saturating_add(rect.height);
+                }
+            }
+            if !task_rows.is_empty() {
+                cursor_y += physical(SpacingToken::Medium.value());
+                draw_semantic_text(
+                    canvas,
+                    fonts,
+                    &SemanticText::new(
+                        "Продолжается",
+                        TextRole::Section,
+                        ColorRole::TextPrimary,
+                    ),
+                    left,
+                    cursor_y,
+                    content_width,
+                );
+                cursor_y += scaled_line_height(TextRole::Section);
+                for (rect, row) in task_rows {
+                    draw_data_row(canvas, fonts, row, *rect);
+                    cursor_y = rect.y.saturating_add(rect.height);
+                }
+            }
+            if !next_rows.is_empty() {
+                cursor_y += physical(SpacingToken::Medium.value());
+                draw_semantic_text(
+                    canvas,
+                    fonts,
+                    &SemanticText::new("Далее", TextRole::Section, ColorRole::TextPrimary),
+                    left,
+                    cursor_y,
+                    content_width,
+                );
+                cursor_y += scaled_line_height(TextRole::Section);
+                for (rect, row) in next_rows {
                     draw_data_row(canvas, fonts, row, *rect);
                     cursor_y = rect.y.saturating_add(rect.height);
                 }

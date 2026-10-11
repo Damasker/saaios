@@ -150,6 +150,11 @@ ADR-473 Intent plan steps are live Task Buttons.
 ADR-474 NOW attention rows are live projection Buttons.
 ADR-475 Locality weather is Open-Meteo forecast telemetry.
 ADR-476 NOW locality weather is a live `now.weather` Button.
+ADR-477 Object OAM quick actions and composer mic disabled.
+ADR-478 NOW current task rows are live running Buttons.
+ADR-479 NOW next-action rows are live `now.next.{i}` Buttons.
+ADR-480 Space focus is a live `spaces.focus` Button.
+ADR-481 Система Android VM / notebook are Status Unavailable.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.
