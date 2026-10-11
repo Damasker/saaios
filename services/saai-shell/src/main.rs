@@ -3435,6 +3435,7 @@ enum ObjectViewHit {
     Related(usize),
     Step(usize),
     Quick(usize),
+    History,
 }
 
 /// The tapped Object View control, or `None` if the tap missed.
@@ -3448,6 +3449,7 @@ fn object_view_hit(
     related_count: usize,
     step_count: usize,
     quick_count: usize,
+    history: bool,
 ) -> Option<ObjectViewHit> {
     object_view_hit_scrolled(
         pos,
@@ -3457,6 +3459,7 @@ fn object_view_hit(
         related_count,
         step_count,
         quick_count,
+        history,
         0,
     )
 }
@@ -3469,11 +3472,16 @@ fn object_view_hit_scrolled(
     related_count: usize,
     step_count: usize,
     quick_count: usize,
+    history: bool,
     scroll_offset: i32,
 ) -> Option<ObjectViewHit> {
     if width == 0
         || height == 0
-        || (action_count == 0 && related_count == 0 && step_count == 0 && quick_count == 0)
+        || (action_count == 0
+            && related_count == 0
+            && step_count == 0
+            && quick_count == 0
+            && !history)
     {
         return None;
     }
@@ -3490,10 +3498,12 @@ fn object_view_hit_scrolled(
     let quick: Vec<String> = (0..quick_count)
         .map(|index| format!("object.action.{index}"))
         .collect();
+    let history_loc = history.then_some("object.history".to_string());
     let facts: Vec<&str> = related
         .iter()
         .chain(steps.iter())
         .chain(quick.iter())
+        .chain(history_loc.iter())
         .map(String::as_str)
         .collect();
     let source = object_overlay_v2_source(&loc_refs, &facts, false);
@@ -3529,6 +3539,9 @@ fn object_view_hit_scrolled(
         {
             return Some(ObjectViewHit::Quick(index));
         }
+        if action == "object.history" {
+            return Some(ObjectViewHit::History);
+        }
         action
             .strip_prefix("object.related.")
             .and_then(|index| index.parse().ok())
@@ -3549,7 +3562,7 @@ fn object_view_action_at(
     height: u32,
     action_count: usize,
 ) -> Option<usize> {
-    match object_view_hit(pos, width, height, action_count, 0, 0, 0) {
+    match object_view_hit(pos, width, height, action_count, 0, 0, 0, false) {
         Some(ObjectViewHit::Action(index)) => Some(index),
         _ => None,
     }
@@ -3563,7 +3576,8 @@ fn object_view_action_at(
 /// line, never blank, never a crash, just no type-specific actions.
 /// `state` is the shared UniversalState mapping; optional facts are
 /// omitted rather than invented. Permission is OAM/policy: unavailable
-/// or deny, never an invented button. History waits for entity events.
+/// or deny, never an invented button. Activity/history sit behind
+/// `object.history` (ADR-499).
 struct ObjectViewContent {
     title: String,
     state: UniversalState,
@@ -3722,10 +3736,18 @@ fn object_view_summary(entity: &Entity, content: &ObjectViewContent) -> ObjectSu
     .with_status(StatusIndicator::new(content.state, content.status.clone()))
 }
 
-fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
+fn object_view_history_lines(content: &ObjectViewContent) -> Vec<String> {
     [
         content.agent.as_ref().map(AgentSummary::detail_line),
         content.activity.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+fn object_view_details(content: &ObjectViewContent) -> Vec<String> {
+    [
         content.observation.clone(),
         content.blocker.clone(),
         content.consequence.clone(),
@@ -9291,6 +9313,10 @@ fn object_overlay_v2_source(locs: &[&str], facts: &[&str], permission: bool) -> 
         "object.summary",
     ));
     for fact in facts {
+        if *fact == "object.history" {
+            src.push_str(&v2_stacked_block("Disclosure", "Button", fact));
+            continue;
+        }
         let a11y = if fact.starts_with("object.related") || fact.starts_with("object.step") {
             "Button"
         } else {
@@ -9316,6 +9342,8 @@ fn object_overlay_fact_locs(
     related_count: usize,
     step_count: usize,
     action_count: usize,
+    history_count: usize,
+    history_open: bool,
     detail_count: usize,
     decision_count: usize,
 ) -> Vec<String> {
@@ -9328,6 +9356,14 @@ fn object_overlay_fact_locs(
     }
     for index in 0..action_count {
         facts.push(format!("object.action.{index}"));
+    }
+    if history_count > 0 {
+        facts.push("object.history".into());
+        if history_open {
+            for index in 0..history_count {
+                facts.push(format!("object.history.{index}"));
+            }
+        }
     }
     for index in 0..detail_count {
         facts.push(format!("object.detail.{index}"));
@@ -9934,6 +9970,7 @@ fn main() {
         entity_counts: BTreeMap::new(),
         viewing_entity_id: None,
         object_scroll_offset: 0,
+        object_history_open: false,
         now_scroll_offset: 0,
         space_scroll_offset: 0,
         search_scroll_offset: 0,
@@ -10302,6 +10339,9 @@ struct Shell {
     /// `object.summary` stay at offset 0 (ADR-486). Reset when the
     /// viewed entity changes.
     object_scroll_offset: i32,
+    /// Object View activity/history Disclosure (ADR-499). Reset when
+    /// the viewed entity changes. Closed until the owner opens it.
+    object_history_open: bool,
     /// Vertical drag-to-scroll for NOW stacked rows. Header,
     /// ObjectSummary, footer, and tabs stay at offset 0 (ADR-488).
     now_scroll_offset: i32,
@@ -11100,6 +11140,18 @@ impl TouchHandler for Shell {
                     .map(object_view_quick_actions)
                     .map(|actions| actions.len())
                     .unwrap_or(0);
+                let history = self
+                    .viewing_entity()
+                    .map(|entity| {
+                        !object_view_history_lines(&object_view_content_with(
+                            entity,
+                            &self.selected_entities,
+                            &self.relationships,
+                            self.entityd.is_connected(),
+                        ))
+                        .is_empty()
+                    })
+                    .unwrap_or(false);
                 match object_view_hit_scrolled(
                     self.last_touch_pos,
                     self.width,
@@ -11108,6 +11160,7 @@ impl TouchHandler for Shell {
                     related_count,
                     step_count,
                     quick_count,
+                    history,
                     self.object_scroll_offset,
                 ) {
                     Some(ObjectViewHit::Action(index)) => {
@@ -11125,6 +11178,10 @@ impl TouchHandler for Shell {
                     Some(ObjectViewHit::Quick(_)) => {
                         // Unavailable OAM rows are Status. Enabled
                         // execute waits for a live provider tool.
+                    }
+                    Some(ObjectViewHit::History) => {
+                        self.object_history_open = !self.object_history_open;
+                        self.draw(conn, qh);
                     }
                     None => {}
                 }
@@ -11996,10 +12053,13 @@ impl Shell {
                 }
             }
             let action_lines = object_view_quick_action_lines(entity);
+            let history_lines = object_view_history_lines(&content);
             let fact_locs = object_overlay_fact_locs(
                 related_lines.len(),
                 step_lines.len(),
                 action_lines.len(),
+                history_lines.len(),
+                self.object_history_open,
                 details.len(),
                 decision_facts.len(),
             );
@@ -12018,6 +12078,12 @@ impl Shell {
             let mut fact_texts = related_lines;
             fact_texts.extend(step_lines);
             fact_texts.extend(action_lines);
+            if !history_lines.is_empty() {
+                fact_texts.push("История".into());
+                if self.object_history_open {
+                    fact_texts.extend(history_lines);
+                }
+            }
             fact_texts.extend(details);
             fact_texts.extend(decision_facts);
             let fact_rows = fact_rects
@@ -14564,6 +14630,7 @@ impl Shell {
     fn set_viewing_entity_id(&mut self, next: Option<Uuid>) {
         if self.viewing_entity_id != next {
             self.object_scroll_offset = 0;
+            self.object_history_open = false;
         }
         self.viewing_entity_id = next;
     }
@@ -14610,9 +14677,18 @@ impl Shell {
                 details.insert(0, String::new());
             }
         }
+        let history_count = object_view_history_lines(&content).len();
+        let history_rows = if history_count == 0 {
+            0
+        } else if self.object_history_open {
+            1 + history_count
+        } else {
+            1
+        };
         let fact_count = related_count
             + step_count
             + object_view_quick_action_lines(entity).len()
+            + history_rows
             + details.len()
             + decision_count;
         object_overlay_scroll_max(
@@ -15749,7 +15825,8 @@ mod tests {
         now_attention_hit, now_next_hit, now_next_paint_rows, now_object_tapped, now_task_hit,
         now_task_paint_rows, now_weather_hit, now_weather_paint_row, now_workflow_sections,
         object_view_action_at,
-        object_view_content, object_view_content_with, object_view_details, object_view_hit,
+        object_view_content, object_view_content_with, object_view_details,
+        object_view_history_lines, object_view_hit,
         object_view_permission_pattern,
         object_view_related_peer_lines, object_view_step_lines, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
@@ -22805,12 +22882,12 @@ mod tests {
     #[test]
     fn object_view_related_button_hits_the_concept_row() {
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0, 0),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0, 0, false),
             Some(ObjectViewHit::Related(0))
         );
-        assert_eq!(object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0), None);
+        assert_eq!(object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false), None);
         assert_eq!(
-            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 2, 0, 0),
+            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 2, 0, 0, false),
             Some(ObjectViewHit::Action(0))
         );
         assert_eq!(object_view_action_at((540.0, 292.0), 1080, 2400, 1), None);
@@ -22827,7 +22904,7 @@ mod tests {
         let note = test_entity("note.doc", serde_json::Map::new());
         assert!(object_view_related_peer_lines(&note, &[note.clone()], &[]).is_empty());
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false),
             None
         );
         let painted = super::object_overlay_paint(
@@ -22841,11 +22918,11 @@ mod tests {
         let row = painted.2[0].expect("offline related");
         assert_eq!(row, saai_ui_core::Rect::new(49, 284, 982, row.height));
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false),
             None
         );
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0, 0),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0, 0, false),
             Some(ObjectViewHit::Related(0))
         );
     }
@@ -22853,7 +22930,7 @@ mod tests {
     #[test]
     fn object_view_intent_step_button_hits_the_plan_row() {
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 1, 0),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 1, 0, false),
             Some(ObjectViewHit::Step(0))
         );
         let painted = super::object_overlay_paint(
@@ -22877,11 +22954,11 @@ mod tests {
         assert_eq!(first, saai_ui_core::Rect::new(49, 284, 982, first.height));
         assert_eq!(second.y, first.y + first.height);
         assert_eq!(
-            object_view_hit((540.0, (last.y + 8) as f64), 1080, 2400, 0, 0, 5, 0),
+            object_view_hit((540.0, (last.y + 8) as f64), 1080, 2400, 0, 0, 5, 0, false),
             Some(ObjectViewHit::Step(4))
         );
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 1, 0),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 1, 0, false),
             Some(ObjectViewHit::Related(0))
         );
     }
@@ -22918,7 +22995,7 @@ mod tests {
         let last = STEP_COUNT - 1;
         let last_rect = scrolled.2[last].expect("scrolled last step");
         assert_eq!(
-            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 0, STEP_COUNT, 0),
+            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 0, STEP_COUNT, 0, false),
             Some(ObjectViewHit::Action(0))
         );
         assert_eq!(
@@ -22930,12 +23007,13 @@ mod tests {
                 0,
                 STEP_COUNT,
                 0,
+                false,
                 max
             ),
             Some(ObjectViewHit::Action(0))
         );
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, STEP_COUNT, 0),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, STEP_COUNT, 0, false),
             Some(ObjectViewHit::Step(0))
         );
         assert_eq!(
@@ -22947,6 +23025,7 @@ mod tests {
                 0,
                 STEP_COUNT,
                 0,
+                false,
                 max
             ),
             Some(ObjectViewHit::Step(last))
@@ -22963,7 +23042,7 @@ mod tests {
         let lines = super::object_view_quick_action_lines(&display);
         assert_eq!(lines, ["Состояние экрана: нет инструмента"]);
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 1),
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 1, false),
             None
         );
         let task = task_entity("Работает", None);
@@ -23398,6 +23477,58 @@ mod tests {
         assert!(!object_view_details(&intent_content)
             .iter()
             .any(|line| line.contains("исполнен") || line.contains("Воркер")));
+        assert!(object_view_history_lines(&waiting_content).is_empty());
+        assert!(object_view_history_lines(&intent_content).is_empty());
+    }
+
+    #[test]
+    fn object_view_history_stays_behind_disclosure() {
+        let mut task = task_entity("Собрать слайды", None);
+        task.properties
+            .insert("status".into(), serde_json::Value::String("running".into()));
+        let action = action_entity("Экспорт PDF", task.id, "running");
+        let entities = vec![task.clone(), action.clone()];
+        let content = object_view_content(&task, &entities, &[]);
+        assert_eq!(
+            object_view_history_lines(&content),
+            vec!["Исполнение: Экспорт PDF".to_string()]
+        );
+        assert!(object_view_details(&content).is_empty());
+        let closed = super::object_overlay_fact_locs(0, 0, 0, 1, false, 0, 0);
+        assert_eq!(closed, vec!["object.history".to_string()]);
+        let open = super::object_overlay_fact_locs(0, 0, 0, 1, true, 0, 0);
+        assert_eq!(
+            open,
+            vec![
+                "object.history".to_string(),
+                "object.history.0".to_string()
+            ]
+        );
+        let tree = super::layout_live_v2(
+            &super::object_overlay_v2_source(&[], &["object.history"], false),
+            "ADR-499 history",
+            1080,
+            2400,
+        );
+        let row = super::v2_named_rect(&tree, "object.history", "history");
+        let hit = (
+            (row.x + row.width / 2) as f64,
+            (row.y + 8) as f64,
+        );
+        assert_eq!(
+            object_view_hit(hit, 1080, 2400, 0, 0, 0, 0, true),
+            Some(ObjectViewHit::History)
+        );
+        assert_eq!(object_view_hit(hit, 1080, 2400, 0, 0, 0, 0, false), None);
+        let painted = super::object_overlay_paint(
+            &[],
+            &["object.history"],
+            false,
+            "ADR-499 history paint",
+            1080,
+            2400,
+        );
+        assert!(painted.2.iter().any(Option::is_some));
     }
 
     #[test]
@@ -23510,8 +23641,9 @@ mod tests {
         let details = object_view_details(&content);
         assert!(!details.iter().any(|line| line.starts_with("Актёр:")));
         assert!(!details.iter().any(|line| line.starts_with("Последствие:")));
+        assert!(details.is_empty());
         assert_eq!(
-            details,
+            object_view_history_lines(&content),
             vec!["Исполнение: process.kill_request".to_string()]
         );
     }

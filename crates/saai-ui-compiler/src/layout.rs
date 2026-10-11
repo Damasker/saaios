@@ -753,6 +753,9 @@ fn v2_lock_field_node(
 }
 
 fn v2_stacked_action(row: &crate::SuiV2Component) -> Option<String> {
+    if row.type_name == "Disclosure" && row.props.a11y.as_deref() == Some("Button") {
+        return row.props.loc.clone();
+    }
     if matches!(
         row.type_name.as_str(),
         "SystemSection"
@@ -2484,6 +2487,28 @@ mod tests {
         assert_eq!(
             tree.hit_test(135.0, 2250.0).map(|node| node.id.as_str()),
             Some("now")
+        );
+    }
+
+    #[test]
+    fn layout_v2_disclosure_button_hits_object_history() {
+        let screen = compile_v2(
+            r#"
+            sui 2
+            screen object {
+              component Disclosure {
+                a11y = Button
+                loc = object.history
+              }
+            }
+            "#,
+        )
+        .expect("history disclosure");
+        let tree = layout_v2(&screen, 1080, 2400);
+        assert_eq!(
+            tree.hit_test(540.0, 525.0)
+                .and_then(|node| node.action.as_deref()),
+            Some("object.history")
         );
     }
 

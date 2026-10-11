@@ -152,6 +152,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Bluetooth overflow devices scroll above pinned Искать (ADR-496).
   Trusted-client overflow scrolls above pinned Назад (ADR-497).
   Apps grid overflow tiles scroll above the tab strip (ADR-498).
+  Object View history stays behind Disclosure (ADR-499).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
