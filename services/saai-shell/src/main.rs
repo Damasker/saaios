@@ -3958,6 +3958,17 @@ fn object_view_related_omit(
         .collect()
 }
 
+fn object_view_related_offline_reason(
+    store_connected: bool,
+    peer_count: usize,
+) -> Option<&'static str> {
+    if store_connected || peer_count > 0 {
+        None
+    } else {
+        Some("Связи недоступны")
+    }
+}
+
 fn object_view_related_peer_lines(
     entity: &Entity,
     selected_entities: &[Entity],
@@ -11143,7 +11154,16 @@ impl Shell {
             } else {
                 Vec::new()
             };
-            if related_lines.is_empty() && step_lines.is_empty() {
+            if content.status != "План недоступен" {
+                if let Some(reason) =
+                    object_view_related_offline_reason(connected, related_lines.len())
+                {
+                    details.insert(0, reason.to_string());
+                }
+            }
+            if related_lines.is_empty() && step_lines.is_empty() && content.status != "План недоступен"
+                && object_view_related_offline_reason(connected, related_lines.len()).is_none()
+            {
                 if let Some(related) = content.related.clone() {
                     details.insert(0, related);
                 }
@@ -13616,7 +13636,15 @@ impl Shell {
         } else {
             0
         };
-        if related_count == 0 && step_count == 0 {
+        if content.status != "План недоступен"
+            && object_view_related_offline_reason(connected, related_count).is_some()
+        {
+            details.insert(0, String::new());
+        } else if related_count == 0
+            && step_count == 0
+            && content.status != "План недоступен"
+            && object_view_related_offline_reason(connected, related_count).is_none()
+        {
             if content.related.is_some() {
                 details.insert(0, String::new());
             }
@@ -21392,6 +21420,40 @@ mod tests {
             Some(ObjectViewHit::Action(0))
         );
         assert_eq!(object_view_action_at((540.0, 292.0), 1080, 2400, 1), None);
+    }
+
+    #[test]
+    fn object_view_related_offline_is_not_an_empty_peer_list() {
+        assert_eq!(super::object_view_related_offline_reason(true, 0), None);
+        assert_eq!(super::object_view_related_offline_reason(false, 1), None);
+        assert_eq!(
+            super::object_view_related_offline_reason(false, 0),
+            Some("Связи недоступны")
+        );
+        let note = test_entity("note.doc", serde_json::Map::new());
+        assert!(object_view_related_peer_lines(&note, &[note.clone()], &[]).is_empty());
+        assert_eq!(
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0),
+            None
+        );
+        let painted = super::object_overlay_paint(
+            &[],
+            &["object.detail.0"],
+            false,
+            "ADR-487 object overlay",
+            1080,
+            2400,
+        );
+        let row = painted.2[0].expect("offline related");
+        assert_eq!(row, saai_ui_core::Rect::new(49, 284, 982, row.height));
+        assert_eq!(
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0),
+            None
+        );
+        assert_eq!(
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0, 0),
+            Some(ObjectViewHit::Related(0))
+        );
     }
 
     #[test]

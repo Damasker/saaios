@@ -79,6 +79,8 @@ the summary at `(49, 140, 982, 144)`, the fact row at `y=284`,
 and permission below that, all with the `width/22` margin
 (ADR-436). Live overflow facts scroll above pinned Buttons
 (ADR-486); this example does not name the scroll offset.
+Store-down related with no cached peers is «Связи недоступны»
+(ADR-487), not an empty peer list.
 Public `IntentSummary` / `TaskSummary` / `AgentSummary`
 dock on `stacked_row_rect` (ADR-464). Status invents no action.
 This example does not name them.

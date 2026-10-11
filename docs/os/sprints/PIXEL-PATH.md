@@ -257,6 +257,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 search item rows | live `search.item.{i}` Buttons; empty/offline Status **host** (ADR-484; Experimental; leave Сейчас) |
 | VUI-09 wifi status reader | adapter / offline / «Нет статуса» stay distinct **host** (ADR-485; Experimental; leave Сейчас) |
 | VUI-09 object overlay scroll | facts scroll above pinned Object View Buttons **host** (ADR-486; Experimental; leave Сейчас) |
+| VUI-09 object related offline | unknown related is «Связи недоступны», not 0 **host** (ADR-487; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
