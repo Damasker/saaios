@@ -162,6 +162,7 @@ ADR-485 Wi-Fi distinguishes adapter, offline, and unread status.
 ADR-486 Object / Intent overflow facts scroll above pinned Buttons.
 ADR-487 Object related offline is «Связи недоступны», not empty.
 ADR-488 NOW overflow rows scroll above the pinned footer.
+ADR-489 Space overflow members scroll above pinned Назад.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

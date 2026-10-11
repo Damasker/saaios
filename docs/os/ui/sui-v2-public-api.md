@@ -126,7 +126,8 @@ labelled Spaces sample: `ContextHeader`, `SpaceRow` with
 matches Inbox stacked top (ADR-458). Status `SpaceRow` invents no
 `select_space`. Live `spaces.focus` and `spaces.member.{i}` are
 interned on Space detail (ADR-480/482); this example does not
-name them.
+name them. Live overflow members scroll above pinned Назад
+(ADR-489); this example does not name the offset.
 
 [`examples/me-public.sui`](examples/me-public.sui) is the
 labelled Me sample: `ContextHeader`, a `SystemSection` header, the

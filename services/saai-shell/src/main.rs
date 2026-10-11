@@ -7516,6 +7516,46 @@ fn space_detail_v2_source(entities: &[Entity], store_connected: bool) -> String 
     src
 }
 
+fn space_detail_stacked_count(entities: &[Entity], store_connected: bool) -> usize {
+    if !store_connected {
+        return 1;
+    }
+    let focus = usize::from(space_focus_task(entities).is_some());
+    let members = space_detail_member_rows(entities).len();
+    if members == 0 && focus == 0 {
+        1
+    } else {
+        focus + members
+    }
+}
+
+fn space_detail_scroll_content(width: u32, height: u32, row_count: usize) -> Rect {
+    let first = stacked_row_rect(0, width, height);
+    let back = stacked_control_rect(row_count, width, height);
+    let content = root_content_rect(width, height);
+    let dock = content
+        .y
+        .saturating_add(content.height)
+        .saturating_sub(first.height);
+    let floor = back.y.min(dock);
+    Rect::new(0, first.y, width, floor.saturating_sub(first.y))
+}
+
+fn space_detail_scroll_max(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+) -> i32 {
+    let count = space_detail_stacked_count(entities, store_connected);
+    me_max_scroll_offset(
+        count,
+        width,
+        height,
+        space_detail_scroll_content(width, height, count),
+    )
+}
+
 fn space_detail_action_at(
     pos: (f64, f64),
     width: u32,
@@ -7523,12 +7563,37 @@ fn space_detail_action_at(
     entities: &[Entity],
     store_connected: bool,
 ) -> Option<SpaceDetailTap> {
-    let (_, action) = live_v2_hit(
+    space_detail_action_at_scrolled(pos, width, height, entities, store_connected, 0)
+}
+
+fn space_detail_action_at_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    entities: &[Entity],
+    store_connected: bool,
+    scroll_offset: i32,
+) -> Option<SpaceDetailTap> {
+    if live_v2_hit(
         &space_detail_v2_source(entities, store_connected),
-        "ADR-482 space detail",
+        "ADR-489 space detail dock",
         pos,
         width,
         height,
+    )
+    .and_then(|(_, action)| action)
+    .as_deref()
+        == Some("list_back")
+    {
+        return Some(SpaceDetailTap::Back);
+    }
+    let (_, action) = live_v2_hit_scrolled(
+        &space_detail_v2_source(entities, store_connected),
+        "ADR-489 space detail",
+        pos,
+        width,
+        height,
+        scroll_offset,
     )?;
     match action.as_deref() {
         Some("list_back") => Some(SpaceDetailTap::Back),
@@ -7549,22 +7614,35 @@ fn space_focus_paint_row(
     width: u32,
     height: u32,
 ) -> Option<(Rect, DataRow)> {
+    space_focus_paint_row_scrolled(entities, store_connected, width, height, 0)
+}
+
+fn space_focus_paint_row_scrolled(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Option<(Rect, DataRow)> {
     if width == 0 || height == 0 || !store_connected {
         return None;
     }
     let task = space_focus_task(entities)?;
-    let tree = layout_live_v2(
+    let tree = layout_live_v2_scrolled(
         &space_detail_v2_source(entities, store_connected),
         "ADR-480 space focus",
         width,
         height,
+        scroll_offset,
     );
-    Some((
-        v2_named_rect(&tree, "spaces.focus", "ADR-480 space focus"),
-        DataRow::new(task.title.clone(), DataRowVariant::Navigation)
-            .with_secondary(task_status_text(task, entities))
-            .with_action("spaces.focus"),
-    ))
+    saai_ui_compiler::layout_v1_find(&tree, "spaces.focus").map(|node| {
+        (
+            node.rect,
+            DataRow::new(task.title.clone(), DataRowVariant::Navigation)
+                .with_secondary(task_status_text(task, entities))
+                .with_action("spaces.focus"),
+        )
+    })
 }
 
 fn space_member_paint_rows(
@@ -7573,38 +7651,59 @@ fn space_member_paint_rows(
     width: u32,
     height: u32,
 ) -> Vec<(Rect, DataRow)> {
+    space_member_paint_rows_scrolled(entities, store_connected, width, height, 0)
+}
+
+fn space_member_paint_rows_scrolled(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Vec<(Rect, DataRow)> {
     if width == 0 || height == 0 {
         return Vec::new();
     }
-    let tree = layout_live_v2(
+    let tree = layout_live_v2_scrolled(
         &space_detail_v2_source(entities, store_connected),
         "ADR-482 space members",
         width,
         height,
+        scroll_offset,
     );
     if !store_connected {
-        return vec![(
-            v2_named_rect(&tree, "spaces.offline", "ADR-482 space members"),
-            DataRow::new("Нет связи", DataRowVariant::Static),
-        )];
+        return saai_ui_compiler::layout_v1_find(&tree, "spaces.offline")
+            .map(|node| {
+                vec![(
+                    node.rect,
+                    DataRow::new("Нет связи", DataRowVariant::Static),
+                )]
+            })
+            .unwrap_or_default();
     }
     let rows = space_detail_member_rows(entities);
     if rows.is_empty() && space_focus_task(entities).is_none() {
-        return vec![(
-            v2_named_rect(&tree, "spaces.detail.empty", "ADR-482 space members"),
-            DataRow::new("Нет объектов", DataRowVariant::Static),
-        )];
+        return saai_ui_compiler::layout_v1_find(&tree, "spaces.detail.empty")
+            .map(|node| {
+                vec![(
+                    node.rect,
+                    DataRow::new("Нет объектов", DataRowVariant::Static),
+                )]
+            })
+            .unwrap_or_default();
     }
     rows.into_iter()
         .enumerate()
-        .map(|(index, entity)| {
+        .filter_map(|(index, entity)| {
             let loc = format!("spaces.member.{index}");
-            (
-                v2_named_rect(&tree, &loc, "ADR-482 space members"),
-                DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
-                    .with_secondary(space_member_kind_label(entity).to_string())
-                    .with_action(loc),
-            )
+            saai_ui_compiler::layout_v1_find(&tree, &loc).map(|node| {
+                (
+                    node.rect,
+                    DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
+                        .with_secondary(space_member_kind_label(entity).to_string())
+                        .with_action(loc),
+                )
+            })
         })
         .collect()
 }
@@ -9565,6 +9664,7 @@ fn main() {
         viewing_entity_id: None,
         object_scroll_offset: 0,
         now_scroll_offset: 0,
+        space_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -9927,6 +10027,10 @@ struct Shell {
     /// Vertical drag-to-scroll for NOW stacked rows. Header,
     /// ObjectSummary, footer, and tabs stay at offset 0 (ADR-488).
     now_scroll_offset: i32,
+    /// Vertical drag-to-scroll for Space detail members. Header and
+    /// docked Назад stay at offset 0 (ADR-489). Reset when detail
+    /// opens or closes.
+    space_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10412,6 +10516,21 @@ impl TouchHandler for Shell {
         {
             Some((position.1, self.now_scroll_offset))
         } else if self.tab_touch_pending
+            && self.current_page == RootPage::Spaces
+            && self.space_detail_open
+            && !self.any_modal_open()
+            && space_detail_scroll_content(
+                self.width,
+                self.height,
+                space_detail_stacked_count(
+                    &self.selected_entities,
+                    self.entityd.is_connected(),
+                ),
+            )
+            .contains(position.0, position.1)
+        {
+            Some((position.1, self.space_scroll_offset))
+        } else if self.tab_touch_pending
             && self.current_page == RootPage::Me
             && !self.any_modal_open()
             && root_view(self.width, self.height).children[0]
@@ -10803,7 +10922,7 @@ impl TouchHandler for Shell {
                     println!("saai-shell: switched to {page:?}");
                     self.current_page = page;
                     self.apps_open = false;
-                    self.space_detail_open = false;
+                    self.set_space_detail_open(false);
                     self.draw(conn, qh);
                 } else if page == RootPage::Now && self.apps_open {
                     // VUI-03 (ADR-113): re-tapping the already-selected
@@ -10814,7 +10933,7 @@ impl TouchHandler for Shell {
                     self.apps_open = false;
                     self.draw(conn, qh);
                 } else if page == RootPage::Spaces && self.space_detail_open {
-                    self.space_detail_open = false;
+                    self.set_space_detail_open(false);
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Inbox {
@@ -10851,19 +10970,20 @@ impl TouchHandler for Shell {
                 }
             } else if self.current_page == RootPage::Spaces {
                 if self.space_detail_open {
-                    match space_detail_action_at(
+                    match space_detail_action_at_scrolled(
                         self.last_touch_pos,
                         self.width,
                         self.height,
                         &self.selected_entities,
                         self.entityd.is_connected(),
+                        self.space_scroll_offset,
                     ) {
                         Some(SpaceDetailTap::Member(id)) => {
                             self.set_viewing_entity_id(Some(id));
                             self.draw(conn, qh);
                         }
                         Some(SpaceDetailTap::Back) => {
-                            self.space_detail_open = false;
+                            self.set_space_detail_open(false);
                             self.draw(conn, qh);
                         }
                         None => {}
@@ -11053,6 +11173,16 @@ impl TouchHandler for Shell {
                 let clamped = new_offset.clamp(0, max_offset);
                 if clamped != self.now_scroll_offset {
                     self.now_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
+            } else if self.current_page == RootPage::Spaces
+                && self.space_detail_open
+                && !self.dev_surface_open
+            {
+                let max_offset = self.space_detail_live_scroll_max();
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.space_scroll_offset {
+                    self.space_scroll_offset = clamped;
                     self.me_scroll_dirty = true;
                 }
             } else {
@@ -11866,12 +11996,19 @@ impl Shell {
                     ),
                     header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
                     rows: self.space_detail_content_cards_from(&view),
-                    focus: space_focus_paint_row(&self.selected_entities, connected, width, height),
-                    members: space_member_paint_rows(
+                    focus: space_focus_paint_row_scrolled(
                         &self.selected_entities,
                         connected,
                         width,
                         height,
+                        self.space_scroll_offset,
+                    ),
+                    members: space_member_paint_rows_scrolled(
+                        &self.selected_entities,
+                        connected,
+                        width,
+                        height,
+                        self.space_scroll_offset,
                     ),
                 }
             } else {
@@ -12551,7 +12688,12 @@ impl Shell {
             self.upsert_manual_context(space_id);
             self.entityd.select_space(space_id);
         }
-        self.space_detail_open = true;
+        self.set_space_detail_open(true);
+    }
+
+    fn set_space_detail_open(&mut self, open: bool) {
+        self.space_detail_open = open;
+        self.space_scroll_offset = 0;
     }
 
     /// S13 Change 4: launches an already-installed app by id -- the
@@ -13862,6 +14004,15 @@ impl Shell {
             empty_tasks,
             next_count,
             empty_next,
+            self.width,
+            self.height,
+        )
+    }
+
+    fn space_detail_live_scroll_max(&self) -> i32 {
+        space_detail_scroll_max(
+            &self.selected_entities,
+            self.entityd.is_connected(),
             self.width,
             self.height,
         )
@@ -21019,6 +21170,84 @@ mod tests {
         assert_eq!(offline.len(), 1);
         assert_eq!(offline[0].1.primary, "Нет связи");
         assert!(!offline[0].1.is_actionable());
+    }
+
+    #[test]
+    fn space_overflow_members_scroll_above_pinned_back() {
+        let entities: Vec<_> = (0..12)
+            .map(|index| intent_entity(&format!("Объект {index:02}")))
+            .collect();
+        let last_id = super::space_detail_member_rows(&entities)
+            .last()
+            .expect("12 members")
+            .id;
+        let last_title = super::space_detail_member_rows(&entities)
+            .last()
+            .expect("12 members")
+            .title
+            .clone();
+        let max = super::space_detail_scroll_max(&entities, true, 1080, 2400);
+        assert!(max > 0, "12 members must cross the docked back");
+        let tree = super::layout_live_v2(
+            &super::space_detail_v2_source(&entities, true),
+            "ADR-489 space overflow",
+            1080,
+            2400,
+        );
+        let header = super::v2_named_rect(&tree, "ContextHeader", "space header");
+        let back = super::v2_named_rect(&tree, "back", "space back");
+        assert!(saai_ui_compiler::layout_v1_find(&tree, "spaces.member.11").is_none());
+        let last_slot = stacked_row_rect(11, 1080, 2400);
+        let last_point = (
+            (last_slot.x + last_slot.width / 2) as f64,
+            (last_slot.y + last_slot.height / 2) as f64,
+        );
+        assert_eq!(
+            space_detail_action_at(last_point, 1080, 2400, &entities, true),
+            None
+        );
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::space_detail_v2_source(&entities, true),
+            "ADR-489 space overflow",
+            1080,
+            2400,
+            max,
+        );
+        let last = saai_ui_compiler::layout_v1_find(&scrolled, "spaces.member.11")
+            .expect("scrolled last member");
+        assert!(last.rect.y >= header.y + header.height);
+        assert!(last.rect.y + last.rect.height <= back.y);
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "ContextHeader", "space header scrolled"),
+            header
+        );
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "back", "space back scrolled"),
+            back
+        );
+        let hit = (
+            (last.rect.x + last.rect.width / 2) as f64,
+            (last.rect.y + 8) as f64,
+        );
+        assert_eq!(
+            super::space_detail_action_at_scrolled(hit, 1080, 2400, &entities, true, max),
+            Some(SpaceDetailTap::Member(last_id))
+        );
+        let back_point = (
+            (back.x + back.width / 2) as f64,
+            (back.y + back.height / 2) as f64,
+        );
+        assert_eq!(
+            super::space_detail_action_at_scrolled(back_point, 1080, 2400, &entities, true, max),
+            Some(SpaceDetailTap::Back)
+        );
+        let painted = super::space_member_paint_rows_scrolled(&entities, true, 1080, 2400, max);
+        assert!(painted
+            .iter()
+            .any(|(rect, row)| row.primary == last_title && *rect == last.rect));
+        assert!(super::space_member_paint_rows(&entities, true, 1080, 2400)
+            .iter()
+            .all(|(_, row)| row.primary != last_title));
     }
 
     #[test]

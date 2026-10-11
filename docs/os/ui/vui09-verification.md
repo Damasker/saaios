@@ -142,6 +142,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Object related offline is «Связи недоступны», not zero peers
   (ADR-487).
   NOW overflow rows scroll above the pinned footer (ADR-488).
+  Space overflow members scroll above pinned Назад (ADR-489).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

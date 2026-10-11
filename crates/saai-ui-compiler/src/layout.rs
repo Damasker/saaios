@@ -54,6 +54,8 @@
 //! ADR-473: Intent plan Tasks are `object.step.{i}` Buttons. Empty
 //! stays «Нет задачи». Confirm stays AskUser on the waiting Task.
 //! ADR-474: NOW attention items are `now.attention.{i}` Buttons.
+//! ADR-489: Space detail members honor `scroll_offset` above docked
+//! Назад; header stays at the first stacked slot.
 //! ADR-488: NOW stacked rows clip above the pinned footer and honor
 //! `scroll_offset`. Header, ObjectSummary, footer, and tabs stay put.
 //! Confirmed empty among other work is Status. `now.empty` stays
@@ -261,8 +263,14 @@ fn v2_control_top(index: usize, panel_height: u32) -> u32 {
 }
 
 /// Live `stacked_trailing_rect`.
-fn v2_trailing_top(index: usize, last_index: usize, panel_height: u32) -> u32 {
-    let back_top = v2_control_top(last_index, panel_height);
+fn v2_trailing_top_in(
+    index: usize,
+    last_index: usize,
+    panel_height: u32,
+    floor: u32,
+) -> u32 {
+    let row_height = v2_stacked_row_height(panel_height);
+    let back_top = v2_control_top(last_index, panel_height).min(floor.saturating_sub(row_height));
     let steps = last_index.saturating_sub(index) as u32;
     let y = back_top.saturating_sub(steps.saturating_mul(v2_stacked_row_pitch(panel_height)));
     y.max(v2_stacked_row_top(0, panel_height))
@@ -865,7 +873,7 @@ fn v2_content_node(
         None
     } else {
         let last = stacked.len() + trailing.len() - 1;
-        Some(v2_trailing_top(stacked.len(), last, height))
+        Some(v2_trailing_top_in(stacked.len(), last, height, content_height))
     };
     let footer_first_top = if footer.is_empty() {
         None
@@ -884,7 +892,10 @@ fn v2_content_node(
     } else {
         0
     };
-    let min_top = if clip_to_first_slot || footer_first_top.is_some() {
+    let min_top = if clip_to_first_slot
+        || footer_first_top.is_some()
+        || trailing_first_top.is_some()
+    {
         i64::from(v2_stacked_row_top(0, height))
     } else {
         0
@@ -945,7 +956,7 @@ fn v2_content_node(
         let last = stacked.len() + trailing.len() - 1;
         for (offset, row) in trailing.iter().enumerate() {
             let index = stacked.len() + offset;
-            let top = v2_trailing_top(index, last, height);
+            let top = v2_trailing_top_in(index, last, height, content_height);
             layers.push(v2_placed_slot(
                 &screen.id,
                 index + 100,
@@ -1383,6 +1394,58 @@ mod tests {
         let object = layout_v1_find(&rest, "ObjectSummary").expect("object");
         let object_scrolled = layout_v1_find(&scrolled, "ObjectSummary").expect("object scrolled");
         assert_eq!(object_scrolled.rect, object.rect);
+    }
+
+    #[test]
+    fn layout_v2_space_overflow_members_scroll_above_pinned_back() {
+        let mut src = String::from(
+            r#"
+            sui 2
+            screen spaces {
+              component ContextHeader {
+                text = Title
+                a11y = Heading
+                loc = spaces.header
+                focus = 0
+                inset = safe
+              }
+            "#,
+        );
+        for index in 0..12 {
+            src.push_str(&format!(
+                "              component DataRow {{\n                text = Body\n                a11y = Button\n                loc = spaces.member.{index}\n              }}\n"
+            ));
+        }
+        src.push_str(
+            r#"
+              row back {}
+              component BottomNavigation {
+                a11y = Button
+                focus = 1
+                scroll = none
+                inset = safe
+                tab now { loc = now }
+                tab spaces { loc = spaces }
+                tab search { loc = search }
+                tab me { loc = me }
+              }
+            }
+            "#,
+        );
+        let screen = compile_v2(&src).expect("space overflow");
+        let rest = layout_v2(&screen, 1080, 2400);
+        let header = layout_v1_find(&rest, "ContextHeader").expect("header");
+        let back = layout_v1_find(&rest, "back").expect("back");
+        assert!(layout_v1_find(&rest, "spaces.member.11").is_none());
+        assert!(layout_v1_find(&rest, "spaces.member.0").is_some());
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 1200);
+        let last = layout_v1_find(&scrolled, "spaces.member.11").expect("scrolled last");
+        assert!(last.rect.y >= header.rect.y + header.rect.height);
+        assert!(last.rect.y + last.rect.height <= back.rect.y);
+        let header_scrolled = layout_v1_find(&scrolled, "ContextHeader").expect("header scrolled");
+        let back_scrolled = layout_v1_find(&scrolled, "back").expect("back scrolled");
+        assert_eq!(header_scrolled.rect, header.rect);
+        assert_eq!(back_scrolled.rect, back.rect);
     }
 
     #[test]
