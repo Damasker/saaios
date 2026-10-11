@@ -67,7 +67,9 @@ a surface opened from Orb, not a primary tab.
 [`examples/inbox-public.sui`](examples/inbox-public.sui) is the
 labelled Inbox sample: `ContextHeader`, `EventRow` with
 `a11y = Button` (ADR-202), and the same nested tabs. Status
-`EventRow` invents no `open_object`.
+`EventRow` invents no `open_object`. Live overflow EventRows
+scroll above the tab strip (ADR-492); this example does not
+name the offset.
 
 [`examples/object-public.sui`](examples/object-public.sui) is the
 labelled Object View sample: `ContextHeader` plus Status

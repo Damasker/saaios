@@ -262,6 +262,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 space overflow scroll | Space members scroll above pinned Назад **host** (ADR-489; Experimental; leave Сейчас) |
 | VUI-09 workers hidden | Object View hides workers/queue without an Action **host** (ADR-490; Experimental; leave Сейчас) |
 | VUI-09 search overflow scroll | Search results scroll above the tab strip **host** (ADR-491; Experimental; leave Сейчас) |
+| VUI-09 inbox overflow scroll | Inbox EventRows scroll above the tab strip **host** (ADR-492; Experimental; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

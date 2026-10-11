@@ -7445,6 +7445,27 @@ fn search_paint_rows_scrolled(
         .collect()
 }
 
+fn inbox_stacked_count(entities: &[Entity], store_connected: bool) -> usize {
+    if !store_connected {
+        return 1;
+    }
+    inbox_rows(entities).len().max(1)
+}
+
+fn inbox_scroll_max(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+) -> i32 {
+    me_max_scroll_offset(
+        inbox_stacked_count(entities, store_connected),
+        width,
+        height,
+        search_scroll_content(width, height),
+    )
+}
+
 fn inbox_row_at(
     pos: (f64, f64),
     width: u32,
@@ -7452,15 +7473,27 @@ fn inbox_row_at(
     entities: &[Entity],
     store_connected: bool,
 ) -> Option<(InboxRowKind, Uuid)> {
+    inbox_row_at_scrolled(pos, width, height, entities, store_connected, 0)
+}
+
+fn inbox_row_at_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    entities: &[Entity],
+    store_connected: bool,
+    scroll_offset: i32,
+) -> Option<(InboxRowKind, Uuid)> {
     if !store_connected {
         return None;
     }
-    let (id, action) = live_v2_hit(
+    let (id, action) = live_v2_hit_scrolled(
         &inbox_v2_source(entities, true),
-        "ADR-218 inbox",
+        "ADR-492 inbox",
         pos,
         width,
         height,
+        scroll_offset,
     )?;
     if action.as_deref() != Some("open_object") {
         return None;
@@ -9729,6 +9762,7 @@ fn main() {
         now_scroll_offset: 0,
         space_scroll_offset: 0,
         search_scroll_offset: 0,
+        inbox_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -10098,6 +10132,9 @@ struct Shell {
     /// Vertical drag-to-scroll for Search results. Header and tabs
     /// stay at offset 0 (ADR-491). Reset when leaving Search.
     search_scroll_offset: i32,
+    /// Vertical drag-to-scroll for Inbox EventRows. Header and tabs
+    /// stay at offset 0 (ADR-492). Reset when leaving Inbox.
+    inbox_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10604,6 +10641,12 @@ impl TouchHandler for Shell {
         {
             Some((position.1, self.search_scroll_offset))
         } else if self.tab_touch_pending
+            && self.current_page == RootPage::Inbox
+            && !self.any_modal_open()
+            && search_scroll_content(self.width, self.height).contains(position.0, position.1)
+        {
+            Some((position.1, self.inbox_scroll_offset))
+        } else if self.tab_touch_pending
             && self.current_page == RootPage::Me
             && !self.any_modal_open()
             && root_view(self.width, self.height).children[0]
@@ -10997,6 +11040,7 @@ impl TouchHandler for Shell {
                     self.apps_open = false;
                     self.set_space_detail_open(false);
                     self.search_scroll_offset = 0;
+                    self.inbox_scroll_offset = 0;
                     self.draw(conn, qh);
                 } else if page == RootPage::Now && self.apps_open {
                     // VUI-03 (ADR-113): re-tapping the already-selected
@@ -11015,12 +11059,13 @@ impl TouchHandler for Shell {
                 // "Входящие" has no leftover `root.sui` content
                 // actions (ADR-187). This page's tap target is
                 // entirely runtime data.
-                if let Some((_kind, id)) = inbox_row_at(
+                if let Some((_kind, id)) = inbox_row_at_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
                     &self.selected_entities,
                     self.entityd.is_connected(),
+                    self.inbox_scroll_offset,
                 ) {
                     // HIA-07: every row, task or notification alike,
                     // opens the same Object View now -- a task's own
@@ -11265,6 +11310,13 @@ impl TouchHandler for Shell {
                 let clamped = new_offset.clamp(0, max_offset);
                 if clamped != self.search_scroll_offset {
                     self.search_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
+            } else if self.current_page == RootPage::Inbox && !self.dev_surface_open {
+                let max_offset = self.inbox_live_scroll_max();
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.inbox_scroll_offset {
+                    self.inbox_scroll_offset = clamped;
                     self.me_scroll_dirty = true;
                 }
             } else {
@@ -12033,7 +12085,7 @@ impl Shell {
                     archived,
                 ),
                 header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
-                rows: self.inbox_content_cards_from(&view),
+                rows: self.inbox_content_cards_scrolled(self.inbox_scroll_offset),
             }
         } else if self.current_page == RootPage::Search {
             let connected = self.entityd.is_connected();
@@ -13704,8 +13756,18 @@ impl Shell {
     /// rather than the placeholder gray rows `draw_root` would
     /// otherwise draw for a page with zero real cards -- Acceptance
     /// criteria explicitly called this out during the DoR.
-    fn inbox_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
+    fn inbox_content_cards_scrolled(
+        &self,
+        scroll_offset: i32,
+    ) -> Vec<(Rect, render::ActionCardView)> {
         let connected = self.entityd.is_connected();
+        let tree = layout_live_v2_scrolled(
+            &inbox_v2_source(&self.selected_entities, connected),
+            "ADR-492 inbox paint",
+            self.width,
+            self.height,
+            scroll_offset,
+        );
         let events = inbox_event_rows(&self.selected_entities, connected);
         let ids: Vec<String> = if !connected {
             vec!["inbox.offline".into()]
@@ -13719,12 +13781,14 @@ impl Shell {
                     .collect()
             }
         };
-        list_paint_cards(
-            tree,
-            "ADR-226 inbox paint",
-            events.iter().map(inbox_card_from_event).collect(),
-            &ids,
-        )
+        events
+            .into_iter()
+            .zip(ids)
+            .filter_map(|(event, id)| {
+                saai_ui_compiler::layout_v1_find(&tree, &id)
+                    .map(|node| (node.rect, inbox_card_from_event(&event)))
+            })
+            .collect()
     }
 
     fn spaces_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
@@ -14108,6 +14172,15 @@ impl Shell {
 
     fn search_live_scroll_max(&self) -> i32 {
         search_scroll_max(
+            &self.selected_entities,
+            self.entityd.is_connected(),
+            self.width,
+            self.height,
+        )
+    }
+
+    fn inbox_live_scroll_max(&self) -> i32 {
+        inbox_scroll_max(
             &self.selected_entities,
             self.entityd.is_connected(),
             self.width,
@@ -23573,6 +23646,57 @@ mod tests {
         assert_eq!(
             super::inbox_row_at(point, 1080, 2400, &[waiting], true).map(|(kind, _)| kind),
             Some(super::InboxRowKind::Task)
+        );
+    }
+
+    #[test]
+    fn inbox_overflow_rows_scroll_above_the_tab_strip() {
+        let entities: Vec<_> = (0..12)
+            .map(|index| task_entity(&format!("Ждёт {index:02}"), None))
+            .collect();
+        let ranked = super::inbox_rows(&entities);
+        assert_eq!(ranked.len(), 12);
+        let last_id = ranked[11].1.id;
+        let max = super::inbox_scroll_max(&entities, true, 1080, 2400);
+        assert!(max > 0, "12 inbox rows must cross the tab strip");
+        let tree = super::layout_live_v2(
+            &super::inbox_v2_source(&entities, true),
+            "ADR-492 inbox overflow",
+            1080,
+            2400,
+        );
+        let header = super::v2_named_rect(&tree, "ContextHeader", "inbox header");
+        let last_loc = last_id.to_string();
+        assert!(saai_ui_compiler::layout_v1_find(&tree, &last_loc).is_none());
+        let last_slot = stacked_row_rect(11, 1080, 2400);
+        let last_point = (
+            (last_slot.x + last_slot.width / 2) as f64,
+            (last_slot.y + last_slot.height / 2) as f64,
+        );
+        assert!(super::inbox_row_at(last_point, 1080, 2400, &entities, true).is_none());
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::inbox_v2_source(&entities, true),
+            "ADR-492 inbox overflow",
+            1080,
+            2400,
+            max,
+        );
+        let found =
+            saai_ui_compiler::layout_v1_find(&scrolled, &last_loc).expect("scrolled last inbox");
+        let content = super::root_content_rect(1080, 2400);
+        assert!(found.rect.y + found.rect.height <= content.y + content.height);
+        assert_eq!(
+            super::v2_named_rect(&scrolled, "ContextHeader", "inbox header scrolled"),
+            header
+        );
+        let hit = (
+            (found.rect.x + found.rect.width / 2) as f64,
+            (found.rect.y + 8) as f64,
+        );
+        assert_eq!(
+            super::inbox_row_at_scrolled(hit, 1080, 2400, &entities, true, max)
+                .map(|(_, id)| id),
+            Some(last_id)
         );
     }
 
