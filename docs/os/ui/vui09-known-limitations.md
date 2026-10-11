@@ -87,7 +87,9 @@ Space focus is a live `spaces.focus` Button (ADR-480).
 Space members are live `spaces.member.{i}` Buttons (ADR-482).
 Intent plan is unavailable when the store is down (ADR-483).
 Search results are live `search.item.{i}` Buttons (ADR-484).
-Wi-Fi distinguishes adapter, offline, and unread status (ADR-485). Public
+Wi-Fi distinguishes adapter, offline, and unread status (ADR-485).
+Object / Intent overflow facts scroll above pinned Buttons
+(ADR-486). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`

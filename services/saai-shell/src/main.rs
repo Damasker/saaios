@@ -3347,6 +3347,28 @@ fn object_view_hit(
     step_count: usize,
     quick_count: usize,
 ) -> Option<ObjectViewHit> {
+    object_view_hit_scrolled(
+        pos,
+        width,
+        height,
+        action_count,
+        related_count,
+        step_count,
+        quick_count,
+        0,
+    )
+}
+
+fn object_view_hit_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    action_count: usize,
+    related_count: usize,
+    step_count: usize,
+    quick_count: usize,
+    scroll_offset: i32,
+) -> Option<ObjectViewHit> {
     if width == 0
         || height == 0
         || (action_count == 0 && related_count == 0 && step_count == 0 && quick_count == 0)
@@ -3372,14 +3394,26 @@ fn object_view_hit(
         .chain(quick.iter())
         .map(String::as_str)
         .collect();
-    live_v2_hit(
-        &object_overlay_v2_source(&loc_refs, &facts, false),
-        "ADR-473 object overlay",
-        pos,
-        width,
-        height,
-    )
-    .and_then(|(_, action)| action)
+    let source = object_overlay_v2_source(&loc_refs, &facts, false);
+    let dock = object_overlay_v2_source(&loc_refs, &[], false);
+    let hit = if let Some(action) = live_v2_hit(&dock, "ADR-486 object overlay", pos, width, height)
+        .and_then(|(_, action)| action)
+        .filter(|action| action.starts_with(OBJECT_VIEW_ACTION_PREFIX))
+    {
+        Some((String::new(), Some(action)))
+    } else if scroll_offset == 0 {
+        live_v2_hit(&source, "ADR-473 object overlay", pos, width, height)
+    } else {
+        live_v2_hit_scrolled(
+            &source,
+            "ADR-486 object overlay",
+            pos,
+            width,
+            height,
+            scroll_offset,
+        )
+    };
+    hit.and_then(|(_, action)| action)
     .and_then(|action| {
         if let Some(index) = action
             .strip_prefix("object.step.")
@@ -8787,22 +8821,43 @@ fn object_overlay_paint(
     why: &'static str,
     width: u32,
     height: u32,
-) -> (Rect, Rect, Vec<Rect>, Option<Rect>, Vec<Rect>) {
-    let tree = layout_live_v2(
-        &object_overlay_v2_source(locs, facts, permission),
+) -> (Rect, Rect, Vec<Option<Rect>>, Option<Rect>, Vec<Rect>) {
+    object_overlay_paint_scrolled(locs, facts, permission, why, width, height, 0)
+}
+
+fn object_overlay_paint_scrolled(
+    locs: &[&str],
+    facts: &[&str],
+    permission: bool,
+    why: &'static str,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> (Rect, Rect, Vec<Option<Rect>>, Option<Rect>, Vec<Rect>) {
+    let source = object_overlay_v2_source(locs, facts, permission);
+    let dock = layout_live_v2(
+        &object_overlay_v2_source(locs, &[], false),
         why,
         width,
         height,
     );
-    let summary = v2_named_rect(&tree, "object.summary", why);
+    let rest = layout_live_v2(&source, why, width, height);
+    let tree = if scroll_offset == 0 {
+        rest
+    } else {
+        layout_live_v2_scrolled(&source, why, width, height, scroll_offset)
+    };
+    let summary = v2_named_rect(&dock, "object.summary", why);
     let fact_rects = facts
         .iter()
-        .map(|id| v2_named_rect(&tree, id, why))
+        .map(|id| saai_ui_compiler::layout_v1_find(&tree, id).map(|node| node.rect))
         .collect::<Vec<_>>();
-    let permission_rect = permission.then(|| v2_named_rect(&tree, "object.permission", why));
+    let permission_rect = permission
+        .then(|| saai_ui_compiler::layout_v1_find(&tree, "object.permission").map(|node| node.rect))
+        .flatten();
     let buttons = locs
         .iter()
-        .map(|id| v2_named_rect(&tree, id, why))
+        .map(|id| v2_named_rect(&dock, id, why))
         .collect::<Vec<_>>();
     let body = if let Some(first) = buttons.first() {
         Rect::new(0, 0, width, first.y)
@@ -8810,6 +8865,39 @@ fn object_overlay_paint(
         Rect::new(0, 0, width, height)
     };
     (body, summary, fact_rects, permission_rect, buttons)
+}
+
+fn object_overlay_scroll_max(
+    action_count: usize,
+    fact_count: usize,
+    permission: bool,
+    width: u32,
+    height: u32,
+) -> i32 {
+    if width == 0 || height == 0 || fact_count == 0 {
+        return 0;
+    }
+    let locs: Vec<String> = (0..action_count)
+        .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
+        .collect();
+    let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
+    let (_, _, fact_rects, _, buttons) = object_overlay_paint(
+        &loc_refs,
+        &["object.related.0"],
+        false,
+        "ADR-486 object overlay scroll",
+        width,
+        height,
+    );
+    let Some(first) = fact_rects.first().copied().flatten() else {
+        return 0;
+    };
+    let floor = buttons.first().map(|rect| rect.y).unwrap_or(height);
+    let rows = fact_count.saturating_add(usize::from(permission));
+    let last_bottom = first
+        .y
+        .saturating_add(first.height.saturating_mul(rows as u32));
+    last_bottom.saturating_sub(floor) as i32
 }
 
 fn overlay_field_v2_source(screen_id: &str, field_id: &str) -> String {
@@ -9263,6 +9351,7 @@ fn main() {
         selected_space_id: "home".into(),
         entity_counts: BTreeMap::new(),
         viewing_entity_id: None,
+        object_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -9618,6 +9707,10 @@ struct Shell {
     /// auto-popup" shape S13 Change 2 already established, covering
     /// any entity_type "Входящие" or NOW ever names.
     viewing_entity_id: Option<Uuid>,
+    /// Vertical drag-to-scroll for Object View facts. Buttons and
+    /// `object.summary` stay at offset 0 (ADR-486). Reset when the
+    /// viewed entity changes.
+    object_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10093,6 +10186,8 @@ impl TouchHandler for Shell {
         // apart from a tap.
         self.me_drag = if self.tab_touch_pending && self.dev_surface_open {
             Some((position.1, self.me_scroll_offset))
+        } else if self.tab_touch_pending && self.viewing_entity_id.is_some() {
+            Some((position.1, self.object_scroll_offset))
         } else if self.tab_touch_pending
             && self.current_page == RootPage::Me
             && !self.any_modal_open()
@@ -10255,6 +10350,12 @@ impl TouchHandler for Shell {
                 // Button count varies by entity_type, so it has to be
                 // recomputed here, same "read fresh" reasoning
                 // `object_view_content` itself already documents.
+                // A drag that ends over a fact or footer is still a
+                // scroll, not a tap (ADR-486).
+                if was_me_drag {
+                    self.me_scroll_dirty = true;
+                    return;
+                }
                 let content = self.viewing_entity().map(|entity| {
                     object_view_content_with(
                         entity,
@@ -10294,7 +10395,7 @@ impl TouchHandler for Shell {
                     .map(object_view_quick_actions)
                     .map(|actions| actions.len())
                     .unwrap_or(0);
-                match object_view_hit(
+                match object_view_hit_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
@@ -10302,6 +10403,7 @@ impl TouchHandler for Shell {
                     related_count,
                     step_count,
                     quick_count,
+                    self.object_scroll_offset,
                 ) {
                     Some(ObjectViewHit::Action(index)) => {
                         self.handle_object_view_action(index);
@@ -10510,7 +10612,7 @@ impl TouchHandler for Shell {
                     // Скрыть live in that screen's action row instead
                     // of one kind opening a dedicated modal and the
                     // other dismissing on the bare row tap.
-                    self.viewing_entity_id = Some(id);
+                    self.set_viewing_entity_id(Some(id));
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Search {
@@ -10521,7 +10623,7 @@ impl TouchHandler for Shell {
                     &self.selected_entities,
                     self.entityd.is_connected(),
                 ) {
-                    self.viewing_entity_id = Some(id);
+                    self.set_viewing_entity_id(Some(id));
                     self.draw(conn, qh);
                 }
             } else if self.current_page == RootPage::Spaces {
@@ -10534,7 +10636,7 @@ impl TouchHandler for Shell {
                         self.entityd.is_connected(),
                     ) {
                         Some(SpaceDetailTap::Member(id)) => {
-                            self.viewing_entity_id = Some(id);
+                            self.set_viewing_entity_id(Some(id));
                             self.draw(conn, qh);
                         }
                         Some(SpaceDetailTap::Back) => {
@@ -10576,7 +10678,7 @@ impl TouchHandler for Shell {
                         .get(index)
                         .and_then(|item| now_attention_follow_id(item))
                     {
-                        self.viewing_entity_id = Some(id);
+                        self.set_viewing_entity_id(Some(id));
                         self.draw(conn, qh);
                     }
                 } else if let Some(index) = now_task_hit(
@@ -10596,7 +10698,7 @@ impl TouchHandler for Shell {
                         .get(index)
                         .map(|entity| entity.id)
                     {
-                        self.viewing_entity_id = Some(id);
+                        self.set_viewing_entity_id(Some(id));
                         self.draw(conn, qh);
                     }
                 } else if let Some(index) = now_next_hit(
@@ -10621,7 +10723,7 @@ impl TouchHandler for Shell {
                     if index == 0 {
                         if let Some(id) = next_work(&self.selected_entities).map(|entity| entity.id)
                         {
-                            self.viewing_entity_id = Some(id);
+                            self.set_viewing_entity_id(Some(id));
                             self.draw(conn, qh);
                         }
                     }
@@ -10632,7 +10734,7 @@ impl TouchHandler for Shell {
                     self.now_object_summary().as_ref(),
                 ) {
                     if let Some(id) = self.selected_entities.first().map(|entity| entity.id) {
-                        self.viewing_entity_id = Some(id);
+                        self.set_viewing_entity_id(Some(id));
                         self.draw(conn, qh);
                     }
                 } else if let Some(action) =
@@ -10698,28 +10800,37 @@ impl TouchHandler for Shell {
     ) {
         self.last_touch_pos = position;
         if let Some((start_y, start_offset)) = self.me_drag {
-            let (total, content_rect) = if self.dev_surface_open {
-                let total = self.dev_surface_rows().len();
-                (
-                    total,
-                    dev_surface_scroll_content(self.width, self.height, total),
-                )
-            } else {
-                (
-                    self.capture_me_rows(),
-                    root_view(self.width, self.height).children[0].rect,
-                )
-            };
-            let max_offset = me_max_scroll_offset(total, self.width, self.height, content_rect);
-            // Finger moving up (position.1 decreasing) scrolls the
-            // content down (offset increases) -- the usual touch-
-            // scroll convention (content follows the finger).
             let delta = start_y - position.1;
             let new_offset = (start_offset as f64 + delta).round() as i32;
-            let clamped = new_offset.clamp(0, max_offset);
-            if clamped != self.me_scroll_offset {
-                self.me_scroll_offset = clamped;
-                self.me_scroll_dirty = true;
+            if self.viewing_entity_id.is_some() && !self.dev_surface_open {
+                let max_offset = self.object_view_scroll_max();
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.object_scroll_offset {
+                    self.object_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
+            } else {
+                let (total, content_rect) = if self.dev_surface_open {
+                    let total = self.dev_surface_rows().len();
+                    (
+                        total,
+                        dev_surface_scroll_content(self.width, self.height, total),
+                    )
+                } else {
+                    (
+                        self.capture_me_rows(),
+                        root_view(self.width, self.height).children[0].rect,
+                    )
+                };
+                let max_offset = me_max_scroll_offset(total, self.width, self.height, content_rect);
+                // Finger moving up (position.1 decreasing) scrolls the
+                // content down (offset increases) -- the usual touch-
+                // scroll convention (content follows the finger).
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.me_scroll_offset {
+                    self.me_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
             }
         }
         self.sync_pressed_tab(conn, qh);
@@ -11047,20 +11158,26 @@ impl Shell {
             );
             let fact_refs: Vec<&str> = fact_locs.iter().map(String::as_str).collect();
             let permission = object_view_permission_pattern(&content);
-            let (header, summary_rect, fact_rects, permission_rect, rects) = object_overlay_paint(
-                &loc_refs,
-                &fact_refs,
-                permission.is_some(),
-                "ADR-430 object overlay",
-                width,
-                height,
-            );
+            let (header, summary_rect, fact_rects, permission_rect, rects) =
+                object_overlay_paint_scrolled(
+                    &loc_refs,
+                    &fact_refs,
+                    permission.is_some(),
+                    "ADR-430 object overlay",
+                    width,
+                    height,
+                    self.object_scroll_offset,
+                );
             let mut fact_texts = related_lines;
             fact_texts.extend(step_lines);
             fact_texts.extend(action_lines);
             fact_texts.extend(details);
             fact_texts.extend(decision_facts);
-            let fact_rows = fact_rects.into_iter().zip(fact_texts).collect();
+            let fact_rows = fact_rects
+                .into_iter()
+                .zip(fact_texts)
+                .filter_map(|(rect, text)| rect.map(|rect| (rect, text)))
+                .collect();
             let actions = content
                 .actions
                 .iter()
@@ -13463,6 +13580,61 @@ impl Shell {
         )
     }
 
+    fn set_viewing_entity_id(&mut self, next: Option<Uuid>) {
+        if self.viewing_entity_id != next {
+            self.object_scroll_offset = 0;
+        }
+        self.viewing_entity_id = next;
+    }
+
+    fn object_view_scroll_max(&self) -> i32 {
+        let Some(entity) = self.viewing_entity() else {
+            return 0;
+        };
+        let connected = self.entityd.is_connected();
+        let content = object_view_content_with(
+            entity,
+            &self.selected_entities,
+            &self.relationships,
+            connected,
+        );
+        let mut details = object_view_details(&content);
+        let decision_count = content
+            .decision
+            .as_ref()
+            .map(DecisionOverlay::fact_lines)
+            .map(|lines| lines.len())
+            .unwrap_or(0);
+        let related_count = object_view_related_peer_lines(
+            entity,
+            &self.selected_entities,
+            &self.relationships,
+        )
+        .len();
+        let step_count = if connected {
+            object_view_step_lines(entity, &self.selected_entities, &self.relationships).len()
+        } else {
+            0
+        };
+        if related_count == 0 && step_count == 0 {
+            if content.related.is_some() {
+                details.insert(0, String::new());
+            }
+        }
+        let fact_count = related_count
+            + step_count
+            + object_view_quick_action_lines(entity).len()
+            + details.len()
+            + decision_count;
+        object_overlay_scroll_max(
+            content.actions.len(),
+            fact_count,
+            object_view_permission_pattern(&content).is_some(),
+            self.width,
+            self.height,
+        )
+    }
+
     /// S09 Change 3 (ADR-031's follow-up): the first `saaios.task` in
     /// the selected space still waiting on a live confirmation, if any
     /// -- read straight from `selected_entities` (already kept current
@@ -13610,19 +13782,19 @@ impl Shell {
             self.entityd.is_connected(),
         );
         let Some(label) = content.actions.get(index).copied() else {
-            self.viewing_entity_id = None;
+            self.set_viewing_entity_id(None);
             return;
         };
         match label {
             "Подтвердить" | "Отклонить" => {
                 if workflow_status_of(&entity) != Some(TASK_STATUS_WAITING_CONFIRMATION) {
-                    self.viewing_entity_id = None;
+                    self.set_viewing_entity_id(None);
                     return;
                 }
                 if !store_write_ready(self.entityd.is_connected()) {
                     return;
                 }
-                self.viewing_entity_id = None;
+                self.set_viewing_entity_id(None);
                 let confirm = label == "Подтвердить";
                 let mut properties = entity.properties.clone();
                 properties.insert(
@@ -13647,7 +13819,7 @@ impl Shell {
                 if !store_write_ready(self.entityd.is_connected()) {
                     return;
                 }
-                self.viewing_entity_id = None;
+                self.set_viewing_entity_id(None);
                 self.dismiss_notification(entity.id);
             }
             OPEN_INTENT_ACTION | OPEN_TASK_ACTION | OPEN_ACTION_ACTION | OPEN_RESULT_ACTION
@@ -13658,11 +13830,12 @@ impl Shell {
                     &self.selected_entities,
                     &self.relationships,
                 );
-                self.viewing_entity_id = next
-                    .filter(|target| target.id != entity.id)
-                    .map(|target| target.id);
+                self.set_viewing_entity_id(
+                    next.filter(|target| target.id != entity.id)
+                        .map(|target| target.id),
+                );
             }
-            _ => self.viewing_entity_id = None,
+            _ => self.set_viewing_entity_id(None),
         }
     }
 
@@ -13674,7 +13847,7 @@ impl Shell {
             object_view_related_peer_ids(&entity, &self.selected_entities, &self.relationships)
                 .into_iter()
                 .nth(index);
-        self.viewing_entity_id = next.filter(|id| *id != entity.id);
+        self.set_viewing_entity_id(next.filter(|id| *id != entity.id));
     }
 
     fn handle_object_view_step(&mut self, index: usize) {
@@ -13685,7 +13858,7 @@ impl Shell {
             .into_iter()
             .nth(index)
             .map(|task| task.id);
-        self.viewing_entity_id = next.filter(|id| *id != entity.id);
+        self.set_viewing_entity_id(next.filter(|id| *id != entity.id));
     }
 
     /// HIA-04b: the Orb's own action handler, same "layout returns a
@@ -21242,18 +21415,85 @@ mod tests {
             2400,
         );
         assert_eq!(painted.2.len(), 5);
+        let first = painted.2[0].expect("step 0");
+        let second = painted.2[1].expect("step 1");
+        let last = painted.2[4].expect("step 4");
+        assert_eq!(first, saai_ui_core::Rect::new(49, 284, 982, first.height));
+        assert_eq!(second.y, first.y + first.height);
         assert_eq!(
-            painted.2[0],
-            saai_ui_core::Rect::new(49, 284, 982, painted.2[0].height)
-        );
-        assert_eq!(painted.2[1].y, painted.2[0].y + painted.2[0].height);
-        assert_eq!(
-            object_view_hit((540.0, (painted.2[4].y + 8) as f64), 1080, 2400, 0, 0, 5, 0),
+            object_view_hit((540.0, (last.y + 8) as f64), 1080, 2400, 0, 0, 5, 0),
             Some(ObjectViewHit::Step(4))
         );
         assert_eq!(
             object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 1, 0),
             Some(ObjectViewHit::Related(0))
+        );
+    }
+
+    #[test]
+    fn object_overlay_facts_scroll_above_pinned_buttons() {
+        const STEP_COUNT: usize = 12;
+        let facts: Vec<String> = (0..STEP_COUNT)
+            .map(|index| format!("object.step.{index}"))
+            .collect();
+        let refs: Vec<&str> = facts.iter().map(String::as_str).collect();
+        let rest = super::object_overlay_paint(
+            &["object-view-action:0"],
+            &refs,
+            false,
+            "ADR-486 object overlay",
+            1080,
+            2400,
+        );
+        let max = super::object_overlay_scroll_max(1, STEP_COUNT, false, 1080, 2400);
+        assert!(max > 0, "overflowing plan steps must cross the footer");
+        let scrolled = super::object_overlay_paint_scrolled(
+            &["object-view-action:0"],
+            &refs,
+            false,
+            "ADR-486 object overlay",
+            1080,
+            2400,
+            max,
+        );
+        assert_eq!(scrolled.1, rest.1);
+        assert_eq!(scrolled.4, rest.4);
+        assert!(rest.2.iter().any(Option::is_none));
+        let last = STEP_COUNT - 1;
+        let last_rect = scrolled.2[last].expect("scrolled last step");
+        assert_eq!(
+            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 0, STEP_COUNT, 0),
+            Some(ObjectViewHit::Action(0))
+        );
+        assert_eq!(
+            super::object_view_hit_scrolled(
+                (270.0, 2250.0),
+                1080,
+                2400,
+                1,
+                0,
+                STEP_COUNT,
+                0,
+                max
+            ),
+            Some(ObjectViewHit::Action(0))
+        );
+        assert_eq!(
+            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, STEP_COUNT, 0),
+            Some(ObjectViewHit::Step(0))
+        );
+        assert_eq!(
+            super::object_view_hit_scrolled(
+                (540.0, (last_rect.y + 8) as f64),
+                1080,
+                2400,
+                0,
+                0,
+                STEP_COUNT,
+                0,
+                max
+            ),
+            Some(ObjectViewHit::Step(last))
         );
     }
 
@@ -21280,7 +21520,8 @@ mod tests {
             1080,
             2400,
         );
-        assert_eq!(painted.2[0], saai_ui_core::Rect::new(49, 284, 982, painted.2[0].height));
+        let action = painted.2[0].expect("oam row");
+        assert_eq!(action, saai_ui_core::Rect::new(49, 284, 982, action.height));
     }
 
     #[test]
@@ -21372,15 +21613,13 @@ mod tests {
             height,
         );
         assert_eq!(with_fact.2.len(), 1);
-        assert_eq!(
-            with_fact.2[0],
-            saai_ui_core::Rect::new(49, 284, 982, with_fact.2[0].height)
-        );
-        assert!(with_fact.2[0].height > 0);
+        let fact = with_fact.2[0].expect("related");
+        assert_eq!(fact, saai_ui_core::Rect::new(49, 284, 982, fact.height));
+        assert!(fact.height > 0);
         let perm = with_fact.3.expect("permission");
         assert_eq!(perm.x, 49);
         assert_eq!(perm.width, 982);
-        assert_eq!(perm.y, with_fact.2[0].y + with_fact.2[0].height);
+        assert_eq!(perm.y, fact.y + fact.height);
         assert!(perm.height > 0);
         let two = super::object_overlay_paint(
             &["object-view-action:0", "object-view-action:1"],
@@ -21392,7 +21631,7 @@ mod tests {
         );
         assert_eq!(two.4.len(), 2);
         assert_eq!(two.1, summary);
-        assert_eq!(two.2[0].y, with_fact.2[0].y);
+        assert_eq!(two.2[0].expect("related").y, fact.y);
         assert_eq!(two.0.y, header.y);
         assert!(two.0.height < header.height);
         assert!(include_str!("main.rs").contains("ADR-430 object overlay"));

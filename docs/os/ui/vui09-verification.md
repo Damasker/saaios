@@ -137,6 +137,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Intent plan is unavailable when the store is down (ADR-483).
   Search results are live `search.item.{i}` Buttons (ADR-484).
   Wi-Fi distinguishes adapter, offline, and unread status (ADR-485).
+  Object / Intent overflow facts scroll above pinned Buttons
+  (ADR-486).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

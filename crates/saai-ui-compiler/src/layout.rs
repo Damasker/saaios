@@ -502,8 +502,8 @@ fn v2_overlay_button_action(button: &crate::SuiV2Component) -> Option<String> {
     button.props.loc.clone()
 }
 
-fn v2_overlay_fact_height() -> u32 {
-    v2_line_height(TextRole::Body)
+fn v2_overlay_fact_height(panel_height: u32) -> u32 {
+    v2_stacked_row_height(panel_height)
 }
 
 fn v2_decision_node(
@@ -514,6 +514,7 @@ fn v2_decision_node(
     pattern: Option<&crate::SuiV2Component>,
     width: u32,
     height: u32,
+    scroll_offset: i32,
 ) -> Node {
     let mut children = Vec::new();
     if object.is_some() {
@@ -522,23 +523,53 @@ fn v2_decision_node(
                 .with_size(Length::Fill, Length::Px(V2_OVERLAY_SUMMARY_TOP)),
         );
         let margin = width / 22;
-        let mut cards = Vec::new();
+        let summary_height = v2_now_object_height();
+        let fact_height = v2_overlay_fact_height(height);
+        let button_band = if buttons.is_empty() {
+            0
+        } else {
+            V2_OVERLAY_BUTTON_HEIGHT
+        };
+        let cards_height = height
+            .saturating_sub(V2_OVERLAY_SUMMARY_TOP)
+            .saturating_sub(button_band);
+        let scroll = i64::from(scroll_offset.max(0));
+        let mut layers = Vec::new();
         let id = object
             .and_then(|component| component.props.loc.clone())
             .unwrap_or_else(|| "ObjectSummary".to_string());
-        cards.push(Node::leaf(id).with_size(Length::Fill, Length::Px(v2_now_object_height())));
+        layers.push(v2_placed_slot(
+            &screen.id,
+            0,
+            id,
+            None,
+            0,
+            summary_height,
+        ));
+        let mut place_fact = |index: usize, id: String, action: Option<String>| {
+            let top = i64::from(summary_height + index as u32 * fact_height) - scroll;
+            if top < i64::from(summary_height) {
+                return;
+            }
+            if top + i64::from(fact_height) > i64::from(cards_height) {
+                return;
+            }
+            layers.push(v2_placed_slot(
+                &screen.id,
+                index + 1,
+                id,
+                action,
+                top as u32,
+                fact_height,
+            ));
+        };
         for (index, row) in facts.iter().enumerate() {
             let id = row
                 .props
                 .loc
                 .clone()
                 .unwrap_or_else(|| format!("object.fact.{index}"));
-            let mut leaf =
-                Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height()));
-            if let Some(action) = v2_stacked_action(row) {
-                leaf = leaf.with_action(action);
-            }
-            cards.push(leaf);
+            place_fact(index, id, v2_stacked_action(row));
         }
         if let Some(pattern) = pattern {
             let id = pattern
@@ -546,11 +577,10 @@ fn v2_decision_node(
                 .loc
                 .clone()
                 .unwrap_or_else(|| "SurfacePattern".to_string());
-            cards
-                .push(Node::leaf(id).with_size(Length::Fill, Length::Px(v2_overlay_fact_height())));
+            place_fact(facts.len(), id, None);
         }
         children.push(
-            Node::linear(format!("{}-cards", screen.id), Axis::Vertical, cards)
+            Node::stack(format!("{}-cards", screen.id), layers)
                 .with_padding(EdgeInsets {
                     top: 0,
                     right: margin,
@@ -791,6 +821,7 @@ fn v2_content_node(
             overlay_pattern,
             width,
             height,
+            scroll_offset,
         );
     }
     if v2_named_tabs(screen).is_empty() && screen.id == "lock" {
