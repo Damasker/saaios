@@ -134,6 +134,9 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Space focus is a live `spaces.focus` Button (ADR-480).
   Система Android VM / notebook are Status Unavailable (ADR-481).
   Space members are live `spaces.member.{i}` Buttons (ADR-482).
+  Intent plan is unavailable when the store is down (ADR-483).
+  Search results are live `search.item.{i}` Buttons (ADR-484).
+  Wi-Fi distinguishes adapter, offline, and unread status (ADR-485).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

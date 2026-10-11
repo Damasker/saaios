@@ -1202,6 +1202,25 @@ fn wifi_adapter_present() -> bool {
     std::path::Path::new("/sys/class/net/wlan0").exists()
 }
 
+fn wifi_net_class_readable() -> bool {
+    std::path::Path::new("/sys/class/net").is_dir()
+}
+
+fn wifi_wpa_state(output: &str) -> Option<&str> {
+    output.lines().find_map(|line| {
+        line.strip_prefix("wpa_state=")
+            .map(str::trim)
+            .filter(|state| !state.is_empty())
+    })
+}
+
+fn wifi_status_readable() -> bool {
+    if !wifi_adapter_present() {
+        return wifi_net_class_readable();
+    }
+    wifi_wpa_state(&wpa_cli(&["status"])).is_some()
+}
+
 /// Cellular bearers on Linux. `usb0` is USB NCM to the laptop (PCE-25),
 /// `wlan*` is Wi-Fi, `google_modemctl` is a BCL helper — none of those
 /// are a modem (ADR-255).
@@ -2246,16 +2265,13 @@ fn wifi_trigger_scan() {
 /// `wpa_supplicant` itself uses internally, not a guess at one.
 fn wifi_connected_ssid() -> Option<String> {
     let output = wpa_cli(&["status"]);
-    let mut state = String::new();
     let mut ssid = String::new();
     for line in output.lines() {
-        if let Some(value) = line.strip_prefix("wpa_state=") {
-            state = value.trim().to_string();
-        } else if let Some(value) = line.strip_prefix("ssid=") {
+        if let Some(value) = line.strip_prefix("ssid=") {
             ssid = value.trim().to_string();
         }
     }
-    if state == "COMPLETED" && !ssid.is_empty() {
+    if wifi_wpa_state(&output) == Some("COMPLETED") && !ssid.is_empty() {
         Some(ssid)
     } else {
         None
@@ -2266,6 +2282,16 @@ fn wifi_status_line() -> String {
     match wifi_connected_ssid() {
         Some(ssid) => format!("Подключено: {ssid}"),
         None => "Не подключено".to_string(),
+    }
+}
+
+fn wifi_setting_row(facts: &MeFacts) -> DataRow {
+    if !facts.wifi_present && facts.wifi_status_readable {
+        SettingRow::readout("Wi-Fi", "Нет адаптера").row
+    } else if !facts.wifi_status_readable {
+        SettingRow::readout("Wi-Fi", "Нет статуса").row
+    } else {
+        SettingRow::open("Wi-Fi", facts.wifi_status.clone(), "open_wifi_list").row
     }
 }
 
@@ -3241,6 +3267,7 @@ enum Frame {
         header: ContextHeader,
         header_rect: Rect,
         rows: Vec<(Rect, render::ActionCardView)>,
+        items: Vec<(Rect, DataRow)>,
     },
     /// ADR-141: `Система` is no longer `Frame::Root`. Header is a real
     /// `ContextHeader`; rows stay the scrolled SettingRow list.
@@ -3423,6 +3450,15 @@ fn object_view_content(
     selected_entities: &[Entity],
     relationships: &[Relationship],
 ) -> ObjectViewContent {
+    object_view_content_with(entity, selected_entities, relationships, true)
+}
+
+fn object_view_content_with(
+    entity: &Entity,
+    selected_entities: &[Entity],
+    relationships: &[Relationship],
+    store_connected: bool,
+) -> ObjectViewContent {
     match entity.entity_type.as_str() {
         "saaios.task" => {
             let lineage = workflow_lineage_for(entity, selected_entities, relationships);
@@ -3441,6 +3477,20 @@ fn object_view_content(
                 actions,
             )
         }
+        "saaios.intent" if !store_connected => ObjectViewContent {
+            title: entity.title.clone(),
+            state: UniversalState::Offline,
+            status: "План недоступен".to_string(),
+            related: None,
+            activity: None,
+            observation: Some("Нет связи".to_string()),
+            blocker: None,
+            consequence: None,
+            permission: None,
+            decision: None,
+            agent: None,
+            actions: Vec::new(),
+        },
         "saaios.intent" => {
             let lineage = workflow_lineage_for(entity, selected_entities, relationships);
             let (state, status) = match lineage.task {
@@ -7003,11 +7053,11 @@ fn search_v2_source(entities: &[Entity], store_connected: bool) -> String {
         if rows.is_empty() {
             src.push_str(&v2_stacked_block("DataRow", "Status", "search.empty"));
         } else {
-            for entity in &rows {
+            for index in 0..rows.len() {
                 src.push_str(&v2_stacked_block(
                     "DataRow",
                     "Button",
-                    &entity.id.to_string(),
+                    &format!("search.item.{index}"),
                 ));
             }
         }
@@ -7024,40 +7074,66 @@ fn search_row_at(
     entities: &[Entity],
     store_connected: bool,
 ) -> Option<Uuid> {
-    if !store_connected {
+    if !store_connected || width == 0 || height == 0 {
         return None;
     }
-    let (id, action) = live_v2_hit(
+    let (_, action) = live_v2_hit(
         &search_v2_source(entities, true),
-        "ADR-240 search",
+        "ADR-484 search",
         pos,
         width,
         height,
     )?;
-    let parsed = Uuid::parse_str(&id).ok()?;
-    if action.as_deref() != Some(id.as_str()) {
-        return None;
-    }
+    let index: usize = action
+        .as_deref()?
+        .strip_prefix("search.item.")?
+        .parse()
+        .ok()?;
     search_rows(entities)
-        .into_iter()
-        .find(|entity| entity.id == parsed)
+        .get(index)
         .map(|entity| entity.id)
 }
 
-fn search_card_from_entity(entity: &Entity) -> render::ActionCardView {
-    render::ActionCardView::new(
-        entity.title.clone(),
-        search_kind_label(entity).to_string(),
-        "Открыть",
-    )
-}
-
-fn search_empty_card(store_connected: bool) -> render::ActionCardView {
-    if store_connected {
-        render::ActionCardView::new("Нет объектов", String::new(), "")
-    } else {
-        render::ActionCardView::new("Нет связи", String::new(), "")
+fn search_paint_rows(
+    entities: &[Entity],
+    store_connected: bool,
+    width: u32,
+    height: u32,
+) -> Vec<(Rect, DataRow)> {
+    if width == 0 || height == 0 {
+        return Vec::new();
     }
+    let tree = layout_live_v2(
+        &search_v2_source(entities, store_connected),
+        "ADR-484 search",
+        width,
+        height,
+    );
+    if !store_connected {
+        return vec![(
+            v2_named_rect(&tree, "search.offline", "ADR-484 search"),
+            DataRow::new("Нет связи", DataRowVariant::Static),
+        )];
+    }
+    let rows = search_rows(entities);
+    if rows.is_empty() {
+        return vec![(
+            v2_named_rect(&tree, "search.empty", "ADR-484 search"),
+            DataRow::new("Нет объектов", DataRowVariant::Static),
+        )];
+    }
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, entity)| {
+            let loc = format!("search.item.{index}");
+            (
+                v2_named_rect(&tree, &loc, "ADR-484 search"),
+                DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
+                    .with_secondary(search_kind_label(entity).to_string())
+                    .with_action(loc),
+            )
+        })
+        .collect()
 }
 
 fn inbox_row_at(
@@ -8158,6 +8234,7 @@ struct MeFacts {
     playback_ready: bool,
     wifi_status: String,
     wifi_present: bool,
+    wifi_status_readable: bool,
     bluetooth_paired: usize,
     bluetooth_present: bool,
     cellular_ifaces: Vec<String>,
@@ -8371,11 +8448,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         me_section_data(
             "Связь",
             vec![
-                if facts.wifi_present {
-                    SettingRow::open("Wi-Fi", facts.wifi_status.clone(), "open_wifi_list").row
-                } else {
-                    SettingRow::readout("Wi-Fi", "Нет адаптера").row
-                },
+                wifi_setting_row(facts),
                 if facts.bluetooth_present {
                     SettingRow::open(
                         "Bluetooth",
@@ -8855,6 +8928,7 @@ fn me_fixture_facts() -> MeFacts {
         playback_ready: false,
         wifi_status: "Wallbox".into(),
         wifi_present: true,
+        wifi_status_readable: true,
         bluetooth_paired: 0,
         bluetooth_present: true,
         cellular_ifaces: Vec::new(),
@@ -10182,7 +10256,12 @@ impl TouchHandler for Shell {
                 // recomputed here, same "read fresh" reasoning
                 // `object_view_content` itself already documents.
                 let content = self.viewing_entity().map(|entity| {
-                    object_view_content(entity, &self.selected_entities, &self.relationships)
+                    object_view_content_with(
+                        entity,
+                        &self.selected_entities,
+                        &self.relationships,
+                        self.entityd.is_connected(),
+                    )
                 });
                 let action_count = content.as_ref().map(|view| view.actions.len()).unwrap_or(0);
                 let related_count = self
@@ -10196,13 +10275,20 @@ impl TouchHandler for Shell {
                         .len()
                     })
                     .unwrap_or(0);
-                let step_count = self
-                    .viewing_entity()
-                    .map(|entity| {
-                        object_view_plan_steps(entity, &self.selected_entities, &self.relationships)
+                let step_count = if self.entityd.is_connected() {
+                    self.viewing_entity()
+                        .map(|entity| {
+                            object_view_plan_steps(
+                                entity,
+                                &self.selected_entities,
+                                &self.relationships,
+                            )
                             .len()
-                    })
-                    .unwrap_or(0);
+                        })
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
                 let quick_count = self
                     .viewing_entity()
                     .map(object_view_quick_actions)
@@ -10919,7 +11005,13 @@ impl Shell {
                 decline,
             }
         } else if let Some(entity) = self.viewing_entity() {
-            let content = object_view_content(entity, &self.selected_entities, &self.relationships);
+            let connected = self.entityd.is_connected();
+            let content = object_view_content_with(
+                entity,
+                &self.selected_entities,
+                &self.relationships,
+                connected,
+            );
             let locs: Vec<String> = (0..content.actions.len())
                 .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
                 .collect();
@@ -10935,8 +11027,11 @@ impl Shell {
                 &self.selected_entities,
                 &self.relationships,
             );
-            let step_lines =
-                object_view_step_lines(entity, &self.selected_entities, &self.relationships);
+            let step_lines = if connected {
+                object_view_step_lines(entity, &self.selected_entities, &self.relationships)
+            } else {
+                Vec::new()
+            };
             if related_lines.is_empty() && step_lines.is_empty() {
                 if let Some(related) = content.related.clone() {
                     details.insert(0, related);
@@ -11372,7 +11467,8 @@ impl Shell {
                     archived,
                 ),
                 header_rect: v2_named_rect(&view, "ContextHeader", "ADR-435 list header"),
-                rows: self.search_content_cards_from(&view),
+                rows: Vec::new(),
+                items: search_paint_rows(&self.selected_entities, connected, width, height),
             }
         } else if self.current_page == RootPage::Spaces {
             let connected = self.entityd.is_connected();
@@ -11823,9 +11919,11 @@ impl Shell {
                     header,
                     header_rect,
                     rows,
+                    items,
                 } => {
+                    let mut surface = render::Canvas::new(canvas, width, height);
                     render::draw_context_row_list(
-                        &mut render::Canvas::new(canvas, width, height),
+                        &mut surface,
                         content_rect,
                         &tabs,
                         &header,
@@ -11834,6 +11932,13 @@ impl Shell {
                         true,
                         fonts,
                     );
+                    if let Some(fonts) = fonts {
+                        surface.set_clip(Some(content_rect));
+                        for (rect, row) in &items {
+                            render::draw_data_row(&mut surface, fonts, row, *rect);
+                        }
+                        surface.set_clip(None);
+                    }
                 }
                 Frame::Spaces {
                     content_rect,
@@ -13017,25 +13122,6 @@ impl Shell {
         )
     }
 
-    fn search_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
-        let connected = self.entityd.is_connected();
-        let rows = search_rows(&self.selected_entities);
-        let (cards, ids): (Vec<render::ActionCardView>, Vec<String>) = if !connected {
-            (
-                vec![search_empty_card(false)],
-                vec!["search.offline".into()],
-            )
-        } else if rows.is_empty() {
-            (vec![search_empty_card(true)], vec!["search.empty".into()])
-        } else {
-            (
-                rows.iter().copied().map(search_card_from_entity).collect(),
-                rows.iter().map(|entity| entity.id.to_string()).collect(),
-            )
-        };
-        list_paint_cards(tree, "ADR-240 search paint", cards, &ids)
-    }
-
     fn spaces_content_cards_from(&self, tree: &LayoutNode) -> Vec<(Rect, render::ActionCardView)> {
         let connected = self.entityd.is_connected();
         let rows = space_list_rows(
@@ -13124,6 +13210,7 @@ impl Shell {
             playback_ready: playback_ready(),
             wifi_status: wifi_status_line(),
             wifi_present: wifi_adapter_present(),
+            wifi_status_readable: wifi_status_readable(),
             bluetooth_paired: bluetooth_paired_count(),
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
@@ -13516,7 +13603,12 @@ impl Shell {
         let Some(entity) = self.viewing_entity().cloned() else {
             return;
         };
-        let content = object_view_content(&entity, &self.selected_entities, &self.relationships);
+        let content = object_view_content_with(
+            &entity,
+            &self.selected_entities,
+            &self.relationships,
+            self.entityd.is_connected(),
+        );
         let Some(label) = content.actions.get(index).copied() else {
             self.viewing_entity_id = None;
             return;
@@ -14494,13 +14586,15 @@ mod tests {
         now_attention_hit, now_next_hit, now_next_paint_rows, now_object_tapped, now_task_hit,
         now_task_paint_rows, now_weather_hit, now_weather_paint_row, now_workflow_sections,
         object_view_action_at,
-        object_view_content, object_view_details, object_view_hit, object_view_permission_pattern,
+        object_view_content, object_view_content_with, object_view_details, object_view_hit,
+        object_view_permission_pattern,
         object_view_related_peer_lines, object_view_step_lines, object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
         related_object_first_peer, remote_pair_content_cards, remote_pair_header,
-        remove_context_source, retain_pressed_while_clock, search_header, search_row_at,
+        remove_context_source, retain_pressed_while_clock, search_header, search_paint_rows,
+        search_row_at,
         search_rows, space_color, space_color_entity, space_detail_action_at,
         space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row,
         space_focus_task, space_for_wifi_ssid, space_member_paint_rows,
@@ -15590,14 +15684,29 @@ mod tests {
         let rows = search_rows(&entities);
         let titles: Vec<&str> = rows.iter().map(|entity| entity.title.as_str()).collect();
         assert_eq!(titles, ["Собрать слайды", "Подготовить демо"]);
-        assert!(search_row_at(
-            (540.0, 500.0),
-            1080,
-            2400,
-            &[intent.clone(), task.clone()],
-            false
-        )
-        .is_none());
+        let painted = search_paint_rows(&[intent.clone(), task.clone()], true, 1080, 2400);
+        assert_eq!(painted.len(), 2);
+        assert_eq!(painted[0].1.primary, "Собрать слайды");
+        assert_eq!(painted[0].1.secondary.as_deref(), Some("Задача"));
+        assert_eq!(painted[0].1.action.as_deref(), Some("search.item.0"));
+        assert_eq!(painted[0].0, saai_ui_core::Rect::new(49, 430, 982, 190));
+        assert_eq!(painted[1].1.action.as_deref(), Some("search.item.1"));
+        let first = stacked_row_rect(0, 1080, 2400);
+        let point = (
+            (first.x + first.width / 2) as f64,
+            (first.y + first.height / 2) as f64,
+        );
+        assert_eq!(
+            search_row_at(point, 1080, 2400, &[intent.clone(), task.clone()], true),
+            Some(task.id)
+        );
+        assert!(search_row_at(point, 1080, 2400, &[intent.clone(), task.clone()], false).is_none());
+        let empty = search_paint_rows(&[], true, 1080, 2400);
+        assert_eq!(empty[0].1.primary, "Нет объектов");
+        assert!(!empty[0].1.is_actionable());
+        let offline = search_paint_rows(&[intent], false, 1080, 2400);
+        assert_eq!(offline[0].1.primary, "Нет связи");
+        assert!(!offline[0].1.is_actionable());
     }
 
     #[test]
@@ -21222,6 +21331,28 @@ mod tests {
     }
 
     #[test]
+    fn object_view_intent_plan_unavailable_when_store_is_down() {
+        let intent = intent_entity("Подготовить демо");
+        let task = task_entity("Собрать слайды", Some(intent.id));
+        let entities = vec![intent.clone(), task];
+        let live = object_view_content(&intent, &entities, &[]);
+        assert_ne!(live.status, "План недоступен");
+        assert!(!object_view_step_lines(&intent, &entities, &[]).is_empty());
+        let down = object_view_content_with(&intent, &entities, &[], false);
+        assert_eq!(down.status, "План недоступен");
+        assert_eq!(down.state, UniversalState::Offline);
+        assert_eq!(down.observation.as_deref(), Some("Нет связи"));
+        assert!(down.actions.is_empty());
+        assert!(down.related.is_none());
+        assert_ne!(down.status, "Нет задачи");
+        let empty = intent_entity("Пустое намерение");
+        assert_eq!(
+            object_view_content(&empty, &[empty.clone()], &[]).status,
+            "Нет задачи"
+        );
+    }
+
+    #[test]
     fn empty_object_view_header_comes_from_layout_v2() {
         let width = 1080;
         let height = 2400;
@@ -23674,6 +23805,30 @@ mod tests {
             .expect("wifi");
         assert_eq!(wifi.card.status, "Нет адаптера");
         assert!(wifi.dispatch.is_none());
+        facts.wifi_status_readable = false;
+        let unread = flatten_me_rows(&me_system_sections(&facts));
+        let wifi = unread
+            .iter()
+            .find(|row| row.card.label == "Wi-Fi")
+            .expect("wifi unread");
+        assert_eq!(wifi.card.status, "Нет статуса");
+        assert!(wifi.dispatch.is_none());
+        facts.wifi_present = true;
+        facts.wifi_status = "Не подключено".into();
+        let offline = flatten_me_rows(&me_system_sections(&facts));
+        let wifi = offline
+            .iter()
+            .find(|row| row.card.label == "Wi-Fi")
+            .expect("wifi offline");
+        assert_eq!(wifi.card.status, "Нет статуса");
+        facts.wifi_status_readable = true;
+        let live = flatten_me_rows(&me_system_sections(&facts));
+        let wifi = live
+            .iter()
+            .find(|row| row.card.label == "Wi-Fi")
+            .expect("wifi live");
+        assert_eq!(wifi.card.status, "Не подключено");
+        assert_eq!(wifi.dispatch, Some("open_wifi_list"));
         let bluetooth = rows
             .iter()
             .find(|row| row.card.label == "Bluetooth")

@@ -1474,6 +1474,14 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Space members are live `spaces.member.{i}` Buttons (ADR-482).
   Empty/offline stay Status. Still Experimental. Not Visual v1
   sign-off.
+- [x] Intent plan is «План недоступен» when the store is down
+  (ADR-483). Confirmed empty stays «Нет задачи». Still
+  Experimental. Not Visual v1 sign-off.
+- [x] Search results are live `search.item.{i}` Buttons (ADR-484).
+  Empty/offline stay Status. Still Experimental. Not Visual v1
+  sign-off.
+- [x] Wi-Fi distinguishes missing adapter, offline, and unread
+  status (ADR-485). Still Experimental. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1585,9 +1593,9 @@ After each completed task group, report:
 
 ## Next action
 
-VUI-09 concept-board chrome is open (ADR-470). Space members are
-live `spaces.member.{i}` Buttons (ADR-482). Keyboard keys, gallery
-page, and lock idle/wake stay formulas until a board names them.
-Public subset stays Experimental. Acceptance stays unchecked
-until panther evidence. Do not fake weather / voice / Android VM
-Ready.
+VUI-09 concept-board chrome is open (ADR-470). Wi-Fi distinguishes
+adapter, offline, and unread status (ADR-485). Keyboard keys,
+gallery page, and lock idle/wake stay formulas until a board
+names them. Public subset stays Experimental. Acceptance stays
+unchecked until panther evidence. Do not fake weather / voice /
+Android VM Ready.

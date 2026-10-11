@@ -56,7 +56,9 @@ labelled Search sample: `ContextHeader`, `DataRow` with
 `a11y = Button` (ADR-240/457), and the same nested tabs. The
 heading matches Inbox stacked top (ADR-458). The Button row
 matches `stacked_row_rect`; action is interned `loc`
-`search.item`. Status `DataRow` invents no action. Inbox remains
+`search.item`. Live Search uses `search.item.{i}` (ADR-484); this
+example does not name the index. Status `DataRow` invents no
+action. Inbox remains
 a surface opened from Orb, not a primary tab.
 
 [`examples/inbox-public.sui`](examples/inbox-public.sui) is the
@@ -70,7 +72,8 @@ labelled Object View sample: `ContextHeader` plus Status
 (ADR-471/472), and a Status `SurfacePattern` (ADR-430). No nested
 tabs. Related actions are interned `object.related.0` /
 `object.related.1`. Intent plan steps are interned `object.step.{i}`
-Buttons from live Tasks (ADR-473). Compose `intent-public.sui` stays
+Buttons from live Tasks (ADR-473). Store down is «План
+недоступен» (ADR-483), not empty. Compose `intent-public.sui` stays
 header+Field. Status invents no `open_object`. `layout_v2` docks
 the summary at `(49, 140, 982, 144)`, the fact row at `y=284`,
 and permission below that, all with the `width/22` margin
@@ -134,7 +137,9 @@ example does not name them. Rows that fail
 labelled Wi-Fi sample: `ContextHeader`, `WifiRow` with
 `a11y = Button` (ADR-205), and nested `row refresh` / `row back`
 (ADR-214). The heading matches Inbox stacked top (ADR-458).
-Status `WifiRow` invents no `connect_wifi`. No nested tabs: live
+Status `WifiRow` invents no `connect_wifi`. Live Система Wi-Fi
+names «Нет адаптера» / «Не подключено» / «Нет статуса»
+(ADR-485); this example does not name them. No nested tabs: live
 «Wi-Fi сети» has trailing controls, not `BottomNavigation`.
 
 [`examples/bluetooth-public.sui`](examples/bluetooth-public.sui) is the

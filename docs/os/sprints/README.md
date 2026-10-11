@@ -156,6 +156,9 @@ ADR-479 NOW next-action rows are live `now.next.{i}` Buttons.
 ADR-480 Space focus is a live `spaces.focus` Button.
 ADR-481 Система Android VM / notebook are Status Unavailable.
 ADR-482 Space members are live `spaces.member.{i}` Buttons.
+ADR-483 Intent plan is unavailable when the store is down.
+ADR-484 Search results are live `search.item.{i}` Buttons.
+ADR-485 Wi-Fi distinguishes adapter, offline, and unread status.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.
