@@ -54,6 +54,8 @@
 //! ADR-473: Intent plan Tasks are `object.step.{i}` Buttons. Empty
 //! stays «Нет задачи». Confirm stays AskUser on the waiting Task.
 //! ADR-474: NOW attention items are `now.attention.{i}` Buttons.
+//! ADR-488: NOW stacked rows clip above the pinned footer and honor
+//! `scroll_offset`. Header, ObjectSummary, footer, and tabs stay put.
 //! Confirmed empty among other work is Status. `now.empty` stays
 //! Fill leftover.
 //! ADR-430: Object View `SurfacePattern` docks the OAM permission
@@ -865,6 +867,15 @@ fn v2_content_node(
         let last = stacked.len() + trailing.len() - 1;
         Some(v2_trailing_top(stacked.len(), last, height))
     };
+    let footer_first_top = if footer.is_empty() {
+        None
+    } else {
+        Some(
+            content_height.saturating_sub(
+                v2_footer_row_height(height).saturating_mul(footer.len() as u32),
+            ),
+        )
+    };
     let stacked_height = v2_stacked_row_height(height);
     let clip_to_content = v2_me_scroll_clip(screen);
     let clip_to_first_slot = v2_diagnostic_scroll_clip(screen);
@@ -873,7 +884,7 @@ fn v2_content_node(
     } else {
         0
     };
-    let min_top = if clip_to_first_slot {
+    let min_top = if clip_to_first_slot || footer_first_top.is_some() {
         i64::from(v2_stacked_row_top(0, height))
     } else {
         0
@@ -906,6 +917,9 @@ fn v2_content_node(
         }
         let top = base as u32;
         if trailing_first_top.is_some_and(|first| top.saturating_add(stacked_height) > first) {
+            continue;
+        }
+        if footer_first_top.is_some_and(|first| top.saturating_add(stacked_height) > first) {
             continue;
         }
         if clip_to_content
@@ -1298,6 +1312,77 @@ mod tests {
                 .and_then(|node| node.action.as_deref()),
             Some("now.attention.2")
         );
+    }
+
+    #[test]
+    fn layout_v2_now_overflow_rows_scroll_above_pinned_footer() {
+        let mut src = String::from(
+            r#"
+            sui 2
+            screen now {
+              component ContextHeader {
+                text = Title
+                a11y = Heading
+                loc = now.header
+                focus = 0
+                inset = safe
+              }
+              component ObjectSummary {
+                text = Body
+                a11y = Status
+                loc = now.object
+              }
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = now.weather
+              }
+            "#,
+        );
+        for index in 0..3 {
+            src.push_str(&format!(
+                "              component DataRow {{\n                text = Body\n                a11y = Button\n                loc = now.attention.{index}\n              }}\n"
+            ));
+        }
+        for index in 0..3 {
+            src.push_str(&format!(
+                "              component DataRow {{\n                text = Body\n                a11y = Button\n                loc = now.task.{index}\n              }}\n"
+            ));
+        }
+        src.push_str(
+            r#"
+              component DataRow {
+                text = Body
+                a11y = Button
+                loc = now.next.0
+              }
+              component BottomNavigation {
+                a11y = Button
+                focus = 1
+                scroll = none
+                inset = safe
+                tab now { loc = now }
+                tab spaces { loc = spaces }
+                tab search { loc = search }
+                tab me { loc = me }
+              }
+              row apps { loc = now.apps }
+              row intent { loc = now.intent }
+            }
+            "#,
+        );
+        let screen = compile_v2(&src).expect("now overflow");
+        let rest = layout_v2(&screen, 1080, 2400);
+        let apps = layout_v1_find(&rest, "apps").expect("apps");
+        assert!(layout_v1_find(&rest, "now.next.0").is_none());
+        assert!(layout_v1_find(&rest, "now.weather").is_some());
+        let scrolled = layout_v2_scrolled(&screen, 1080, 2400, 880);
+        assert!(layout_v1_find(&scrolled, "now.next.0").is_some());
+        let apps_scrolled = layout_v1_find(&scrolled, "apps").expect("apps scrolled");
+        assert_eq!(apps_scrolled.rect, apps.rect);
+        let object = layout_v1_find(&rest, "ObjectSummary").expect("object");
+        let object_scrolled = layout_v1_find(&scrolled, "ObjectSummary").expect("object scrolled");
+        assert_eq!(object_scrolled.rect, object.rect);
     }
 
     #[test]

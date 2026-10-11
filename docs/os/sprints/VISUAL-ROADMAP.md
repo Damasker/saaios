@@ -1486,6 +1486,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   (ADR-486). Still Experimental. Not Visual v1 sign-off.
 - [x] Object related offline is «Связи недоступны», not zero peers
   (ADR-487). Still Experimental. Not Visual v1 sign-off.
+- [x] NOW overflow rows scroll above the pinned footer (ADR-488).
+  Still Experimental. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1597,8 +1599,8 @@ After each completed task group, report:
 
 ## Next action
 
-VUI-09 concept-board chrome is open (ADR-470). Object related
-offline is not zero peers (ADR-487). Keyboard keys,
+VUI-09 concept-board chrome is open (ADR-470). NOW overflow
+scrolls above the pinned footer (ADR-488). Keyboard keys,
 gallery page, and lock idle/wake stay formulas until a board
 names them. Public subset stays Experimental. Acceptance stays
 unchecked until panther evidence. Do not fake weather / voice /

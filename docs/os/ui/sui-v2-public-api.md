@@ -42,7 +42,8 @@ stacked row 0 (ADR-469). Live attention Buttons are interned
 `now.attention.{i}` (ADR-474), `now.weather` (ADR-476),
 `object.action.{i}` (ADR-477), `now.task.{i}` (ADR-478), and
 `now.next.{i}` (ADR-479), and `spaces.focus` (ADR-480); this
-example does not name them.
+example does not name them. Live overflow rows scroll above the
+pinned footer (ADR-488); this example does not name the offset.
 Status invents no action. Public `Metric` /
 `Disclosure` / `StatusIndicator` / `Progress` dock on
 `stacked_row_rect` (ADR-465). `SemanticText` / `Icon` / `Divider`

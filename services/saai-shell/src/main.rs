@@ -6739,16 +6739,68 @@ fn now_body_v2_source(
     src
 }
 
+fn now_stacked_row_count(
+    follow_len: usize,
+    empty_attention: bool,
+    task_count: usize,
+    empty_tasks: bool,
+    next_count: usize,
+    empty_next: bool,
+) -> usize {
+    1 + follow_len
+        + usize::from(empty_attention)
+        + task_count
+        + usize::from(empty_tasks)
+        + next_count
+        + usize::from(empty_next)
+}
+
+fn now_scroll_content(width: u32, height: u32) -> Rect {
+    let top = stacked_row_rect(0, width, height).y;
+    let floor = now_footer_action_rect(0, width, height).y;
+    Rect::new(0, top, width, floor.saturating_sub(top))
+}
+
+fn now_scroll_max(
+    follow_len: usize,
+    empty_attention: bool,
+    task_count: usize,
+    empty_tasks: bool,
+    next_count: usize,
+    empty_next: bool,
+    width: u32,
+    height: u32,
+) -> i32 {
+    me_max_scroll_offset(
+        now_stacked_row_count(
+            follow_len,
+            empty_attention,
+            task_count,
+            empty_tasks,
+            next_count,
+            empty_next,
+        ),
+        width,
+        height,
+        now_scroll_content(width, height),
+    )
+}
+
 fn now_weather_hit(pos: (f64, f64), width: u32, height: u32) -> bool {
+    now_weather_hit_scrolled(pos, width, height, 0)
+}
+
+fn now_weather_hit_scrolled(pos: (f64, f64), width: u32, height: u32, scroll_offset: i32) -> bool {
     if width == 0 || height == 0 {
         return false;
     }
-    live_v2_hit(
+    live_v2_hit_scrolled(
         &now_attention_v2_source(&[], false),
         "ADR-476 now weather",
         pos,
         width,
         height,
+        scroll_offset,
     )
     .and_then(|(_, action)| action)
     .as_deref()
@@ -6756,33 +6808,55 @@ fn now_weather_hit(pos: (f64, f64), width: u32, height: u32) -> bool {
 }
 
 fn now_weather_paint_row(width: u32, height: u32) -> Option<(Rect, DataRow)> {
+    now_weather_paint_row_scrolled(width, height, 0)
+}
+
+fn now_weather_paint_row_scrolled(
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Option<(Rect, DataRow)> {
     if width == 0 || height == 0 {
         return None;
     }
-    let tree = layout_live_v2(
+    let tree = layout_live_v2_scrolled(
         &now_attention_v2_source(&[], false),
         "ADR-476 now weather",
         width,
         height,
+        scroll_offset,
     );
-    Some((
-        v2_named_rect(&tree, "now.weather", "ADR-476 now weather"),
-        DataRow::new("Местность", DataRowVariant::Navigation)
-            .with_secondary(locality_me_status())
-            .with_action("now.weather"),
-    ))
+    saai_ui_compiler::layout_v1_find(&tree, "now.weather").map(|node| {
+        (
+            node.rect,
+            DataRow::new("Местность", DataRowVariant::Navigation)
+                .with_secondary(locality_me_status())
+                .with_action("now.weather"),
+        )
+    })
 }
 
 fn now_attention_hit(pos: (f64, f64), width: u32, height: u32, follow: &[bool]) -> Option<usize> {
+    now_attention_hit_scrolled(pos, width, height, follow, 0)
+}
+
+fn now_attention_hit_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    follow: &[bool],
+    scroll_offset: i32,
+) -> Option<usize> {
     if width == 0 || height == 0 || follow.is_empty() {
         return None;
     }
-    live_v2_hit(
+    live_v2_hit_scrolled(
         &now_attention_v2_source(follow, false),
         "ADR-474 now attention",
         pos,
         width,
         height,
+        scroll_offset,
     )
     .and_then(|(id, action)| {
         action
@@ -6802,6 +6876,26 @@ fn now_attention_paint_rows(
     width: u32,
     height: u32,
 ) -> Vec<(Rect, DataRow)> {
+    now_attention_paint_rows_scrolled(
+        entities,
+        health,
+        store_connected,
+        has_other_now_content,
+        width,
+        height,
+        0,
+    )
+}
+
+fn now_attention_paint_rows_scrolled(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+    store_connected: bool,
+    has_other_now_content: bool,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Vec<(Rect, DataRow)> {
     if width == 0 || height == 0 {
         return Vec::new();
     }
@@ -6815,22 +6909,27 @@ fn now_attention_paint_rows(
         .iter()
         .map(|item| now_attention_follow_id(item).is_some())
         .collect();
-    let tree = layout_live_v2(
+    let tree = layout_live_v2_scrolled(
         &now_attention_v2_source(&follow, empty_caption),
         "ADR-474 now attention",
         width,
         height,
+        scroll_offset,
     );
     if empty_caption {
-        return vec![(
-            v2_named_rect(&tree, "now.attention.empty", "ADR-474 now attention"),
-            DataRow::new("Ничего не требует внимания", DataRowVariant::Static),
-        )];
+        return saai_ui_compiler::layout_v1_find(&tree, "now.attention.empty")
+            .map(|node| {
+                vec![(
+                    node.rect,
+                    DataRow::new("Ничего не требует внимания", DataRowVariant::Static),
+                )]
+            })
+            .unwrap_or_default();
     }
     items
         .into_iter()
         .enumerate()
-        .map(|(index, item)| {
+        .filter_map(|(index, item)| {
             let loc = format!("now.attention.{index}");
             let row = if now_attention_follow_id(item).is_some() {
                 DataRow::new(item.title.clone(), DataRowVariant::Navigation)
@@ -6840,7 +6939,7 @@ fn now_attention_paint_rows(
                 DataRow::new(item.title.clone(), DataRowVariant::Static)
                     .with_secondary(now_attention_reason(item))
             };
-            (v2_named_rect(&tree, &loc, "ADR-474 now attention"), row)
+            saai_ui_compiler::layout_v1_find(&tree, &loc).map(|node| (node.rect, row))
         })
         .collect()
 }
@@ -6853,15 +6952,28 @@ fn now_task_hit(
     empty_attention: bool,
     task_count: usize,
 ) -> Option<usize> {
+    now_task_hit_scrolled(pos, width, height, follow, empty_attention, task_count, 0)
+}
+
+fn now_task_hit_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    follow: &[bool],
+    empty_attention: bool,
+    task_count: usize,
+    scroll_offset: i32,
+) -> Option<usize> {
     if width == 0 || height == 0 || task_count == 0 {
         return None;
     }
-    live_v2_hit(
+    live_v2_hit_scrolled(
         &now_body_v2_source(follow, empty_attention, task_count, false, 0, false),
         "ADR-478 now tasks",
         pos,
         width,
         height,
+        scroll_offset,
     )
     .and_then(|(id, action)| {
         action
@@ -6882,6 +6994,28 @@ fn now_task_paint_rows(
     width: u32,
     height: u32,
 ) -> Vec<(Rect, DataRow)> {
+    now_task_paint_rows_scrolled(
+        entities,
+        store_connected,
+        has_other_now_content,
+        follow,
+        empty_attention,
+        width,
+        height,
+        0,
+    )
+}
+
+fn now_task_paint_rows_scrolled(
+    entities: &[Entity],
+    store_connected: bool,
+    has_other_now_content: bool,
+    follow: &[bool],
+    empty_attention: bool,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Vec<(Rect, DataRow)> {
     if width == 0 || height == 0 {
         return Vec::new();
     }
@@ -6890,29 +7024,36 @@ fn now_task_paint_rows(
     if tasks.is_empty() && !empty_caption {
         return Vec::new();
     }
-    let tree = layout_live_v2(
+    let tree = layout_live_v2_scrolled(
         &now_body_v2_source(follow, empty_attention, tasks.len(), empty_caption, 0, false),
         "ADR-478 now tasks",
         width,
         height,
+        scroll_offset,
     );
     if empty_caption {
-        return vec![(
-            v2_named_rect(&tree, "now.task.empty", "ADR-478 now tasks"),
-            DataRow::new("Нет текущих задач", DataRowVariant::Static),
-        )];
+        return saai_ui_compiler::layout_v1_find(&tree, "now.task.empty")
+            .map(|node| {
+                vec![(
+                    node.rect,
+                    DataRow::new("Нет текущих задач", DataRowVariant::Static),
+                )]
+            })
+            .unwrap_or_default();
     }
     tasks
         .into_iter()
         .enumerate()
-        .map(|(index, entity)| {
+        .filter_map(|(index, entity)| {
             let loc = format!("now.task.{index}");
-            (
-                v2_named_rect(&tree, &loc, "ADR-478 now tasks"),
-                DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
-                    .with_secondary(task_status_text(entity, entities))
-                    .with_action(loc),
-            )
+            saai_ui_compiler::layout_v1_find(&tree, &loc).map(|node| {
+                (
+                    node.rect,
+                    DataRow::new(entity.title.clone(), DataRowVariant::Navigation)
+                        .with_secondary(task_status_text(entity, entities))
+                        .with_action(loc),
+                )
+            })
         })
         .collect()
 }
@@ -6927,10 +7068,34 @@ fn now_next_hit(
     empty_tasks: bool,
     next_count: usize,
 ) -> Option<usize> {
+    now_next_hit_scrolled(
+        pos,
+        width,
+        height,
+        follow,
+        empty_attention,
+        task_count,
+        empty_tasks,
+        next_count,
+        0,
+    )
+}
+
+fn now_next_hit_scrolled(
+    pos: (f64, f64),
+    width: u32,
+    height: u32,
+    follow: &[bool],
+    empty_attention: bool,
+    task_count: usize,
+    empty_tasks: bool,
+    next_count: usize,
+    scroll_offset: i32,
+) -> Option<usize> {
     if width == 0 || height == 0 || next_count == 0 {
         return None;
     }
-    live_v2_hit(
+    live_v2_hit_scrolled(
         &now_body_v2_source(
             follow,
             empty_attention,
@@ -6943,6 +7108,7 @@ fn now_next_hit(
         pos,
         width,
         height,
+        scroll_offset,
     )
     .and_then(|(id, action)| {
         action
@@ -6965,6 +7131,32 @@ fn now_next_paint_rows(
     width: u32,
     height: u32,
 ) -> Vec<(Rect, DataRow)> {
+    now_next_paint_rows_scrolled(
+        entities,
+        store_connected,
+        has_other_now_content,
+        follow,
+        empty_attention,
+        task_count,
+        empty_tasks,
+        width,
+        height,
+        0,
+    )
+}
+
+fn now_next_paint_rows_scrolled(
+    entities: &[Entity],
+    store_connected: bool,
+    has_other_now_content: bool,
+    follow: &[bool],
+    empty_attention: bool,
+    task_count: usize,
+    empty_tasks: bool,
+    width: u32,
+    height: u32,
+    scroll_offset: i32,
+) -> Vec<(Rect, DataRow)> {
     if width == 0 || height == 0 {
         return Vec::new();
     }
@@ -6974,7 +7166,7 @@ fn now_next_paint_rows(
         return Vec::new();
     }
     let next_count = usize::from(next.is_some());
-    let tree = layout_live_v2(
+    let tree = layout_live_v2_scrolled(
         &now_body_v2_source(
             follow,
             empty_attention,
@@ -6986,22 +7178,31 @@ fn now_next_paint_rows(
         "ADR-479 now next",
         width,
         height,
+        scroll_offset,
     );
     if empty_caption {
-        return vec![(
-            v2_named_rect(&tree, "now.next.empty", "ADR-479 now next"),
-            DataRow::new("Нет следующего действия", DataRowVariant::Static),
-        )];
+        return saai_ui_compiler::layout_v1_find(&tree, "now.next.empty")
+            .map(|node| {
+                vec![(
+                    node.rect,
+                    DataRow::new("Нет следующего действия", DataRowVariant::Static),
+                )]
+            })
+            .unwrap_or_default();
     }
     let Some(work) = next else {
         return Vec::new();
     };
-    vec![(
-        v2_named_rect(&tree, "now.next.0", "ADR-479 now next"),
-        DataRow::new(work.title.clone(), DataRowVariant::Navigation)
-            .with_secondary(task_status_text(work, entities))
-            .with_action("now.next.0"),
-    )]
+    saai_ui_compiler::layout_v1_find(&tree, "now.next.0")
+        .map(|node| {
+            vec![(
+                node.rect,
+                DataRow::new(work.title.clone(), DataRowVariant::Navigation)
+                    .with_secondary(task_status_text(work, entities))
+                    .with_action("now.next.0"),
+            )]
+        })
+        .unwrap_or_default()
 }
 
 fn attention_section_from_projection(projection: &AttentionProjection) -> Option<SystemSection> {
@@ -9363,6 +9564,7 @@ fn main() {
         entity_counts: BTreeMap::new(),
         viewing_entity_id: None,
         object_scroll_offset: 0,
+        now_scroll_offset: 0,
         orb_menu_open: false,
         dev_surface_tap_count: 0,
         dev_surface_open: false,
@@ -9722,6 +9924,9 @@ struct Shell {
     /// `object.summary` stay at offset 0 (ADR-486). Reset when the
     /// viewed entity changes.
     object_scroll_offset: i32,
+    /// Vertical drag-to-scroll for NOW stacked rows. Header,
+    /// ObjectSummary, footer, and tabs stay at offset 0 (ADR-488).
+    now_scroll_offset: i32,
     /// HIA-04b: `true` only while the Orb's own menu is showing --
     /// `orb_state()` reports `Menu` whenever this is set, regardless
     /// of any pending notification underneath it.
@@ -10199,6 +10404,13 @@ impl TouchHandler for Shell {
             Some((position.1, self.me_scroll_offset))
         } else if self.tab_touch_pending && self.viewing_entity_id.is_some() {
             Some((position.1, self.object_scroll_offset))
+        } else if self.tab_touch_pending
+            && self.current_page == RootPage::Now
+            && !self.apps_open
+            && !self.any_modal_open()
+            && now_scroll_content(self.width, self.height).contains(position.0, position.1)
+        {
+            Some((position.1, self.now_scroll_offset))
         } else if self.tab_touch_pending
             && self.current_page == RootPage::Me
             && !self.any_modal_open()
@@ -10678,12 +10890,23 @@ impl TouchHandler for Shell {
                     .iter()
                     .map(|item| now_attention_follow_id(item).is_some())
                     .collect();
-                if now_weather_hit(self.last_touch_pos, self.width, self.height) {
+                if now_weather_hit_scrolled(
+                    self.last_touch_pos,
+                    self.width,
+                    self.height,
+                    self.now_scroll_offset,
+                ) {
                     let _ = refresh_locality();
                     self.me_row_cache = None;
                     self.draw(conn, qh);
                 } else if let Some(index) =
-                    now_attention_hit(self.last_touch_pos, self.width, self.height, &follow)
+                    now_attention_hit_scrolled(
+                        self.last_touch_pos,
+                        self.width,
+                        self.height,
+                        &follow,
+                        self.now_scroll_offset,
+                    )
                 {
                     if let Some(id) = items
                         .get(index)
@@ -10692,7 +10915,7 @@ impl TouchHandler for Shell {
                         self.set_viewing_entity_id(Some(id));
                         self.draw(conn, qh);
                     }
-                } else if let Some(index) = now_task_hit(
+                } else if let Some(index) = now_task_hit_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
@@ -10704,6 +10927,7 @@ impl TouchHandler for Shell {
                             .iter()
                             .any(|section| section.title != "Требует внимания"),
                     in_progress_work(&self.selected_entities).len(),
+                    self.now_scroll_offset,
                 ) {
                     if let Some(id) = in_progress_work(&self.selected_entities)
                         .get(index)
@@ -10712,7 +10936,7 @@ impl TouchHandler for Shell {
                         self.set_viewing_entity_id(Some(id));
                         self.draw(conn, qh);
                     }
-                } else if let Some(index) = now_next_hit(
+                } else if let Some(index) = now_next_hit_scrolled(
                     self.last_touch_pos,
                     self.width,
                     self.height,
@@ -10730,6 +10954,7 @@ impl TouchHandler for Shell {
                             section.title != "Требует внимания" && section.title != "Продолжается"
                         }),
                     usize::from(next_work(&self.selected_entities).is_some()),
+                    self.now_scroll_offset,
                 ) {
                     if index == 0 {
                         if let Some(id) = next_work(&self.selected_entities).map(|entity| entity.id)
@@ -10818,6 +11043,16 @@ impl TouchHandler for Shell {
                 let clamped = new_offset.clamp(0, max_offset);
                 if clamped != self.object_scroll_offset {
                     self.object_scroll_offset = clamped;
+                    self.me_scroll_dirty = true;
+                }
+            } else if self.current_page == RootPage::Now
+                && !self.apps_open
+                && !self.dev_surface_open
+            {
+                let max_offset = self.now_live_scroll_max();
+                let clamped = new_offset.clamp(0, max_offset);
+                if clamped != self.now_scroll_offset {
+                    self.now_scroll_offset = clamped;
                     self.me_scroll_dirty = true;
                 }
             } else {
@@ -11464,13 +11699,14 @@ impl Shell {
             let has_other = sections
                 .iter()
                 .any(|section| section.title != "Требует внимания");
-            let attention_rows = now_attention_paint_rows(
+            let attention_rows = now_attention_paint_rows_scrolled(
                 &self.selected_entities,
                 read_runtime_live_facts().health.as_ref(),
                 self.entityd.is_connected(),
                 has_other,
                 width,
                 height,
+                self.now_scroll_offset,
             );
             let follow: Vec<bool> = project_with_health(
                 &self.selected_entities,
@@ -11486,7 +11722,7 @@ impl Shell {
                 section.title != "Требует внимания" && section.title != "Продолжается"
             }) || !follow.is_empty()
                 || self.now_object_summary().is_some();
-            let task_rows = now_task_paint_rows(
+            let task_rows = now_task_paint_rows_scrolled(
                 &self.selected_entities,
                 self.entityd.is_connected(),
                 has_other_than_tasks,
@@ -11494,11 +11730,12 @@ impl Shell {
                 empty_attention,
                 width,
                 height,
+                self.now_scroll_offset,
             );
             let empty_tasks = task_rows
                 .first()
                 .is_some_and(|(_, row)| row.primary == "Нет текущих задач");
-            let next_rows = now_next_paint_rows(
+            let next_rows = now_next_paint_rows_scrolled(
                 &self.selected_entities,
                 self.entityd.is_connected(),
                 sections.iter().any(|section| {
@@ -11514,6 +11751,7 @@ impl Shell {
                 empty_tasks,
                 width,
                 height,
+                self.now_scroll_offset,
             );
             let sections = sections
                 .into_iter()
@@ -11530,7 +11768,7 @@ impl Shell {
                 chrome: now_paint_chrome_from(&view),
                 sections,
                 object: self.now_object_summary(),
-                weather: now_weather_paint_row(width, height),
+                weather: now_weather_paint_row_scrolled(width, height, self.now_scroll_offset),
                 attention_rows,
                 task_rows,
                 next_rows,
@@ -13591,6 +13829,44 @@ impl Shell {
     /// schedule rows. Empty sections stay omitted. Orb + intent footer
     /// remain the composer. Live locality weather is a separate
     /// `now.weather` row (ADR-476), not invented chrome.
+    fn now_live_scroll_max(&self) -> i32 {
+        let attention = project_with_health(
+            &self.selected_entities,
+            read_runtime_live_facts().health.as_ref(),
+        );
+        let follow_len = attention.now_items().count();
+        let empty_attention = follow_len == 0
+            && self.entityd.is_connected()
+            && self
+                .now_sections()
+                .iter()
+                .any(|section| section.title != "Требует внимания");
+        let task_count = in_progress_work(&self.selected_entities).len();
+        let empty_tasks = task_count == 0
+            && self.entityd.is_connected()
+            && self.now_sections().iter().any(|section| {
+                section.title != "Требует внимания" && section.title != "Продолжается"
+            });
+        let next_count = usize::from(next_work(&self.selected_entities).is_some());
+        let empty_next = next_count == 0
+            && self.entityd.is_connected()
+            && self.now_sections().iter().any(|section| {
+                section.title != "Требует внимания"
+                    && section.title != "Продолжается"
+                    && section.title != "Далее"
+            });
+        now_scroll_max(
+            follow_len,
+            empty_attention,
+            task_count,
+            empty_tasks,
+            next_count,
+            empty_next,
+            self.width,
+            self.height,
+        )
+    }
+
     fn now_sections(&self) -> Vec<SystemSection> {
         now_workflow_sections_with(
             &self.selected_entities,
@@ -22762,6 +23038,57 @@ mod tests {
         assert_eq!(empty[0].1.primary, "Нет следующего действия");
         assert!(!empty[0].1.is_actionable());
         assert!(now_next_paint_rows(&[], true, false, &[], false, 0, false, 1080, 2400).is_empty());
+    }
+
+    #[test]
+    fn now_overflow_rows_scroll_above_pinned_footer() {
+        let follow = [true, true, true];
+        let max = super::now_scroll_max(3, false, 3, false, 1, false, 1080, 2400);
+        assert!(max > 0, "3+3+next plus weather must cross the footer");
+        let apps = super::now_footer_action_rect(0, 1080, 2400);
+        assert_eq!(
+            super::now_footer_action_at((540.0, (apps.y + 8) as f64), 1080, 2400),
+            Some(super::NOW_FOOTER_OPEN_APPS_ACTION)
+        );
+        assert_eq!(
+            super::now_next_hit_scrolled(
+                (540.0, 658.0),
+                1080,
+                2400,
+                &follow,
+                false,
+                3,
+                false,
+                1,
+                0
+            ),
+            None
+        );
+        let scrolled = super::layout_live_v2_scrolled(
+            &super::now_body_v2_source(&follow, false, 3, false, 1, false),
+            "ADR-488 now overflow",
+            1080,
+            2400,
+            max,
+        );
+        let next = saai_ui_compiler::layout_v1_find(&scrolled, "now.next.0").expect("scrolled next");
+        assert!(next.rect.y + next.rect.height <= apps.y);
+        assert_eq!(
+            super::now_next_hit_scrolled(
+                (540.0, (next.rect.y + 8) as f64),
+                1080,
+                2400,
+                &follow,
+                false,
+                3,
+                false,
+                1,
+                max
+            ),
+            Some(0)
+        );
+        assert!(now_weather_hit((540.0, 438.0), 1080, 2400));
+        assert!(!super::now_weather_hit_scrolled((540.0, 438.0), 1080, 2400, max));
     }
 
     #[test]

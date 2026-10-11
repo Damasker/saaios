@@ -90,7 +90,8 @@ Search results are live `search.item.{i}` Buttons (ADR-484).
 Wi-Fi distinguishes adapter, offline, and unread status (ADR-485).
 Object / Intent overflow facts scroll above pinned Buttons
 (ADR-486). Object related offline is «Связи недоступны», not
-zero peers (ADR-487). Public
+zero peers (ADR-487). NOW overflow rows scroll above the
+pinned footer (ADR-488). Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`
