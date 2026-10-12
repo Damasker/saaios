@@ -5728,7 +5728,12 @@ fn primary_related_task<'a>(
     relationships: &[Relationship],
 ) -> Option<&'a Entity> {
     let mut tasks = related_workflow_tasks(entity, entities, relationships);
-    tasks.sort_by_key(|task| task_visibility_rank(task, entities));
+    tasks.sort_by(|left, right| {
+        task_visibility_rank(left, entities)
+            .cmp(&task_visibility_rank(right, entities))
+            .then_with(|| now_task_priority(right).cmp(&now_task_priority(left)))
+            .then_with(|| left.id.cmp(&right.id))
+    });
     tasks.into_iter().next()
 }
 
@@ -16508,6 +16513,29 @@ mod tests {
         assert_eq!(
             filled.task.as_ref().map(|task| task.title.as_str()),
             Some("Подтвердите: демо")
+        );
+    }
+
+    #[test]
+    fn primary_related_task_prefers_high_at_the_same_rank() {
+        let intent = intent_entity("Подготовить демо");
+        let normal = task_entity("Обычная", Some(intent.id));
+        let mut high = task_entity("Срочная", Some(intent.id));
+        high.properties.insert(
+            "priority".into(),
+            serde_json::Value::String("high".into()),
+        );
+        let entities = [intent.clone(), normal.clone(), high.clone()];
+        assert_eq!(
+            super::primary_related_task(&intent, &entities, &[]).map(|task| task.id),
+            Some(high.id)
+        );
+        high.properties
+            .insert("status".into(), serde_json::Value::String("pending".into()));
+        let entities = [intent.clone(), normal.clone(), high.clone()];
+        assert_eq!(
+            super::primary_related_task(&intent, &entities, &[]).map(|task| task.id),
+            Some(normal.id)
         );
     }
 
