@@ -282,6 +282,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | ATTN-05 NOW sections | section list uses the same ContextFrame as paint **host** (ADR-509; no shell flash) |
 | dest-no-lock leftover lock | dead lock client unlocks only with dest-no-lock **host** (ADR-510; no displayd flash) |
 | ATTN-07 live identity | catalog `system.identity` so `display.inspect` resolves **на panther** (ADR-511; `0fb762d1…`; dest-no-lock; leave Сейчас) |
+| Срез: рой/lock отложены | не вечный запрет; lock — дефект; Oracle — advisor later **docs** (ADR-512; dest-no-lock; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -361,6 +362,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - ATTN-05 NOW sections use the same ContextFrame as paint (ADR-509; host; no shell flash)
 - dest-no-lock leftover lock: dead lock client unlocks only with the marker (ADR-510; host; no displayd flash)
 - ATTN-07 live identity catalog: `system.identity` present for resolve, not executed in shell (ADR-511; panther `0fb762d1…`; dest-no-lock)
+- Current-slice deferral is not a permanent ban: no swarm/coordinator/`agentd`/lock-up this slice; Oracle later is advisory only (ADR-512; docs; dest-no-lock)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
@@ -389,7 +391,13 @@ diagnose (ADR-238, `351b0b6f…`).
 
 ## Что сознательно не делать сейчас
 
-- новые ADR «ещё одна фундаментальная модель»
+Это очередь **текущего среза** (ADR-512), не вечный запрет на
+самоорганизацию, Advisor или будущее распределённое исполнение.
+Рой / координатор / `agentd` / повторный lock — не в этом срезе.
+Lock — отдельный дефект; `/run/saaios/dev-no-lock` не снимать.
+Oracle позже — консультативный API без власти над Policy.
+
+- новые ADR «ещё одна фундаментальная модель» в этом срезе
 - Learning / personality / vector DB
 - отдельный `saai-memoryd` / `saai-learningd` / `policyd`
 - ждать AUTH-10, чтобы трогать confirmation (он уже есть)

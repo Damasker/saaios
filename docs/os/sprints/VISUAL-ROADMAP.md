@@ -1515,6 +1515,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   sign-off.
 - [x] dest-no-lock leftover lock client unlocks on shell death
   (ADR-510; host; no displayd flash). Not a lock-formula change.
+- [ ] Lock re-enable is a defect track, not a permanent skip
+  (ADR-512): reproduce SIGTRAP, name the cause, recover a dead
+  lock client, prove unlock again. Do not lift dest-no-lock
+  before that. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

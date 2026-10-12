@@ -103,6 +103,8 @@ Do not flash shell.
 Exactly one permitted candidate. Inbox/Orb omit it. Tap opens the
 object. No execution. ADR-511 catalogs live `system.identity` so
 `display.inspect` can resolve. Panther `0fb762d1…` under dest-no-lock.
+ADR-512: no swarm/`agentd` in this slice; that is deferral, not a
+ban on Advisor or later distributed attention.
 
 **Test:** host `cargo test -p saai-attention` and
 `attn07_empty_tools_are_not_a_suggested_action` /

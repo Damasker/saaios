@@ -250,7 +250,7 @@ already fixed: UDS default on device; TLS for remote TCP.
 | Queue proliferation / dual truth | One store + derived ready; in-memory frontier only |
 | Planner becomes scheduler again | Keep `saai-taskd` as sole entity writer; planner returns proposals/`pending` only |
 | Plaintext TCP treated as production API | Document as bring-up; TLS gate before Wi-Fi exposure |
-| Scope explosion (DAG, multi-agent, self-repair) | WORK track (ADR-121); DAG host-only first; no agent swarm |
+| Scope explosion (DAG, multi-agent, self-repair) | WORK track (ADR-121); DAG host-only first; no second orchestrator in this slice (ADR-512). Swarm/Advisor later, not banned |
 | Two runtimes drift | Bridge pattern (ADR-033); no second writer into entity store from runtime |
 
 ## Explicit: mapping vs WORK-01
