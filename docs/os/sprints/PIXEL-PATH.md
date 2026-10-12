@@ -278,6 +278,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | WORLD-04 shared /proc | `saai-observation::linux` owns load/mem/cpu parsers **host** (ADR-505; no runtime flash) |
 | ATTN-05 context relevance | other-space Attention is Inbox-only **host** (ADR-506; no shell flash) |
 | WORK-05 ready priority | High Pending admits before Normal; no preemption **host** (ADR-507; no taskd flash) |
+| ATTN-07 one OAM verb | exactly one permitted suggestion on NOW **host** (ADR-508; no shell flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -353,6 +354,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - WORK-05 ready priority: High Pending before Normal; no preemption (ADR-507; host; no taskd flash)
 - WORLD-04 shared Linux observers: one `/proc` parser for tools and Observation (ADR-505; host; no runtime flash)
 - ATTN-05 ContextFrame relevance: other-space items stay Inbox, leave NOW/Orb (ADR-506; host; no shell flash)
+- ATTN-07 one OAM suggestion: exactly one permitted verb on NOW (ADR-508; host; no shell flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

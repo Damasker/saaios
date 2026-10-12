@@ -440,10 +440,10 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .map(str::to_string)
 }
 use saai_attention::{
-    has_orb_attention, inbox_source_ids, project_from_entities, project_with_context,
-    project_with_health, AttentionContext,
-    AttentionActionability, AttentionItem, AttentionProjection, AttentionSource, HealthReport,
-    HealthState,
+    has_orb_attention, inbox_source_ids, one_suggested_action, project_from_entities,
+    project_with_health, project_with_suggestion, AttentionActionability,
+    AttentionContext, AttentionItem, AttentionProjection, AttentionSource, HealthReport,
+    HealthState, SuggestedAction, SuggestedActionCandidate,
 };
 use saai_object_actions::{
     display_inspect_spec, preflight, ActionAvailability, ActionResolution, ActionResolveContext,
@@ -5316,11 +5316,61 @@ fn project_live_attention(
     space_id: &str,
     frame: &[ContextFrameEntry],
 ) -> saai_attention::AttentionProjection {
-    project_with_context(
+    let suggested = one_live_suggested_action(entities);
+    project_with_suggestion(
         entities,
         health,
         &attention_context_from_space(space_id, frame),
+        suggested.as_ref(),
     )
+}
+
+fn one_live_suggested_action(entities: &[Entity]) -> Option<SuggestedAction> {
+    one_suggested_oam_for(entities.first()?)
+}
+
+fn one_suggested_oam_for(entity: &Entity) -> Option<SuggestedAction> {
+    one_suggested_oam_with(
+        entity,
+        &builtin_object_actions(),
+        &tool_registry::ToolRegistry::new(),
+        &policy_engine::PolicyEngine::new(),
+    )
+}
+
+fn one_suggested_oam_with(
+    entity: &Entity,
+    registry: &ObjectActionRegistry,
+    tools: &tool_registry::ToolRegistry,
+    policy: &policy_engine::PolicyEngine,
+) -> Option<SuggestedAction> {
+    let context = ActionResolveContext {
+        space_id: Some(entity.space_id.clone()),
+    };
+    let mut candidates = Vec::new();
+    for resolution in registry.resolve_for(entity, &context, tools) {
+        match resolution {
+            ActionResolution::Ambiguous { .. } => {}
+            ActionResolution::Resolved(action) => {
+                let permitted = match action.availability {
+                    ActionAvailability::Unavailable { .. } => false,
+                    ActionAvailability::Available => {
+                        !matches!(
+                            preflight(policy, tools, &action).verdict,
+                            protocol::PolicyVerdict::Deny
+                        )
+                    }
+                };
+                candidates.push(SuggestedActionCandidate {
+                    action_id: action.action_id,
+                    object_id: entity.id,
+                    title: action.title,
+                    permitted,
+                });
+            }
+        }
+    }
+    one_suggested_action(&candidates)
 }
 
 fn orb_failed_work(entities: &[Entity]) -> bool {
@@ -6282,7 +6332,9 @@ fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
             let kind = match source {
                 AttentionSource::WorkflowTask { .. } => InboxRowKind::Task,
                 AttentionSource::Notification { .. } => InboxRowKind::Notification,
-                AttentionSource::Health { .. } => return None,
+                AttentionSource::Health { .. } | AttentionSource::SuggestedAction { .. } => {
+                    return None
+                }
             };
             Some((kind, entity))
         })
@@ -6884,6 +6936,7 @@ fn now_attention_follow_id(item: &AttentionItem) -> Option<Uuid> {
         AttentionSource::WorkflowTask { task_id } => Some(task_id),
         AttentionSource::Notification { notification_id } => Some(notification_id),
         AttentionSource::Health { .. } => None,
+        AttentionSource::SuggestedAction { object_id, .. } => Some(object_id),
     }
 }
 
@@ -7112,8 +7165,11 @@ fn now_attention_paint_rows_scrolled(
     if width == 0 || height == 0 {
         return Vec::new();
     }
+    let suggested = context.and_then(|_| one_live_suggested_action(entities));
     let projection = match context {
-        Some(context) => project_with_context(entities, health, context),
+        Some(context) => {
+            project_with_suggestion(entities, health, context, suggested.as_ref())
+        }
         None => project_with_health(entities, health),
     };
     let items: Vec<&AttentionItem> = projection.now_items().collect();
@@ -24402,6 +24458,13 @@ mod tests {
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.primary, "Подтвердите удаление");
+    }
+
+    #[test]
+    fn attn07_empty_tools_are_not_a_suggested_action() {
+        let display = test_entity("saaios.display", serde_json::Map::new());
+        assert!(super::one_suggested_oam_for(&display).is_none());
+        assert!(super::one_suggested_oam_for(&task_entity("Задача", None)).is_none());
     }
 
     #[test]

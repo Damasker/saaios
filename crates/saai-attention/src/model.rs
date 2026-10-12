@@ -20,6 +20,10 @@ impl AttentionKey {
     pub fn health(component_id: &str) -> Self {
         Self(format!("health:{component_id}"))
     }
+
+    pub fn suggested_action(object_id: Uuid, action_id: &str) -> Self {
+        Self(format!("action:{object_id}:{action_id}"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +32,42 @@ pub enum AttentionSource {
     WorkflowTask { task_id: Uuid },
     Notification { notification_id: Uuid },
     Health { component_id: String },
+    SuggestedAction { action_id: String, object_id: Uuid },
+}
+
+/// ATTN-07: at most one OAM action. The caller already filtered
+/// capability + policy. This crate does not invent a title or a verb.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuggestedAction {
+    pub action_id: String,
+    pub object_id: Uuid,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuggestedActionCandidate {
+    pub action_id: String,
+    pub object_id: Uuid,
+    pub title: String,
+    pub permitted: bool,
+}
+
+/// Zero or many permitted candidates produce nothing.
+pub fn one_suggested_action(candidates: &[SuggestedActionCandidate]) -> Option<SuggestedAction> {
+    let permitted: Vec<&SuggestedActionCandidate> =
+        candidates.iter().filter(|candidate| candidate.permitted).collect();
+    if permitted.len() != 1 {
+        return None;
+    }
+    let chosen = permitted[0];
+    if chosen.action_id.is_empty() || chosen.title.is_empty() {
+        return None;
+    }
+    Some(SuggestedAction {
+        action_id: chosen.action_id.clone(),
+        object_id: chosen.object_id,
+        title: chosen.title.clone(),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -122,5 +162,45 @@ impl AttentionProjection {
         self.items.iter().filter(|item| {
             item.surfaces.now && item.relevance != AttentionRelevance::Background
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candidate(title: &str, permitted: bool) -> SuggestedActionCandidate {
+        SuggestedActionCandidate {
+            action_id: format!("act.{title}"),
+            object_id: Uuid::nil(),
+            title: title.into(),
+            permitted,
+        }
+    }
+
+    #[test]
+    fn one_permitted_candidate_is_kept() {
+        let chosen = one_suggested_action(&[candidate("keep", true), candidate("deny", false)])
+            .expect("one");
+        assert_eq!(chosen.title, "keep");
+        assert_eq!(chosen.action_id, "act.keep");
+    }
+
+    #[test]
+    fn zero_or_two_permitted_candidates_invent_nothing() {
+        assert!(one_suggested_action(&[]).is_none());
+        assert!(one_suggested_action(&[candidate("a", false)]).is_none());
+        assert!(one_suggested_action(&[candidate("a", true), candidate("b", true)]).is_none());
+    }
+
+    #[test]
+    fn empty_title_or_id_is_not_a_suggestion() {
+        let blank = SuggestedActionCandidate {
+            action_id: String::new(),
+            object_id: Uuid::nil(),
+            title: "Состояние экрана".into(),
+            permitted: true,
+        };
+        assert!(one_suggested_action(&[blank]).is_none());
     }
 }

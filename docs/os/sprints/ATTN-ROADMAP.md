@@ -1,6 +1,6 @@
 # SaaiOS Attention & Proactive Context — delivery roadmap
 
-Status: **ATTN-00/01/02/03/04 host complete. ATTN-02/03/04 shell прошит. ATTN-05 host ContextFrame relevance (ADR-506). ATTN-06 host (ADR-291 + shell wire ADR-293) + panther `4dc19018…` (ADR-308).**
+Status: **ATTN-00/01/02/03/04 host complete. ATTN-02/03/04 shell прошит. ATTN-05 host ContextFrame relevance (ADR-506). ATTN-06 host (ADR-291 + shell wire ADR-293) + panther `4dc19018…` (ADR-308). ATTN-07 one OAM suggestion host (ADR-508).**
 Phone: ATTN-02/03 ride VUI-05; ATTN-04 rides VUI-04. See [PIXEL-PATH.md](PIXEL-PATH.md).
 
 Architecture: [ADR-123](../../adr/ADR-123-attention-projection.md)
@@ -23,7 +23,7 @@ No second notification subsystem. No attention database.
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
 | ATTN-05 | Context relevance (no AI) | **Done** (host, ADR-506) | no |
 | ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`) | **yes** |
-| ATTN-07 | One OAM suggested action | Backlog | **yes** |
+| ATTN-07 | One OAM suggested action | **Host** (ADR-508); phone pending | **yes** |
 
 ## ATTN-01
 
@@ -92,3 +92,18 @@ Do not flash shell.
 **Rollback:** drop `AttentionSource::Health`.
 
 **Threat:** none — host adapter, no phone binary.
+
+## ATTN-07
+
+**Goal:** at most one OAM verb on NOW. No invented labels.
+
+**Change:** `one_suggested_action` + `project_with_suggestion`.
+Exactly one permitted candidate. Inbox/Orb omit it. Tap opens the
+object. No execution. No shell flash.
+
+**Test:** host `cargo test -p saai-attention` and
+`attn07_empty_tools_are_not_a_suggested_action`.
+
+**Rollback:** drop the suggestion types.
+
+**Threat:** none — host projection, no phone binary.

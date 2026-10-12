@@ -2,7 +2,7 @@
 
 use crate::model::{
     AttentionActionability, AttentionContext, AttentionItem, AttentionKey, AttentionPriority,
-    AttentionProjection, AttentionRelevance, AttentionSource, AttentionSurfaces,
+    AttentionProjection, AttentionRelevance, AttentionSource, AttentionSurfaces, SuggestedAction,
 };
 use chrono::Utc;
 use saai_entity_store::Entity;
@@ -36,6 +36,17 @@ pub fn project_with_context(
     health: Option<&HealthReport>,
     context: &AttentionContext,
 ) -> AttentionProjection {
+    project_with_suggestion(entities, health, context, None)
+}
+
+/// ATTN-07: at most one already-permitted OAM action. Inbox and Orb
+/// stay Task/Notification/Health. Attention never executes the action.
+pub fn project_with_suggestion(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+    context: &AttentionContext,
+    suggested: Option<&SuggestedAction>,
+) -> AttentionProjection {
     let mut items = Vec::new();
     let mut seen = HashSet::new();
     for entity in entities {
@@ -59,6 +70,11 @@ pub fn project_with_context(
             items.push(item);
         }
     }
+    if let Some(item) = suggested.map(from_suggested) {
+        if seen.insert(item.key.clone()) {
+            items.push(item);
+        }
+    }
     AttentionProjection {
         generated_at: Utc::now(),
         items,
@@ -74,7 +90,7 @@ pub fn inbox_source_ids(entities: &[Entity]) -> Vec<(AttentionSource, Uuid)> {
             AttentionSource::Notification { notification_id } => {
                 Some((item.source.clone(), *notification_id))
             }
-            AttentionSource::Health { .. } => None,
+            AttentionSource::Health { .. } | AttentionSource::SuggestedAction { .. } => None,
         })
         .collect()
 }
@@ -222,6 +238,28 @@ fn from_health(report: &HealthReport) -> Option<AttentionItem> {
         object: None,
         occurred_at: None,
     })
+}
+
+fn from_suggested(action: &SuggestedAction) -> AttentionItem {
+    AttentionItem {
+        key: AttentionKey::suggested_action(action.object_id, &action.action_id),
+        source: AttentionSource::SuggestedAction {
+            action_id: action.action_id.clone(),
+            object_id: action.object_id,
+        },
+        title: action.title.clone(),
+        summary: None,
+        priority: AttentionPriority::Normal,
+        relevance: AttentionRelevance::CurrentObject,
+        actionability: AttentionActionability::ActionAvailable,
+        surfaces: AttentionSurfaces {
+            now: true,
+            inbox: false,
+            orb: false,
+        },
+        object: Some(saai_entity_store::ObjectRef::entity(action.object_id)),
+        occurred_at: None,
+    }
 }
 
 #[cfg(test)]
@@ -450,7 +488,7 @@ mod tests {
             .filter_map(|item| match &item.source {
                 AttentionSource::WorkflowTask { task_id } => Some(*task_id),
                 AttentionSource::Notification { notification_id } => Some(*notification_id),
-                AttentionSource::Health { .. } => None,
+                AttentionSource::Health { .. } | AttentionSource::SuggestedAction { .. } => None,
             })
             .collect();
         assert_eq!(inbox, vec![home.id, work.id]);
@@ -567,9 +605,61 @@ mod tests {
             .filter_map(|item| match &item.source {
                 AttentionSource::WorkflowTask { task_id } => Some(*task_id),
                 AttentionSource::Notification { notification_id } => Some(*notification_id),
-                AttentionSource::Health { .. } => None,
+                AttentionSource::Health { .. } | AttentionSource::SuggestedAction { .. } => None,
             })
             .collect();
         assert_eq!(inbox, vec![waiting.id, note.id]);
+    }
+
+    fn suggested(object_id: Uuid) -> SuggestedAction {
+        SuggestedAction {
+            action_id: "display.inspect".into(),
+            object_id,
+            title: "Состояние экрана".into(),
+        }
+    }
+
+    #[test]
+    fn attn07_one_suggested_action_is_now_only() {
+        let object_id = Uuid::new_v4();
+        let proj = project_with_suggestion(
+            &[],
+            None,
+            &AttentionContext::default(),
+            Some(&suggested(object_id)),
+        );
+        assert_eq!(proj.items.len(), 1);
+        assert_eq!(
+            proj.items[0].source,
+            AttentionSource::SuggestedAction {
+                action_id: "display.inspect".into(),
+                object_id,
+            }
+        );
+        assert_eq!(proj.items[0].actionability, AttentionActionability::ActionAvailable);
+        assert!(proj.items[0].surfaces.now);
+        assert!(!proj.items[0].surfaces.inbox);
+        assert!(!proj.items[0].surfaces.orb);
+        assert!(!has_orb_attention(&proj));
+        assert_eq!(proj.now_items().count(), 1);
+        assert_eq!(proj.inbox_items().count(), 0);
+    }
+
+    #[test]
+    fn attn07_suggestion_does_not_break_inbox_parity() {
+        let waiting = task(WAITING_CONFIRMATION);
+        let note = notification(false, Map::new());
+        let proj = project_with_suggestion(
+            &[waiting.clone(), note.clone()],
+            None,
+            &AttentionContext::default(),
+            Some(&suggested(waiting.id)),
+        );
+        let inbox: Vec<Uuid> = inbox_source_ids(&[waiting.clone(), note.clone()])
+            .into_iter()
+            .map(|(_, id)| id)
+            .collect();
+        assert_eq!(inbox, vec![waiting.id, note.id]);
+        assert_eq!(proj.now_items().count(), 3);
     }
 }
