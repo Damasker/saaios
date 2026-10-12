@@ -441,7 +441,7 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
 }
 use saai_attention::{
     has_orb_attention, inbox_source_ids, one_suggested_action, project_from_entities,
-    project_with_health, project_with_suggestion, AttentionActionability,
+    project_with_context, project_with_health, project_with_suggestion, AttentionActionability,
     AttentionContext, AttentionItem, AttentionProjection, AttentionSource, HealthReport,
     HealthState, SuggestedAction, SuggestedActionCandidate,
 };
@@ -5269,7 +5269,14 @@ fn orb_visual_state(
     entities: &[Entity],
     menu_open: bool,
 ) -> UniversalState {
-    orb_visual_state_with(appd_connected, entityd_connected, entities, menu_open, None)
+    orb_visual_state_with(
+        appd_connected,
+        entityd_connected,
+        entities,
+        menu_open,
+        None,
+        None,
+    )
 }
 
 fn orb_visual_state_with(
@@ -5278,10 +5285,11 @@ fn orb_visual_state_with(
     entities: &[Entity],
     menu_open: bool,
     health: Option<&HealthReport>,
+    context: Option<&AttentionContext>,
 ) -> UniversalState {
     if !appd_connected || !entityd_connected {
         UniversalState::Offline
-    } else if orb_attention(entities, health) {
+    } else if live_orb_attention(entities, health, context) {
         UniversalState::Attention
     } else if orb_failed_work(entities) {
         UniversalState::Failed
@@ -5303,7 +5311,18 @@ fn orb_attention_from_entities(entities: &[Entity]) -> bool {
 }
 
 fn orb_attention(entities: &[Entity], health: Option<&HealthReport>) -> bool {
-    has_orb_attention(&project_with_health(entities, health))
+    live_orb_attention(entities, health, None)
+}
+
+fn live_orb_attention(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+    context: Option<&AttentionContext>,
+) -> bool {
+    has_orb_attention(&match context {
+        Some(ctx) => project_with_context(entities, health, ctx),
+        None => project_with_health(entities, health),
+    })
 }
 
 fn attention_context_from_space(
@@ -12004,12 +12023,18 @@ impl Shell {
         {
             return false;
         }
+        let context = live_attention_context(
+            &self.selected_space_id,
+            &self.context_frame,
+            &self.selected_entities,
+        );
         OrbHost::new(orb_visual_state_with(
             self.appd.is_connected(),
             self.entityd.is_connected(),
             &self.selected_entities,
             self.orb_menu_open,
             read_runtime_live_facts().health.as_ref(),
+            Some(&context),
         ))
         .motion()
             == MotionCue::ActivityPulse
@@ -15194,12 +15219,18 @@ impl Shell {
             width,
             height,
         );
+        let context = live_attention_context(
+            &self.selected_space_id,
+            &self.context_frame,
+            &self.selected_entities,
+        );
         let orb_host = OrbHost::new(orb_visual_state_with(
             self.appd.is_connected(),
             self.entityd.is_connected(),
             &self.selected_entities,
             self.orb_menu_open,
             read_runtime_live_facts().health.as_ref(),
+            Some(&context),
         ))
         .with_reduced_motion(self.settings.reduced_motion);
         let orb_host = if let Some((percent, _)) = read_battery() {
@@ -24596,6 +24627,23 @@ mod tests {
     }
 
     #[test]
+    fn live_orb_omits_background_space_attention() {
+        let mut work = task_entity("Подтвердите удаление", None);
+        work.space_id = "work".into();
+        let ctx = super::attention_context_from_space("home", &[], None);
+        assert!(!super::live_orb_attention(&[work.clone()], None, Some(&ctx)));
+        assert!(super::live_orb_attention(&[work.clone()], None, None));
+        assert_eq!(
+            super::orb_visual_state_with(true, true, &[work.clone()], false, None, Some(&ctx)),
+            UniversalState::Idle
+        );
+        assert_eq!(
+            super::orb_visual_state_with(true, true, &[work], false, None, None),
+            UniversalState::Attention
+        );
+    }
+
+    #[test]
     fn now_sections_lead_with_attention_then_work_then_next() {
         let waiting = task_entity("Подтвердите удаление", None);
         let mut running = task_entity("Работает", None);
@@ -26084,7 +26132,7 @@ mod tests {
             other => panic!("expected status row, got {other:?}"),
         }
         assert_eq!(
-            super::orb_visual_state_with(true, true, &[], false, Some(&report)),
+            super::orb_visual_state_with(true, true, &[], false, Some(&report), None),
             UniversalState::Attention
         );
     }
@@ -26095,7 +26143,7 @@ mod tests {
         assert!(!super::orb_attention(&[], Some(&report)));
         assert!(super::now_attention_section_with(&[], Some(&report), None).is_none());
         assert_eq!(
-            super::orb_visual_state_with(true, true, &[], false, Some(&report)),
+            super::orb_visual_state_with(true, true, &[], false, Some(&report), None),
             UniversalState::Idle
         );
     }

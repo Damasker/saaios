@@ -20,7 +20,7 @@ No second notification subsystem. No attention database.
 | ATTN-01 | Pure crate: Task + Notification candidates; inbox parity tests | **Done** (host) | no |
 | ATTN-02 | NOW «Требует внимания» uses projection | **Done** (host) | **yes (VUI-05)** |
 | ATTN-03 | Inbox uses same projection | **Done** (host + panther) | **yes** |
-| ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
+| ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host + live ContextFrame ADR-516) | **yes (VUI-04)** |
 | ATTN-05 | Context relevance (no AI) | **Done** (host, ADR-506 + live `object_id` ADR-513 + ObjectRef ADR-514) | no |
 | ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`) | **yes** |
 | ATTN-07 | One OAM suggested action | **Host** (ADR-508) + live catalog **на panther** (ADR-511; `0fb762d1…`) | **yes** |
