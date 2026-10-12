@@ -1,6 +1,6 @@
 # HDI — лаборатория аппаратного исследования
 
-Статус трека: **HDI-23 в Verify на panther. HDI-06 в Verify: снимок MacBookPro11,3, исход B.**
+Статус трека: **HDI-25 в Verify на host. HDI-06 в Verify: снимок MacBookPro11,3, исход B.**
 Активный аппаратный эксперимент на Pixel этот трек не открывает и
 модемный трек не сдвигает. HDI-00…05 — host. HDI-06 — одна
 read-only команда на MacBookPro11,3, когда снимок уже собран и
@@ -1814,6 +1814,57 @@ Host, Windows и R620, `cargo test -p hdi-campaign --test hdi23`: 3 passed. Пр
 
 На panther заменён только `/data/saaios/system/saai-taskd`, sha256 `3837e7e4d8af15d582a1e65ba1829084a746769bb58981d1dac60f414536d403`. Предыдущий бинарник — `saai-taskd.hdi23-prev`. Init не менялся. Один Intent `c0b9e44a-4bfe-405a-9b44-9d28135b8979` дал Task `f64b4c6d-6d47-4229-be8f-e383634e35b3` со статусом `done`. Result `33f9d1de-8ad8-429b-959d-ee15f182690c`: `verdict=PlatformGraphicsMatched`, `loaded_module=false`. Action — `investigate_hardware`, не `adapt_hardware`. Сущностей `waiting_confirmation` нет, подтверждение не отправлялось. До и после кампании `/proc/modules` sha256 `6d862c26e9ab48455290f0e9a16b656ad42b828ca7ace4478014548432f8975d`. После `reboot -f` taskd pid 548 с тем же хешем, Task остался `done`, нового `/tmp/hdi-*` нет, в `dmesg` нет `investigate_hardware`. Хеш `/proc/modules` после новой загрузки другой (`096f232eb54d98733eaf32f9c6b890a87d6060d3dddfcbc613a2652577a86b4f`): это набор модулей свежей загрузки, не запись лаборатории между двумя хешами одного сеанса.
 
+## Sprint HDI-25 — имя узла в длинном списке DRM
+
+- Состояние: `Verify`
+- Зависит от: HDI-06 в Verify, HDI-08 в Verify
+- Архитектурные решения: ADR-426
+- Рабочий fallback: строка без имени узла не добавляет утверждение
+
+### Goal
+
+Скриптовый Hunter читает узел из `ls -l /sys/class/drm` и связывает его с драйвером, который уже назван в `pci_drivers.txt` и загружен. Каталог `drm` на этой строке драйвером устройства не считается.
+
+### Current state
+
+Прогон HDI-06 записал gain 0: первая колонка `ls -l` — режим файла, а Hunter брал первый токен. Control уже держал PCI и `Kernel driver in use`.
+
+### Scope
+
+Входит: имя узла перед `->`; карты `cardN` и их разъёмы; последний PCI-слот строки, не мост перед ним.
+
+Не входит: загрузка модуля, `apple_gmux` как причина, правка снимка, телефон, большая модель.
+
+### Change
+
+1. Узел — токен сразу перед `->`. Строка `card0 -> …` по-прежнему начинается с узла.
+2. Токен `drm` — каталог класса, не драйвер.
+3. Если на строке нет имени загруженного модуля, драйвер берётся из последнего слота этой строки по `pci_drivers.txt`, и только если модуль есть в `modules.txt`.
+
+### Test
+
+| Тест | Ожидание |
+|---|---|
+| `ls_long_names_the_node_before_the_arrow` | `card1` и `renderD129` есть, `version` нет |
+| `class_directory_drm_is_not_the_device_driver` | Один `device_present`, без привязки `drm` |
+| `last_pci_slot_binds_the_loaded_driver` | `card1` → `i915`, `card0` → `nouveau`, не `pcieport` и не `apple_gmux` |
+
+### Acceptance criteria
+
+На том же пакете MacBookPro11,3 проход 1 и проход 5 различаются gain. Исход остаётся B. Модуль не загружается. `card0` не объявляется пробелом.
+
+### Threat / privacy impact
+
+В утверждение попадают имя узла и имя уже загруженного драйвера. Ключ стенда и серийные номера не копируются.
+
+### Rollback
+
+Снова брать первый токен строки. Привязка по слоту исчезает вместе с этим разбором.
+
+### Evidence
+
+Host, Windows, toolchain `1.97.1-x86_64-pc-windows-gnu`: `cargo test -p hdi-campaign --test hdi25 --test hdi08 --test hdi12 --test hdi23` — 13 passed. Повтор того же пакета `81d712eeb7608bec7ef7fbf78b320e097d823d641934ab21e2b2d1c7b395ce09`, ключ снаружи `redacted/`: `pass_gain=[9, 9, 18, 18, 18]`, efficiency 6, accuracy 0, coverage 1, `false_hypotheses=0`, `not_transferred`. Проход 1 записывает девять узлов, включая `drm:card1` и `drm:renderD129`. Проход 3, после `pci_drivers`, привязывает `card0` и `renderD128` к `nouveau`, `card1` и `renderD129` к `i915`. Исход B, `negative_recipe_closed=false`. Адаптация `AlreadyBound { nouveau }`, `loaded_module=false`, вопроса нет. Журнал без `insmod` / `modprobe` / `rmmod` / `.ko`. Утверждения `gmux` нет.
+
 ## Каталог фикстур
 
 Синтетика, безопасная для git:
@@ -1844,6 +1895,8 @@ Host, Windows и R620, `cargo test -p hdi-campaign --test hdi23`: 3 passed. Пр
    `saai-taskd`. Init, udev и предусловие не включаются.
 7. HDI-22 и HDI-23 читают Result уже прошитого Task. Они не открывают
    новый экран и не загружают модуль.
+8. HDI-25 остаётся host-only: тот же снимок MacBook, без новой
+   записи на машину и без прошивки panther.
 
 Состояние `Done` у любого спринта требует записи Evidence: команда
 тестов, результат, известный предел. Зелёная сборка телефона сюда

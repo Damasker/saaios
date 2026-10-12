@@ -131,15 +131,17 @@ fn drm_node_claims(input_json: &str) -> Vec<Claim> {
         .and_then(|text| text.as_str())
         .unwrap_or("");
     let loaded = module_names(modules);
+    let pci_drivers = value
+        .get("files")
+        .and_then(|files| files.get("pci_drivers.txt"))
+        .and_then(|text| text.as_str())
+        .unwrap_or("");
+    let slot_drivers = pci_slot_drivers(pci_drivers);
     let mut claims = Vec::new();
     for line in drm.lines() {
-        let line = line.trim();
-        let Some(name) = line.split_whitespace().next() else {
+        let Some(name) = drm_node_name(line) else {
             continue;
         };
-        if !is_drm_node(name) {
-            continue;
-        }
         claims.push(Claim::new(
             ClaimKind::DevicePresent,
             format!("drm:{name}"),
@@ -153,13 +155,58 @@ fn drm_node_claims(input_json: &str) -> Vec<Claim> {
                 driver,
                 vec!["drm.txt".into(), "modules.txt".into()],
             ));
+        } else if let Some(driver) = slot_driver(line, &slot_drivers, &loaded) {
+            claims.push(Claim::new(
+                ClaimKind::DriverBound,
+                format!("drm:{name}"),
+                driver,
+                vec![
+                    "drm.txt".into(),
+                    "pci_drivers.txt".into(),
+                    "modules.txt".into(),
+                ],
+            ));
         }
     }
     claims
 }
 
+/// `card0 -> …` keeps the node as the first token. `ls -l` puts the mode
+/// first and the node immediately before `->`.
+fn drm_node_name(line: &str) -> Option<&str> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with("total ") {
+        return None;
+    }
+    let name = if let Some((left, _)) = line.split_once("->") {
+        left.split_whitespace().next_back()?
+    } else {
+        line.split_whitespace().next()?
+    };
+    is_drm_node(name).then_some(name)
+}
+
 fn is_drm_node(name: &str) -> bool {
-    name == "card0" || name.starts_with("card0-") || is_render_node(name)
+    is_card_node(name) || is_render_node(name)
+}
+
+fn is_card_node(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("card") else {
+        return false;
+    };
+    let (index, connector) = match rest.split_once('-') {
+        Some((index, connector)) => (index, Some(connector)),
+        None => (rest, None),
+    };
+    if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    connector.is_none_or(|connector| {
+        !connector.is_empty()
+            && connector
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    })
 }
 
 fn is_render_node(name: &str) -> bool {
@@ -176,7 +223,11 @@ fn line_driver(line: &str, loaded: &[String]) -> Option<String> {
             continue;
         }
         let normalized = token.replace('-', "_");
-        if normalized.is_empty() || !loaded.iter().any(|name| name == &normalized) {
+        // `…/drm/card0` names the class directory, not the device driver.
+        if normalized.is_empty()
+            || normalized == "drm"
+            || !loaded.iter().any(|name| name == &normalized)
+        {
             continue;
         }
         if best
@@ -187,6 +238,88 @@ fn line_driver(line: &str, loaded: &[String]) -> Option<String> {
         }
     }
     best
+}
+
+/// The last PCI slot on the line is the DRM device. An earlier slot is the
+/// bridge. The driver name comes from `pci_drivers.txt` and must be loaded.
+fn slot_driver(
+    line: &str,
+    slot_drivers: &std::collections::BTreeMap<String, String>,
+    loaded: &[String],
+) -> Option<String> {
+    let mut found = None;
+    for token in line.split(|ch: char| ch.is_whitespace() || ch == '/') {
+        let Some(slot) = normalize_bdf(token) else {
+            continue;
+        };
+        if let Some(driver) = slot_drivers.get(&slot) {
+            if loaded.iter().any(|name| name == driver) {
+                found = Some(driver.clone());
+            }
+        }
+    }
+    found
+}
+
+fn pci_slot_drivers(listing: &str) -> std::collections::BTreeMap<String, String> {
+    let mut drivers = std::collections::BTreeMap::new();
+    let mut slot: Option<String> = None;
+    for line in listing.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !line.starts_with([' ', '\t']) {
+            slot = trimmed.split_whitespace().next().and_then(normalize_bdf);
+            continue;
+        }
+        let Some(driver) = trimmed.strip_prefix("Kernel driver in use:") else {
+            continue;
+        };
+        let driver = driver.trim();
+        if driver.is_empty() {
+            continue;
+        }
+        if let Some(slot) = slot.clone() {
+            drivers.insert(slot, driver.to_string());
+        }
+    }
+    drivers
+}
+
+fn normalize_bdf(token: &str) -> Option<String> {
+    let token = token.trim_matches(|ch: char| ch == ',' || ch == ':');
+    let (domain, rest) = if token.matches(':').count() == 2 {
+        let (domain, rest) = token.split_once(':')?;
+        (domain, rest)
+    } else if token.matches(':').count() == 1 {
+        ("0000", token)
+    } else {
+        return None;
+    };
+    if domain.len() != 4 || !domain.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let (bus, devfn) = rest.split_once(':')?;
+    let (device, function) = devfn.split_once('.')?;
+    if bus.len() == 2
+        && device.len() == 2
+        && function.len() == 1
+        && bus.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && device.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && function.as_bytes()[0].is_ascii_digit()
+        && function.as_bytes()[0] <= b'7'
+    {
+        Some(format!(
+            "{}:{}:{}.{}",
+            domain.to_ascii_lowercase(),
+            bus.to_ascii_lowercase(),
+            device.to_ascii_lowercase(),
+            function
+        ))
+    } else {
+        None
+    }
 }
 
 /// No PCI VGA-compatible function. A present `[0300]` class records nothing:

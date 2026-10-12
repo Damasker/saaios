@@ -43,7 +43,7 @@ USB-gadget — отдельные факты прохода 4. Проход 5 з
 `mali` у `28000000.mali` и модуль `mali_kbase` за этим драйвером, драйвер
 `aoc` у `19000000.aoc` и модуль `aoc_core`. У TPU и ISP ссылки драйвера нет.
 `mali_kbase` путём DRM не назван.
-HDI-06 в Verify: снимок MacBookPro11,3, исход B (`IgpuPresent`), отрицательный рецепт не закрыт.
+HDI-06 в Verify: снимок MacBookPro11,3, исход B (`IgpuPresent`), отрицательный рецепт не закрыт. HDI-25 в Verify на host: `ls -l` называет узел DRM перед `->`, последний PCI-слот строки связывается с уже загруженным драйвером.
 HDI-18 в Verify: `campaign_from_action` запускает одну кампанию только на `investigate_hardware`. HDI-19 в Verify на R620: уже запущенный `saai-taskd` пишет Result этой кампании. HDI-20 в Verify: `sysfs_read` читает временный корень, а не живой `/sys`. HDI-21 в Verify на panther: один Intent дал Result, повторная загрузка кампанию не повторила. HDI-22 в Verify на panther: тот же Result на существующем экране, холодная загрузка лабораторию не открывает. HDI-23 в Verify на panther: привязанный `exynos_drm` вопрос не задаёт, пробел на host ждёт человека, модуль не загружается. Один Task
 внутри уже запущенного `saai-taskd`, без демона и без пункта
 `native-init`. Образ init не менялся.
