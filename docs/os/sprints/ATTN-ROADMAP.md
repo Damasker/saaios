@@ -72,7 +72,9 @@ object is CurrentObject. Health stays Global. Inbox order stays
 ATTN-03.
 
 **Test:** host `cargo test -p saai-attention` and the shell
-`now_paint_omits_background_space_attention` case.
+`now_paint_omits_background_space_attention` /
+`now_section_list_uses_the_same_context_as_paint` cases
+(ADR-509).
 
 **Rollback:** drop context; restore Global-only `project_with_health`.
 

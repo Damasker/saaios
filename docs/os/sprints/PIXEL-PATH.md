@@ -279,6 +279,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | ATTN-05 context relevance | other-space Attention is Inbox-only **host** (ADR-506; no shell flash) |
 | WORK-05 ready priority | High Pending admits before Normal; no preemption **host** (ADR-507; no taskd flash) |
 | ATTN-07 one OAM verb | exactly one permitted suggestion on NOW **host** (ADR-508; no shell flash) |
+| ATTN-05 NOW sections | section list uses the same ContextFrame as paint **host** (ADR-509; no shell flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |

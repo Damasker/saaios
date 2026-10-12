@@ -6815,14 +6815,20 @@ fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
 /// omitted, never a placeholder.
 fn now_attention_section(entities: &[Entity]) -> Option<SystemSection> {
-    now_attention_section_with(entities, None)
+    now_attention_section_with(entities, None, None)
 }
 
 fn now_attention_section_with(
     entities: &[Entity],
     health: Option<&HealthReport>,
+    context: Option<&AttentionContext>,
 ) -> Option<SystemSection> {
-    attention_section_from_projection(&project_with_health(entities, health))
+    let suggested = context.and_then(|_| one_live_suggested_action(entities));
+    let projection = match context {
+        Some(context) => project_with_suggestion(entities, health, context, suggested.as_ref()),
+        None => project_with_health(entities, health),
+    };
+    attention_section_from_projection(&projection)
 }
 
 /// ADR-241: NOW body order matches the boards — attention, current
@@ -6831,7 +6837,7 @@ fn now_workflow_sections(
     entities: &[Entity],
     relationships: &[Relationship],
 ) -> Vec<SystemSection> {
-    now_workflow_sections_with(entities, relationships, None, true)
+    now_workflow_sections_with(entities, relationships, None, true, None)
 }
 
 fn now_workflow_sections_with(
@@ -6839,12 +6845,13 @@ fn now_workflow_sections_with(
     relationships: &[Relationship],
     health: Option<&HealthReport>,
     store_connected: bool,
+    context: Option<&AttentionContext>,
 ) -> Vec<SystemSection> {
     let mut sections = Vec::new();
     let pending_empty_attention =
-        now_attention_section_with(entities, health).is_none() && store_connected;
+        now_attention_section_with(entities, health, context).is_none() && store_connected;
 
-    if let Some(attention) = now_attention_section_with(entities, health) {
+    if let Some(attention) = now_attention_section_with(entities, health, context) {
         sections.push(attention);
     }
 
@@ -14794,11 +14801,13 @@ impl Shell {
     }
 
     fn now_sections(&self) -> Vec<SystemSection> {
+        let context = attention_context_from_space(&self.selected_space_id, &self.context_frame);
         now_workflow_sections_with(
             &self.selected_entities,
             &self.relationships,
             read_runtime_live_facts().health.as_ref(),
             self.entityd.is_connected(),
+            Some(&context),
         )
     }
 
@@ -24468,6 +24477,39 @@ mod tests {
     }
 
     #[test]
+    fn now_section_list_uses_the_same_context_as_paint() {
+        let mut home = task_entity("Подтвердите удаление", None);
+        home.space_id = "home".into();
+        let mut work = notification_entity("Work note", "body");
+        work.space_id = "work".into();
+        let ctx = super::attention_context_from_space("home", &[]);
+        let sections = super::now_workflow_sections_with(
+            &[home.clone(), work.clone()],
+            &[],
+            None,
+            true,
+            Some(&ctx),
+        );
+        let attention = sections
+            .iter()
+            .find(|section| section.title == "Требует внимания")
+            .expect("attention");
+        assert_eq!(attention.rows.len(), 1);
+        match &attention.rows[0] {
+            SystemSectionRow::Status(status) => {
+                assert_eq!(status.label, "Подтвердите удаление");
+            }
+            other => panic!("expected status row, got {other:?}"),
+        }
+        let without = super::now_workflow_sections_with(&[home, work], &[], None, true, None);
+        let wide = without
+            .iter()
+            .find(|section| section.title == "Требует внимания")
+            .expect("global attention");
+        assert_eq!(wide.rows.len(), 2);
+    }
+
+    #[test]
     fn now_sections_lead_with_attention_then_work_then_next() {
         let waiting = task_entity("Подтвердите удаление", None);
         let mut running = task_entity("Работает", None);
@@ -25946,7 +25988,7 @@ mod tests {
     fn unhealthy_health_lights_orb_and_now() {
         let report = cpu_sampler_health(HealthState::Unhealthy);
         assert!(super::orb_attention(&[], Some(&report)));
-        let section = super::now_attention_section_with(&[], Some(&report)).expect("now row");
+        let section = super::now_attention_section_with(&[], Some(&report), None).expect("now row");
         assert_eq!(section.rows.len(), 1);
         match &section.rows[0] {
             SystemSectionRow::Status(status) => {
@@ -25965,7 +26007,7 @@ mod tests {
     fn healthy_health_does_not_light_orb_or_now() {
         let report = cpu_sampler_health(HealthState::Healthy);
         assert!(!super::orb_attention(&[], Some(&report)));
-        assert!(super::now_attention_section_with(&[], Some(&report)).is_none());
+        assert!(super::now_attention_section_with(&[], Some(&report), None).is_none());
         assert_eq!(
             super::orb_visual_state_with(true, true, &[], false, Some(&report)),
             UniversalState::Idle
