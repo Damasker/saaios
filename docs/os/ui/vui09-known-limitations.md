@@ -105,7 +105,9 @@ tiles scroll above the tab strip (ADR-498). Object View
 history stays behind Disclosure (ADR-499). Intent
 Confirm only when AskUser exists (ADR-500). Intent
 Progress is sourced or indeterminate (ADR-501). Long-RU
-fixtures stay in tests (ADR-502). Public
+fixtures stay in tests (ADR-502). Host chrome
+on panther under dest-no-lock (ADR-503); lock SIGTRAP
+stays open. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
 `wifi-password-public.sui`, and `pin-setup-public.sui`

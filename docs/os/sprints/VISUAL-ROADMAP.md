@@ -1510,6 +1510,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Still Experimental. Not Visual v1 sign-off.
 - [x] Long-RU fixtures stay in tests (ADR-502).
   Still Experimental. Not Visual v1 sign-off.
+- [x] Host chrome on panther under dest-no-lock (ADR-503).
+  Lock SIGTRAP stays open. Still Experimental. Not Visual v1
+  sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

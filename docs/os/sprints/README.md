@@ -176,6 +176,7 @@ ADR-499 Object View history stays behind Disclosure.
 ADR-500 Intent Confirm only when AskUser exists.
 ADR-501 Intent Progress is sourced or indeterminate.
 ADR-502 long-RU fixtures stay in tests.
+ADR-503 VUI-09 host chrome on panther under dest-no-lock.
 ADR-233 panther `saai-taskd` supervises live intents from `/data`.
 ADR-234 panther `init_boot` starts `saai-taskd` after reboot.
 ADR-235 `saai-taskd` follows entityd `SelectionChanged`.

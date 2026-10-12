@@ -156,6 +156,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Intent Confirm only when AskUser exists (ADR-500).
   Intent Progress is sourced or indeterminate (ADR-501).
   Long-RU fixtures stay in tests (ADR-502).
+  Host chrome on panther under dest-no-lock (ADR-503).
+  Lock SIGTRAP stays open.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
