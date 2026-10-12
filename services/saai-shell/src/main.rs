@@ -6260,14 +6260,33 @@ fn live_task_trailing(
     ))
 }
 
+/// WORK-05: same `priority` as `saai-taskd`. Only `low` / `high` count.
+/// Missing, `normal`, and unknown values (including spoofed `critical`)
+/// stay Normal. Does not preempt; this is NOW «Далее» order only.
+fn now_task_priority(entity: &Entity) -> u8 {
+    match entity.properties.get("priority").and_then(Value::as_str) {
+        Some("high") => 2,
+        Some("low") => 0,
+        _ => 1,
+    }
+}
+
 /// WORK-08: «Далее» is a pending Action if one exists, otherwise the
 /// first derived-ready Task. WaitingConfirmation stays on NOW attention.
+/// Ready Tasks are High → Normal → Low, then UUID, same as ADR-507.
 fn next_ready_task(entities: &[Entity]) -> Option<&Entity> {
-    entities.iter().find(|entity| {
-        entity.entity_type == "saaios.task"
-            && workflow_status_of(entity) == Some(TASK_STATUS_PENDING)
-            && task_dependencies_ready(entity, entities)
-    })
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == "saaios.task"
+                && workflow_status_of(entity) == Some(TASK_STATUS_PENDING)
+                && task_dependencies_ready(entity, entities)
+        })
+        .max_by(|left, right| {
+            now_task_priority(left)
+                .cmp(&now_task_priority(right))
+                .then_with(|| right.id.cmp(&left.id))
+        })
 }
 
 fn next_work(entities: &[Entity]) -> Option<&Entity> {
@@ -16306,6 +16325,48 @@ mod tests {
         assert_eq!(
             super::next_ready_task(&unblocked).map(|entity| entity.id),
             Some(child.id)
+        );
+    }
+
+    fn pending_task(title: &str, priority: Option<&str>) -> Entity {
+        let mut properties = serde_json::Map::new();
+        properties.insert("status".into(), serde_json::Value::String("pending".into()));
+        if let Some(priority) = priority {
+            properties.insert(
+                "priority".into(),
+                serde_json::Value::String(priority.into()),
+            );
+        }
+        let mut entity = test_entity("saaios.task", properties);
+        entity.title = title.into();
+        entity
+    }
+
+    #[test]
+    fn next_ready_task_prefers_high_over_list_order() {
+        let normal = pending_task("Обычная", None);
+        let high = pending_task("Срочная", Some("high"));
+        assert_eq!(
+            super::next_ready_task(&[normal.clone(), high.clone()]).map(|entity| entity.id),
+            Some(high.id)
+        );
+        let spoofed = pending_task("Критическая", Some("critical"));
+        assert_eq!(
+            super::next_ready_task(&[spoofed.clone(), high.clone()]).map(|entity| entity.id),
+            Some(high.id)
+        );
+        let low = pending_task("Позже", Some("low"));
+        assert_eq!(
+            super::next_ready_task(&[low.clone(), normal.clone()]).map(|entity| entity.id),
+            Some(normal.id)
+        );
+        let mut later = pending_task("Позже по uuid", None);
+        let mut earlier = pending_task("Раньше по uuid", None);
+        later.id = uuid::Uuid::from_u128(2);
+        earlier.id = uuid::Uuid::from_u128(1);
+        assert_eq!(
+            super::next_ready_task(&[later.clone(), earlier.clone()]).map(|entity| entity.id),
+            Some(earlier.id)
         );
     }
 
