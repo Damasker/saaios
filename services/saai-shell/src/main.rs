@@ -7062,7 +7062,7 @@ fn now_attention_reason(item: &AttentionItem) -> String {
 /// «Процессор». A spoofed component id is not a new board label.
 fn health_attention_title(component_id: &str) -> String {
     if component_id == "system.cpu.sampler" {
-        observation_row_label("system.cpu.usage")
+        observation_row_label("system.cpu.usage").unwrap_or_else(|| "Процессор".into())
     } else {
         "Наблюдения".into()
     }
@@ -8613,8 +8613,8 @@ struct RuntimeLiveFacts {
     identity: Option<LiveNodeIdentity>,
 }
 
-fn observation_row_label(key: &str) -> String {
-    match key {
+fn observation_row_label(key: &str) -> Option<String> {
+    Some(match key {
         "system.cpu.usage" => "Процессор".into(),
         "system.load.average" => "Нагрузка".into(),
         "system.memory.used_percent" => "Память".into(),
@@ -8692,8 +8692,8 @@ fn observation_row_label(key: &str) -> String {
         "locality.weather.code" => "Код".into(),
         "locality.weather.condition" => "Погода".into(),
         "locality.attribution" => "Источник".into(),
-        other => other.to_string(),
-    }
+        _ => return None,
+    })
 }
 
 fn format_observation_value(key: &str, value: &Value, unit: Option<&str>) -> Option<String> {
@@ -8875,7 +8875,7 @@ fn live_observations_from_status_json(blob: &Value) -> Vec<LiveObservationFact> 
             let unit = row.get("unit").and_then(Value::as_str);
             let value = format_observation_value(key, row.get("value")?, unit)?;
             Some(LiveObservationFact {
-                label: observation_row_label(key),
+                label: observation_row_label(key)?,
                 key: key.to_string(),
                 value,
                 source: source.to_string(),
@@ -25737,6 +25737,8 @@ mod tests {
                         "source": "procfs.load"
                     },
                     { "key": "weather.temp", "value": 21.0, "source": "" },
+                    { "key": "weather.temp", "value": 21.0, "source": "invented.weather" },
+                    { "key": "evil.metric", "value": 9.0, "source": "procfs.cpu" },
                     { "key": "", "value": 1.0, "source": "procfs.cpu" }
                 ]
             }
@@ -25747,6 +25749,8 @@ mod tests {
         assert_eq!(rows[1].label, "Нагрузка");
         assert_eq!(rows[1].value, "0.3");
         assert!(!rows.iter().any(|row| row.key.contains("weather")));
+        assert!(!rows.iter().any(|row| row.label.contains('.')));
+        assert!(!rows.iter().any(|row| row.key == "evil.metric"));
         let locality = super::live_observations_from_status_json(&serde_json::json!({
             "status": {
                 "observations": [
@@ -25779,6 +25783,12 @@ mod tests {
         assert_eq!(locality[1].value, "52.52000");
         assert_eq!(locality[2].label, "Долгота");
         assert_eq!(locality[2].value, "13.41000");
+        assert!(super::observation_row_label("weather.temp").is_none());
+        assert!(super::observation_row_label("evil.metric").is_none());
+        assert_eq!(
+            super::observation_row_label("system.cpu.usage").as_deref(),
+            Some("Процессор")
+        );
     }
 
     #[test]

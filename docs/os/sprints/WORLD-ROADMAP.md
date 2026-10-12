@@ -33,7 +33,7 @@ Do not start with a monitoring product or HealthState.
 |---|---|---|---|
 | WORLD-00 | ADR-122 + mapping + this roadmap | **Done** | no |
 | WORLD-01 | Observation types + `system.metrics` conversion | **Done** (host) | no |
-| WORLD-02 | ObservationCache + snapshot revision | **Done** (host + panther runtime `93ad729c…`) | **yes** |
+| WORLD-02 | ObservationCache + snapshot revision | **Done** (host + panther runtime `93ad729c…`; unmapped chrome ADR-526) | **yes** |
 | WORLD-03 | `saai-deviced` UDS GetSnapshot/Subscribe | Backlog | no |
 | WORLD-04 | Shared Linux observers (no `/proc` copy) | **Done** (host, ADR-505) | no |
 | WORLD-05 | Verification uses fresh observation | **Done** (host, ADR-274) | no |
@@ -73,6 +73,9 @@ not Unhealthy; sampler fills cache and still publishes ToolResult.
 ToolResult again.
 
 **Threat:** none — in-memory, no new listener, no secrets, no graphs.
+
+Shell chrome (ADR-526): known keys only. An unmapped key, including
+`weather.temp`, is omitted. Do not flash shell.
 
 ## WORLD-04
 
