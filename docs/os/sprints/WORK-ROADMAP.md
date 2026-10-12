@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-04 host read-only bound (ADR-504); WORK-06 host FailureClass (ADR-288); WORK-07 host ReplanRequest (ADR-289); WORK-08 visibility on panther shell `63b8b64`.**
+Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-04 host read-only bound (ADR-504); WORK-05 host priority among Ready (ADR-507); WORK-06 host FailureClass (ADR-288); WORK-07 host ReplanRequest (ADR-289); WORK-08 visibility on panther shell `63b8b64`.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -27,7 +27,7 @@ Planner the scheduler.
 | WORK-02 | Derived ready set + concurrency = 1 | **Done** (host + panther dispatch ADR-237) | **yes** |
 | WORK-03 | Verification lifecycle (`Verifying`) | **Done** (host, ADR-259) | no |
 | WORK-04 | Read-only bounded parallelism | **Done** (host, ADR-504) | measure first |
-| WORK-05 | Priority scheduling | Backlog | no |
+| WORK-05 | Priority scheduling | **Done** (host, ADR-507) | no |
 | WORK-06 | Retry + failure taxonomy | **Done** (host, ADR-288) | no |
 | WORK-07 | Bounded ReplanRequest | **Done** (host, ADR-289) | no |
 | WORK-08 | Сейчас / Orb / Object View visibility | **Done** (host + panther) | **yes** |
@@ -98,6 +98,22 @@ read-only waits when two are in flight.
 frontier only.
 
 **Threat:** none — host scheduler bound, no phone binary.
+
+## WORK-05
+
+**Goal:** High Pending admits before Normal. No preemption.
+
+**Change:** optional `priority` (`low` / `high`). Unknown is Normal.
+Ready sort is High → Normal → Low, then UUID. Bounds unchanged.
+Running/Verifying keep the slot.
+
+**Test:** host `cargo test -p saai-taskd`.
+
+**Acceptance:** host tests green. Phone=no this slice.
+
+**Rollback:** drop `priority`; restore UUID-only order.
+
+**Threat:** none — host order, no phone binary.
 
 ## WORK-03
 

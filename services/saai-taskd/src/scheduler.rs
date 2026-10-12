@@ -19,6 +19,29 @@ pub const MAX_MUTATING_IN_FLIGHT: usize = 1;
 /// host-measured; keep small until WORK-09 budgets land on Pixel.
 pub const MAX_READ_ONLY_IN_FLIGHT: usize = 2;
 pub const READ_ONLY_PROPERTY: &str = "read_only";
+pub const PRIORITY_PROPERTY: &str = "priority";
+
+/// WORK-05: only `low` / `high` are honored. Missing, `normal`, and
+/// unknown values (including spoofed `critical`) stay Normal. Does not
+/// preempt an in-flight Task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+}
+
+pub fn task_priority(task: &Entity) -> TaskPriority {
+    match task
+        .properties
+        .get(PRIORITY_PROPERTY)
+        .and_then(Value::as_str)
+    {
+        Some("high") => TaskPriority::High,
+        Some("low") => TaskPriority::Low,
+        _ => TaskPriority::Normal,
+    }
+}
 
 pub fn is_completed(status: WorkflowStatus) -> bool {
     matches!(status, WorkflowStatus::Done)
@@ -84,8 +107,20 @@ pub fn derive_ready_set(tasks: &[Entity]) -> Vec<Uuid> {
         })
         .map(|task| task.id)
         .collect();
-    ready.sort();
+    sort_ready_by_priority(&mut ready, tasks);
     ready
+}
+
+fn sort_ready_by_priority(ready: &mut [Uuid], tasks: &[Entity]) {
+    ready.sort_by(|a, b| {
+        let pa = task_by_id(tasks, *a)
+            .map(task_priority)
+            .unwrap_or(TaskPriority::Normal);
+        let pb = task_by_id(tasks, *b)
+            .map(task_priority)
+            .unwrap_or(TaskPriority::Normal);
+        pb.cmp(&pa).then_with(|| a.cmp(b))
+    });
 }
 
 fn is_plan_step(task: &Entity) -> bool {
@@ -136,6 +171,8 @@ pub fn admit_ready(tasks: &[Entity]) -> Vec<Uuid> {
             None => {}
         }
     }
+    sort_ready_by_priority(&mut read_only_ready, tasks);
+    sort_ready_by_priority(&mut mutating_ready, tasks);
     let mut admitted = admit_frontier(
         &read_only_ready,
         read_only_in_flight(tasks),
@@ -411,5 +448,42 @@ mod tests {
         let b = read_only_task(WorkflowStatus::Running);
         let c = read_only_task(WorkflowStatus::Pending);
         assert!(admit_ready(&[a, b, c]).is_empty());
+    }
+
+    fn with_priority(mut entity: Entity, priority: &str) -> Entity {
+        entity
+            .properties
+            .insert(PRIORITY_PROPERTY.into(), json!(priority));
+        entity
+    }
+
+    #[test]
+    fn work05_high_admits_before_normal_when_idle() {
+        let normal = task(WorkflowStatus::Pending, &[]);
+        let high = with_priority(task(WorkflowStatus::Pending, &[]), "high");
+        assert_eq!(admit_ready(&[normal.clone(), high.clone()]), vec![high.id]);
+        assert_eq!(next_admission(&[normal, high.clone()]), Some(high.id));
+    }
+
+    #[test]
+    fn work05_high_does_not_preempt_mutating_in_flight() {
+        let running = task(WorkflowStatus::Running, &[]);
+        let high = with_priority(task(WorkflowStatus::Pending, &[]), "high");
+        assert!(admit_ready(&[running, high]).is_empty());
+    }
+
+    #[test]
+    fn work05_unknown_priority_is_normal() {
+        let spoofed = with_priority(task(WorkflowStatus::Pending, &[]), "critical");
+        let high = with_priority(task(WorkflowStatus::Pending, &[]), "high");
+        assert_eq!(task_priority(&spoofed), TaskPriority::Normal);
+        assert_eq!(admit_ready(&[spoofed, high.clone()]), vec![high.id]);
+    }
+
+    #[test]
+    fn work05_low_waits_behind_normal() {
+        let low = with_priority(task(WorkflowStatus::Pending, &[]), "low");
+        let normal = task(WorkflowStatus::Pending, &[]);
+        assert_eq!(next_admission(&[low, normal.clone()]), Some(normal.id));
     }
 }
