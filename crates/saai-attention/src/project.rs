@@ -157,6 +157,11 @@ fn from_undismissed_notification(entity: &Entity) -> Option<AttentionItem> {
 
 fn apply_context(item: &mut AttentionItem, entity: &Entity, context: &AttentionContext) {
     item.relevance = relevance_of(entity, context);
+    if item.relevance == AttentionRelevance::CurrentObject {
+        if let Some(object_id) = context.object_id {
+            item.object = Some(saai_entity_store::ObjectRef::entity(object_id));
+        }
+    }
     if item.relevance == AttentionRelevance::Background {
         item.surfaces.now = false;
         item.surfaces.orb = false;
@@ -515,8 +520,25 @@ mod tests {
             primary_space_id: Some("home".into()),
             object_id: Some(note.id),
         };
-        let item = &project_with_context(&[note], None, &ctx).items[0];
+        let item = &project_with_context(&[note.clone()], None, &ctx).items[0];
         assert_eq!(item.relevance, AttentionRelevance::CurrentObject);
+        assert_eq!(
+            item.object,
+            Some(saai_entity_store::ObjectRef::entity(note.id))
+        );
+    }
+
+    #[test]
+    fn current_context_does_not_invent_an_object_ref() {
+        let note = notification(false, Map::new());
+        let ctx = AttentionContext {
+            space_ids: vec!["home".into()],
+            primary_space_id: Some("home".into()),
+            object_id: None,
+        };
+        let item = &project_with_context(&[note], None, &ctx).items[0];
+        assert_eq!(item.relevance, AttentionRelevance::CurrentContext);
+        assert_eq!(item.object, None);
     }
 
     #[test]
