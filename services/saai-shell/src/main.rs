@@ -1727,9 +1727,19 @@ fn data_session_suffix(
     if let Some(call) = call {
         parts.push(format!("список {}", call.count));
         if let (Some(cid), Some(active), Some(pdp)) = (call.cid, call.active, call.pdp) {
-            parts.push(format!("cid {cid}"));
-            parts.push(format!("active {active}"));
-            parts.push(format!("pdp {pdp}"));
+            parts.push(format!(
+                "{} {cid}",
+                observation_row_label("cellular.dcall_cid").unwrap_or_else(|| "CID".into())
+            ));
+            parts.push(format!(
+                "{} {active}",
+                observation_row_label("cellular.dcall_active")
+                    .unwrap_or_else(|| "Флаг канала".into())
+            ));
+            parts.push(format!(
+                "{} {pdp}",
+                observation_row_label("cellular.dcall_pdp").unwrap_or_else(|| "Тип канала".into())
+            ));
         }
     }
     if let Some(phrase) = traffic.and_then(traffic_phrase) {
@@ -18665,8 +18675,11 @@ mod tests {
         );
         assert_eq!(
             text,
-            "список 1 · cid 2 · active 2 · pdp 3 · трафик · сигнал есть · вниз 41579 · вверх 3600"
+            "список 1 · CID 2 · Флаг канала 2 · Тип канала 3 · трафик · сигнал есть · вниз 41579 · вверх 3600"
         );
+        assert!(!text.contains("cid "));
+        assert!(!text.contains("active "));
+        assert!(!text.contains("pdp "));
         assert_eq!(super::data_session_suffix(None, None, None, None), "");
         assert_eq!(super::traffic_phrase("both"), Some("трафик"));
         assert_eq!(super::traffic_phrase("out"), Some("только исходящий"));

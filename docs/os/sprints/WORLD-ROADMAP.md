@@ -75,7 +75,8 @@ ToolResult again.
 **Threat:** none — in-memory, no new listener, no secrets, no graphs.
 
 Shell chrome (ADR-526): known keys only. An unmapped key, including
-`weather.temp`, is omitted. Do not flash shell.
+`weather.temp`, is omitted. Data-call suffix reuses those labels
+(ADR-531). Do not flash shell.
 
 ## WORLD-04
 

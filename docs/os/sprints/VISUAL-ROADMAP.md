@@ -1527,6 +1527,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   host; no shell flash). Still Experimental.
 - [x] Bluetooth PAIR-ERROR hides the log token (ADR-530; host; no
   shell flash). Still Experimental.
+- [x] Data-session suffix uses Observation labels (ADR-531; host;
+  no shell flash). Still Experimental.
 - [ ] Lock re-enable is a defect track, not a permanent skip
   (ADR-512): reproduce SIGTRAP, name the cause, recover a dead
   lock client, prove unlock again. Do not lift dest-no-lock
@@ -1659,7 +1661,8 @@ keys stay off Система (ADR-526). «Записи» hides
 MemoryKind (ADR-527). Unknown device_class
 is «Узел» (ADR-528). Unknown capability/app
 state hide schema tokens (ADR-529). Bluetooth
-PAIR-ERROR hides the log token (ADR-530). Keyboard keys,
+PAIR-ERROR hides the log token (ADR-530). Data-session
+suffix uses Observation labels (ADR-531). Keyboard keys,
 gallery page, and lock idle/wake stay formulas until a board
 names them. Public subset stays Experimental. Acceptance stays
 unchecked until panther evidence. Do not fake weather / voice /
