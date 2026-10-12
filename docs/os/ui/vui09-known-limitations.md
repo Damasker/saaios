@@ -107,7 +107,8 @@ Confirm only when AskUser exists (ADR-500). Intent
 Progress is sourced or indeterminate (ADR-501). Long-RU
 fixtures stay in tests (ADR-502). Host chrome
 on panther under dest-no-lock (ADR-503). Lock SIGTRAP
-class is one-slot lock SHM (ADR-532); dest-no-lock stays;
+class is one-slot lock SHM (ADR-532). Host 515–532 chrome
+is on panther (ADR-533; `efca9bd3…`); dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
@@ -123,6 +124,7 @@ The verification ledger stays in
 |---|---|
 | lock / unlock cycle | ADR-209; HEAD `3850427a…`; PIN null; tap-unlock; `/run/saaios/dev-no-lock` restored |
 | dest-no-lock leftover lock | ADR-510; host; dead lock client kept `locked=true` after ADR-503 swap; live recovery was displayd restart; no displayd flash |
+| dest-no-lock 515–532 shell | ADR-533; `efca9bd3…`; PUT+rename; displayd 26159 stayed; shell 2320; `surface=now`; marker stayed; unlock not proven |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |

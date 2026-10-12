@@ -157,7 +157,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Intent Progress is sourced or indeterminate (ADR-501).
   Long-RU fixtures stay in tests (ADR-502).
   Host chrome on panther under dest-no-lock (ADR-503).
-  Lock SIGTRAP class is one-slot lock SHM (ADR-532);
+  Lock SIGTRAP class is one-slot lock SHM (ADR-532).
+  Host 515–532 chrome is on panther (ADR-533; `efca9bd3…`);
   dest-no-lock stays; unlock is not proven on panther.
   Gallery page taps stay a
   whole-surface formula.

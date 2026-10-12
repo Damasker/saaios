@@ -1533,6 +1533,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   plus configure drop, not keymap. Two page-aligned frames.
   dest-no-lock stays. Unlock is not proven on panther. Still
   Experimental. Not Visual v1 sign-off.
+- [x] Host 515–532 chrome on panther under dest-no-lock
+  (ADR-533; `efca9bd3…`). Unlock is not proven. Still
+  Experimental. Not Visual v1 sign-off.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.
@@ -1666,7 +1669,8 @@ is «Узел» (ADR-528). Unknown capability/app
 state hide schema tokens (ADR-529). Bluetooth
 PAIR-ERROR hides the log token (ADR-530). Data-session
 suffix uses Observation labels (ADR-531). Lock SIGTRAP class
-is one-slot lock SHM (ADR-532). dest-no-lock stays. Unlock
+is one-slot lock SHM (ADR-532). Host 515–532 chrome is on
+panther under dest-no-lock (ADR-533; `efca9bd3…`). Unlock
 is not proven on panther. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
