@@ -4702,7 +4702,7 @@ fn node_identity_line(class: &str, target: &str, arch: &str) -> String {
     let class_label = match class {
         "phone" => "Телефон",
         "computer" => "Компьютер",
-        other => other,
+        _ => "Узел",
     };
     format!("{class_label} · {target} · {arch}")
 }
@@ -8961,7 +8961,10 @@ fn live_node_from_status_json(blob: &Value) -> Option<LiveNodeIdentity> {
     let class = device.get("device_class")?.as_str()?.trim();
     let target = device.get("target")?.as_str()?.trim();
     let arch = device.get("architecture")?.as_str()?.trim();
-    if class.is_empty() || target.is_empty() || arch.is_empty() {
+    if !matches!(class, "phone" | "computer")
+        || target.is_empty()
+        || arch.is_empty()
+    {
         return None;
     }
     if looks_like_network_address(class)
@@ -25625,6 +25628,19 @@ mod tests {
         assert!(laptop.starts_with("Компьютер · x86 · "));
         assert!(!laptop.contains("172."));
         assert!(!super::node_identity_line("phone", "panther", "aarch64").contains("192.168"));
+        let spoofed = super::node_identity_line("tablet", "panther", "aarch64");
+        assert!(spoofed.starts_with("Узел · "));
+        assert!(!spoofed.contains("tablet"));
+        assert!(super::live_node_from_status_json(&serde_json::json!({
+            "status": {
+                "device": {
+                    "device_class": "tablet",
+                    "target": "panther",
+                    "architecture": "aarch64"
+                }
+            }
+        }))
+        .is_none());
     }
 
     #[test]
