@@ -37,6 +37,13 @@ roadmap. Work slots into existing OS sprints; reuse beats replace
 Related earlier TL framing: Scheduler ≠ Cognitive Core; time-over-compute;
 bounded fan-out; ActionIntent → Policy → Capability; Sprint 0 = map first.
 
+**ADR-153 (tool gate):** each registry tool declares `read_only`,
+`concurrency_safe`, and a permission class; Cognitive Core only proposes
+calls; the sole pre-exec path is Policy → (AskUser / plan-batch) → Work
+Scheduler frontier. Explicitly reject dump-code imports, phone agent
+swarms, durable Task/Ready/Action queues, and `bypassPermissions` as a
+device default — see [ADR-153](../../adr/ADR-153-tool-registry-gate-before-exec.md).
+
 ## Current components vs Cognitive Core vs Work Scheduler
 
 ```text
