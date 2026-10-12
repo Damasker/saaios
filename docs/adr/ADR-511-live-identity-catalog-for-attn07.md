@@ -2,8 +2,8 @@
 
 ## Статус
 
-Принято, 2026-10-12. Host. No new agent runtime. Shell does not
-execute the tool. Lock SIGTRAP stays open.
+Принято, 2026-10-12. Host + panther `0fb762d1…` under dest-no-lock.
+Shell does not execute the tool. Lock SIGTRAP stays open.
 
 ## Нумерация
 

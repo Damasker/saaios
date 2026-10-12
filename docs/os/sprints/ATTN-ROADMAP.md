@@ -23,7 +23,7 @@ No second notification subsystem. No attention database.
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
 | ATTN-05 | Context relevance (no AI) | **Done** (host, ADR-506) | no |
 | ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`) | **yes** |
-| ATTN-07 | One OAM suggested action | **Host** (ADR-508 + live identity catalog ADR-511); phone pending | **yes** |
+| ATTN-07 | One OAM suggested action | **Host** (ADR-508) + live catalog **на panther** (ADR-511; `0fb762d1…`) | **yes** |
 
 ## ATTN-01
 
@@ -102,7 +102,7 @@ Do not flash shell.
 **Change:** `one_suggested_action` + `project_with_suggestion`.
 Exactly one permitted candidate. Inbox/Orb omit it. Tap opens the
 object. No execution. ADR-511 catalogs live `system.identity` so
-`display.inspect` can resolve. No shell flash.
+`display.inspect` can resolve. Panther `0fb762d1…` under dest-no-lock.
 
 **Test:** host `cargo test -p saai-attention` and
 `attn07_empty_tools_are_not_a_suggested_action` /
