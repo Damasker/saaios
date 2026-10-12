@@ -288,6 +288,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | ATTN-07 follow ObjectRef | NOW attention tap opens the focused entity **host** (ADR-515; no shell flash) |
 | ATTN-05 Orb ContextFrame | live Orb omits other-space Attention **host** (ADR-516; no shell flash) |
 | WORK-05 NOW «Далее» | ready Task order is High → Normal → Low **host** (ADR-517; no shell flash) |
+| WORK-05 NOW Action | pending Action follows the owner Task priority **host** (ADR-518; no shell flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -373,6 +374,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - ATTN-07 follow ObjectRef: NOW tap opens the focused entity when present (ADR-515; host; no shell flash)
 - ATTN-05 Orb ContextFrame: live Orb uses the same context as NOW (ADR-516; host; no shell flash)
 - WORK-05 NOW «Далее»: ready Task order matches taskd priority (ADR-517; host; no shell flash)
+- WORK-05 NOW Action: pending Action follows the owner Task priority (ADR-518; host; no shell flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

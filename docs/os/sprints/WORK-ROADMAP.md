@@ -27,7 +27,7 @@ Planner the scheduler.
 | WORK-02 | Derived ready set + concurrency = 1 | **Done** (host + panther dispatch ADR-237) | **yes** |
 | WORK-03 | Verification lifecycle (`Verifying`) | **Done** (host, ADR-259) | no |
 | WORK-04 | Read-only bounded parallelism | **Done** (host, ADR-504) | measure first |
-| WORK-05 | Priority scheduling | **Done** (host, ADR-507; NOW «Далее» ADR-517) | no |
+| WORK-05 | Priority scheduling | **Done** (host, ADR-507; NOW «Далее» ADR-517/518) | no |
 | WORK-06 | Retry + failure taxonomy | **Done** (host, ADR-288) | no |
 | WORK-07 | Bounded ReplanRequest | **Done** (host, ADR-289) | no |
 | WORK-08 | Сейчас / Orb / Object View visibility | **Done** (host + panther) | **yes** |

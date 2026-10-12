@@ -5498,11 +5498,30 @@ const OPEN_ACTION_ACTION: &str = "Открыть действие";
 const OPEN_RESULT_ACTION: &str = "Открыть результат";
 const OPEN_BLOCKER_ACTION: &str = "Открыть зависимость";
 
+fn action_owner_priority(action: &Entity, entities: &[Entity]) -> u8 {
+    uuid_property(action, "task_id")
+        .and_then(|id| {
+            entities
+                .iter()
+                .find(|entity| entity.id == id && entity.entity_type == "saaios.task")
+        })
+        .map(now_task_priority)
+        .unwrap_or(1)
+}
+
 fn next_pending_action(entities: &[Entity]) -> Option<&Entity> {
-    entities.iter().find(|entity| {
-        entity.entity_type == ACTION_ENTITY_TYPE
-            && entity.properties.get("status").and_then(Value::as_str) == Some(TASK_STATUS_PENDING)
-    })
+    entities
+        .iter()
+        .filter(|entity| {
+            entity.entity_type == ACTION_ENTITY_TYPE
+                && entity.properties.get("status").and_then(Value::as_str)
+                    == Some(TASK_STATUS_PENDING)
+        })
+        .max_by(|left, right| {
+            action_owner_priority(left, entities)
+                .cmp(&action_owner_priority(right, entities))
+                .then_with(|| right.id.cmp(&left.id))
+        })
 }
 
 fn workflow_status_of(entity: &Entity) -> Option<&str> {
@@ -16384,6 +16403,34 @@ mod tests {
         assert_eq!(
             super::next_work(&entities).map(|entity| entity.id),
             Some(action.id)
+        );
+    }
+
+    #[test]
+    fn next_pending_action_prefers_the_high_task_owner() {
+        let normal = pending_task("Обычная", None);
+        let high = pending_task("Срочная", Some("high"));
+        let normal_action = action_entity("Сначала в списке", normal.id, "pending");
+        let high_action = action_entity("Потом в списке", high.id, "pending");
+        assert_eq!(
+            super::next_pending_action(&[
+                normal.clone(),
+                high.clone(),
+                normal_action.clone(),
+                high_action.clone()
+            ])
+            .map(|entity| entity.id),
+            Some(high_action.id)
+        );
+        assert_eq!(
+            super::next_work(&[
+                normal,
+                high,
+                normal_action.clone(),
+                high_action.clone()
+            ])
+            .map(|entity| entity.id),
+            Some(high_action.id)
         );
     }
 
