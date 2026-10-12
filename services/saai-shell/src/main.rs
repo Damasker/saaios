@@ -8589,11 +8589,7 @@ struct LiveMemoryFact {
 
 impl LiveMemoryFact {
     fn value_line(&self) -> String {
-        if self.kind.is_empty() {
-            self.value.clone()
-        } else {
-            format!("{} · {}", self.value, self.kind)
-        }
+        self.value.clone()
     }
 }
 
@@ -8910,14 +8906,18 @@ fn live_memory_records_from_status_json(blob: &Value) -> Vec<LiveMemoryFact> {
             if sensitivity.eq_ignore_ascii_case("restricted") {
                 return None;
             }
+            let kind = row
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if kind == "learned_hypothesis" {
+                return None;
+            }
             Some(LiveMemoryFact {
                 key: key.to_string(),
                 value: value.to_string(),
-                kind: row
-                    .get("kind")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
+                kind,
             })
         })
         .collect()
@@ -9422,14 +9422,15 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
             .collect();
         sections.insert(1, me_section_data("Наблюдения", rows));
     }
-    if !facts.memory_records.is_empty() {
-        let rows = facts
-            .memory_records
-            .iter()
-            .map(|rec| SettingRow::readout(rec.key.clone(), rec.value_line()).row)
-            .collect();
+    let memory_rows: Vec<DataRow> = facts
+        .memory_records
+        .iter()
+        .filter(|rec| rec.kind != "learned_hypothesis")
+        .map(|rec| SettingRow::readout(rec.key.clone(), rec.value_line()).row)
+        .collect();
+    if !memory_rows.is_empty() {
         let at = if facts.observations.is_empty() { 1 } else { 2 };
-        sections.insert(at, me_section_data("Записи", rows));
+        sections.insert(at, me_section_data("Записи", memory_rows));
     }
     if !facts.apps.is_empty() {
         let rows = facts
@@ -26584,6 +26585,12 @@ mod tests {
                         "kind": "explicit_fact",
                         "sensitivity": "restricted"
                     },
+                    {
+                        "key": "guess",
+                        "value": "maybe",
+                        "space": "global",
+                        "kind": "learned_hypothesis"
+                    },
                     { "key": "", "value": "x", "space": "global", "kind": "explicit_fact" }
                 ]
             }
@@ -26594,6 +26601,7 @@ mod tests {
         assert_eq!(rows[0].kind, "explicit_fact");
         assert!(!rows.iter().any(|row| row.key == "deploy"));
         assert!(!rows.iter().any(|row| row.key == "pin"));
+        assert!(!rows.iter().any(|row| row.key == "guess"));
         assert!(!rows.iter().any(|row| row.value == "1234"));
     }
 
@@ -26612,10 +26620,17 @@ mod tests {
             .iter()
             .find(|row| row.card.label == "host.role")
             .expect("global memory row");
-        assert!(remembered.card.status.contains("home"));
-        assert!(remembered.card.status.contains("explicit_fact"));
+        assert_eq!(remembered.card.status, "home");
+        assert!(!remembered.card.status.contains("explicit_fact"));
         assert!(remembered.dispatch.is_none());
         assert!(!rows.iter().any(|row| row.card.label == "deploy"));
+        facts.memory_records = vec![super::LiveMemoryFact {
+            key: "guess".into(),
+            value: "maybe".into(),
+            kind: "learned_hypothesis".into(),
+        }];
+        let sections = me_system_sections(&facts);
+        assert!(!sections.iter().any(|section| section.title == "Записи"));
     }
 
     #[test]

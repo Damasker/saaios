@@ -1519,6 +1519,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   shell flash). Still Experimental. Not Visual v1 sign-off.
 - [x] Unmapped Observation keys stay off Система (ADR-526; host;
   no shell flash). Still Experimental. Not Visual v1 sign-off.
+- [x] «Записи» hides MemoryKind tokens (ADR-527; host; no shell
+  flash). Still Experimental. Not Visual v1 sign-off.
 - [ ] Lock re-enable is a defect track, not a permanent skip
   (ADR-512): reproduce SIGTRAP, name the cause, recover a dead
   lock client, prove unlock again. Do not lift dest-no-lock
@@ -1647,7 +1649,8 @@ is sourced or indeterminate (ADR-501). Long-RU
 fixtures stay in tests (ADR-502). Host chrome
 on panther under dest-no-lock (ADR-503). NOW Health
 hides schema tokens (ADR-525). Unmapped Observation
-keys stay off Система (ADR-526). Keyboard keys,
+keys stay off Система (ADR-526). «Записи» hides
+MemoryKind (ADR-527). Keyboard keys,
 gallery page, and lock idle/wake stay formulas until a board
 names them. Public subset stays Experimental. Acceptance stays
 unchecked until panther evidence. Do not fake weather / voice /
