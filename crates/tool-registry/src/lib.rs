@@ -104,6 +104,44 @@ impl ToolRegistry {
     }
 }
 
+/// Spec shared by the working `system-tools` executor and the shell
+/// catalog. Same name/risk so OAM `display.inspect` can resolve.
+pub fn system_identity_spec() -> ToolSpec {
+    ToolSpec {
+        name: "system.identity".into(),
+        description: "Read the locally observed SaaiOS deployment and device identity".into(),
+        risk: RiskLevel::Low,
+        timeout_ms: 500,
+        input_schema: serde_json::json!({"type":"object","properties":{}}),
+        output_schema: serde_json::json!({"type":"object"}),
+        requires_confirmation: false,
+    }
+}
+
+/// Present for resolve/preflight. Execute stays in `system-tools`.
+pub struct CataloguedTool {
+    spec: ToolSpec,
+}
+
+impl CataloguedTool {
+    pub fn new(spec: ToolSpec) -> Self {
+        Self { spec }
+    }
+}
+
+#[async_trait]
+impl ToolExecutor for CataloguedTool {
+    fn spec(&self) -> &ToolSpec {
+        &self.spec
+    }
+
+    async fn execute(&self, _args: Value, _ctx: &ToolContext) -> Result<ToolOutput, ToolError> {
+        Err(ToolError::Execution(
+            "catalogued tool is not executed here".into(),
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

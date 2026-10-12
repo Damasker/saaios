@@ -3771,11 +3771,19 @@ fn builtin_object_actions() -> ObjectActionRegistry {
     registry
 }
 
+fn live_tool_registry() -> tool_registry::ToolRegistry {
+    let mut tools = tool_registry::ToolRegistry::new();
+    tools.register(std::sync::Arc::new(tool_registry::CataloguedTool::new(
+        tool_registry::system_identity_spec(),
+    )));
+    tools
+}
+
 fn object_view_permission(entity: &Entity) -> Option<String> {
     object_view_permission_with(
         entity,
         &builtin_object_actions(),
-        &tool_registry::ToolRegistry::new(),
+        &live_tool_registry(),
         &policy_engine::PolicyEngine::new(),
     )
 }
@@ -3830,7 +3838,7 @@ fn object_view_quick_actions(entity: &Entity) -> Vec<ObjectQuickAction> {
     object_view_quick_actions_with(
         entity,
         &builtin_object_actions(),
-        &tool_registry::ToolRegistry::new(),
+        &live_tool_registry(),
         &policy_engine::PolicyEngine::new(),
     )
 }
@@ -5333,7 +5341,7 @@ fn one_suggested_oam_for(entity: &Entity) -> Option<SuggestedAction> {
     one_suggested_oam_with(
         entity,
         &builtin_object_actions(),
-        &tool_registry::ToolRegistry::new(),
+        &live_tool_registry(),
         &policy_engine::PolicyEngine::new(),
     )
 }
@@ -23228,9 +23236,9 @@ mod tests {
         let actions = super::object_view_quick_actions(&display);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].title, "Состояние экрана");
-        assert_eq!(actions[0].reason.as_deref(), Some("нет инструмента"));
+        assert_eq!(actions[0].reason, None);
         let lines = super::object_view_quick_action_lines(&display);
-        assert_eq!(lines, ["Состояние экрана: нет инструмента"]);
+        assert_eq!(lines, ["Состояние экрана"]);
         assert_eq!(
             object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 1, false),
             None
@@ -23999,17 +24007,11 @@ mod tests {
         let mut display = test_entity("saaios.display", serde_json::Map::new());
         display.title = "Экран".to_string();
         let content = object_view_content(&display, &[display.clone()], &[]);
-        assert_eq!(
-            content.permission.as_deref(),
-            Some("Состояние экрана: нет инструмента")
-        );
+        assert_eq!(content.permission, None);
         assert!(content.actions.is_empty());
         let details = object_view_details(&content);
         assert!(!details.iter().any(|line| line.contains("нет инструмента")));
-        assert_eq!(
-            object_view_permission_pattern(&content),
-            Some(SurfacePattern::blocked("Состояние экрана: нет инструмента"))
-        );
+        assert_eq!(object_view_permission_pattern(&content), None);
     }
 
     #[test]
@@ -24472,8 +24474,23 @@ mod tests {
     #[test]
     fn attn07_empty_tools_are_not_a_suggested_action() {
         let display = test_entity("saaios.display", serde_json::Map::new());
-        assert!(super::one_suggested_oam_for(&display).is_none());
+        assert!(super::one_suggested_oam_with(
+            &display,
+            &super::builtin_object_actions(),
+            &tool_registry::ToolRegistry::new(),
+            &policy_engine::PolicyEngine::new(),
+        )
+        .is_none());
         assert!(super::one_suggested_oam_for(&task_entity("Задача", None)).is_none());
+    }
+
+    #[test]
+    fn attn07_live_identity_is_one_suggested_action() {
+        let display = test_entity("saaios.display", serde_json::Map::new());
+        let suggested = super::one_suggested_oam_for(&display).expect("display.inspect");
+        assert_eq!(suggested.action_id, "display.inspect");
+        assert_eq!(suggested.title, "Состояние экрана");
+        assert_eq!(suggested.object_id, display.id);
     }
 
     #[test]

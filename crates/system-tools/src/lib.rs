@@ -233,15 +233,7 @@ pub fn install_system_tools(registry: &mut ToolRegistry, mode: ToolsMode, device
 
     registry.register(Arc::new(IdentityTool {
         identity: device,
-        spec: ToolSpec {
-            name: "system.identity".into(),
-            description: "Read the locally observed SaaiOS deployment and device identity".into(),
-            risk: RiskLevel::Low,
-            timeout_ms: 500,
-            input_schema: json!({"type":"object","properties":{}}),
-            output_schema: json!({"type":"object"}),
-            requires_confirmation: false,
-        },
+        spec: tool_registry::system_identity_spec(),
     }));
 
     registry.register(Arc::new(MetricsTool {
@@ -1137,6 +1129,10 @@ mod tests {
         assert_eq!(out.value["system"], "SaaiOS");
         assert_eq!(out.value["deployment"], "test_fixture");
         assert_eq!(out.value["observed_by"], "local_runtime");
+        assert_eq!(
+            reg.get("system.identity").unwrap().spec().name,
+            tool_registry::system_identity_spec().name
+        );
     }
 
     #[test]
