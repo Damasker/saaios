@@ -6959,6 +6959,9 @@ fn now_attention_empty_section() -> SystemSection {
 }
 
 fn now_attention_follow_id(item: &AttentionItem) -> Option<Uuid> {
+    if let Some(ObjectRef::Entity { id }) = item.object {
+        return Some(id);
+    }
     match item.source {
         AttentionSource::WorkflowTask { task_id } => Some(task_id),
         AttentionSource::Notification { notification_id } => Some(notification_id),
@@ -24567,6 +24570,29 @@ mod tests {
             without.items[0].relevance,
             saai_attention::AttentionRelevance::CurrentContext
         );
+    }
+
+    #[test]
+    fn now_attention_follow_prefers_current_object_ref() {
+        let mut note = notification_entity("Заметка", "body");
+        note.space_id = "home".into();
+        let focused = uuid::Uuid::new_v4();
+        note.properties.insert(
+            "object_id".into(),
+            serde_json::Value::String(focused.to_string()),
+        );
+        let ctx = super::attention_context_from_space("home", &[], Some(focused));
+        let proj = saai_attention::project_with_context(&[note], None, &ctx);
+        assert_eq!(super::now_attention_follow_id(&proj.items[0]), Some(focused));
+    }
+
+    #[test]
+    fn now_attention_follow_keeps_source_without_object_ref() {
+        let mut note = notification_entity("Заметка", "body");
+        note.space_id = "home".into();
+        let ctx = super::attention_context_from_space("home", &[], None);
+        let proj = saai_attention::project_with_context(&[note.clone()], None, &ctx);
+        assert_eq!(super::now_attention_follow_id(&proj.items[0]), Some(note.id));
     }
 
     #[test]
