@@ -291,6 +291,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | WORK-05 NOW Action | pending Action follows the owner Task priority **host** (ADR-518; no shell flash) |
 | WORK-05/06 NOW progress | in-progress High first; unknown Failed is «Ошибка» **host** (ADR-519; no shell flash) |
 | WORK-05 related Task | same-rank primary related Task prefers High **host** (ADR-520; no shell flash) |
+| WORK-08 unknown status | unknown Task `status` is «Нет статуса» **host** (ADR-521; no shell flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -379,6 +380,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - WORK-05 NOW Action: pending Action follows the owner Task priority (ADR-518; host; no shell flash)
 - WORK-05/06 NOW progress: in-progress High first; unknown Failed is «Ошибка» (ADR-519; host; no shell flash)
 - WORK-05 related Task: same-rank primary related Task prefers High (ADR-520; host; no shell flash)
+- WORK-08 unknown status: unknown Task `status` is «Нет статуса» (ADR-521; host; no shell flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

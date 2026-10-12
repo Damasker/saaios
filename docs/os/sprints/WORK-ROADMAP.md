@@ -30,7 +30,7 @@ Planner the scheduler.
 | WORK-05 | Priority scheduling | **Done** (host, ADR-507; NOW «Далее» ADR-517/518; in-progress ADR-519; related ADR-520) | no |
 | WORK-06 | Retry + failure taxonomy | **Done** (host, ADR-288; Failed copy ADR-519) | no |
 | WORK-07 | Bounded ReplanRequest | **Done** (host, ADR-289) | no |
-| WORK-08 | Сейчас / Orb / Object View visibility | **Done** (host + panther) | **yes** |
+| WORK-08 | Сейчас / Orb / Object View visibility | **Done** (host + panther; unknown status ADR-521) | **yes** |
 | WORK-09 | Pixel measurements + tuned budgets | Backlog | **yes** |
 
 ## WORK-00

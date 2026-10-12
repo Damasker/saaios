@@ -5598,8 +5598,7 @@ fn task_status_text(entity: &Entity, entities: &[Entity]) -> String {
         (Some(TASK_STATUS_CANCELLED), _) => "Отменено".to_string(),
         (Some(TASK_STATUS_PENDING), UniversalState::Blocked) => "Ждёт зависимости".to_string(),
         (Some(TASK_STATUS_PENDING), _) => "Ожидает запуска".to_string(),
-        (Some(other), _) => other.to_string(),
-        (None, _) => "Нет статуса".to_string(),
+        (Some(_), _) | (None, _) => "Нет статуса".to_string(),
     }
 }
 
@@ -16323,6 +16322,16 @@ mod tests {
         assert_eq!(
             super::task_status_text(&fake, std::slice::from_ref(&fake)),
             "Ошибка"
+        );
+        let mut spoofed_status = serde_json::Map::new();
+        spoofed_status.insert(
+            "status".into(),
+            serde_json::Value::String("critical".into()),
+        );
+        let raw = test_entity("saaios.task", spoofed_status);
+        assert_eq!(
+            super::task_status_text(&raw, std::slice::from_ref(&raw)),
+            "Нет статуса"
         );
     }
 
