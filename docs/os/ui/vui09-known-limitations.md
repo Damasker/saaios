@@ -109,7 +109,8 @@ fixtures stay in tests (ADR-502). Host chrome
 on panther under dest-no-lock (ADR-503). Lock SIGTRAP
 class is one-slot lock SHM (ADR-532). Host 515–532 chrome
 is on panther (ADR-533; `efca9bd3…`). OSK and status-bar
-SHM use two slots (ADR-534). dest-no-lock stays;
+SHM use two slots (ADR-534). Main window SHM uses two
+slots (ADR-535). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,

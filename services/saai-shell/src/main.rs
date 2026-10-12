@@ -10109,7 +10109,7 @@ fn main() {
     layer.commit();
 
     let pool = SlotPool::new(
-        (logical_width as usize) * (logical_height as usize) * 4,
+        lock_shm::lock_shm_pool_bytes(logical_width, logical_height),
         &shm,
     )
     .expect("failed to create SHM pool");
@@ -10915,9 +10915,13 @@ impl WindowHandler for Shell {
         configure: WindowConfigure,
         _serial: u32,
     ) {
-        self.buffer = None;
-        self.width = configure.new_size.0.map(|v| v.get()).unwrap_or(self.width);
-        self.height = configure.new_size.1.map(|v| v.get()).unwrap_or(self.height);
+        let width = configure.new_size.0.map(|v| v.get()).unwrap_or(self.width);
+        let height = configure.new_size.1.map(|v| v.get()).unwrap_or(self.height);
+        if lock_shm::lock_size_replaced(self.width, self.height, width, height) {
+            self.buffer = None;
+        }
+        self.width = width;
+        self.height = height;
 
         if self.first_configure {
             self.first_configure = false;
@@ -13434,17 +13438,22 @@ impl Shell {
             return;
         }
 
-        let buffer = self.buffer.get_or_insert_with(|| {
-            self.pool
-                .create_buffer(
-                    width as i32,
-                    height as i32,
-                    stride,
-                    wl_shm::Format::Xrgb8888,
-                )
-                .expect("create buffer")
-                .0
-        });
+        if self.buffer.is_none() {
+            match self.pool.create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Xrgb8888,
+            ) {
+                Ok((buffer, _)) => self.buffer = Some(buffer),
+                Err(error) => {
+                    eprintln!("saai-shell: main SHM has no free slot ({error}), skipping frame");
+                    self.frame_pace.note_dropped();
+                    return;
+                }
+            }
+        }
+        let buffer = self.buffer.as_mut().expect("just ensured main buffer");
 
         // Physically found by "Я"'s drag-to-scroll (ADR/S-follow-up):
         // creating a second buffer here every time the compositor
@@ -13477,9 +13486,11 @@ impl Shell {
             let surface = self.window.wl_surface();
             surface.frame(qh, surface.clone());
         }
-        buffer
-            .attach_to(self.window.wl_surface())
-            .expect("buffer attach");
+        if let Err(error) = buffer.attach_to(self.window.wl_surface()) {
+            eprintln!("saai-shell: main buffer attach failed ({error}), skipping frame");
+            self.frame_pace.note_dropped();
+            return;
+        }
         self.window.commit();
         self.finish_frame(produce_ms, need_frame, content_only, FrameBackend::Shm);
     }
@@ -22971,6 +22982,7 @@ mod tests {
         assert!(src.contains("lock_size_replaced"));
         assert!(src.contains("OSK SHM has no free slot"));
         assert!(src.contains("status SHM has no free slot"));
+        assert!(src.contains("main SHM has no free slot"));
     }
 
     #[test]
