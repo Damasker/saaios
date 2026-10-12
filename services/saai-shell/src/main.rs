@@ -3800,9 +3800,7 @@ fn object_view_permission_with(
     let mut permission = None;
     for resolution in registry.resolve_for(entity, &context, tools) {
         let line = match resolution {
-            ActionResolution::Ambiguous { action_id, .. } => {
-                Some(format!("Неоднозначно: {action_id}"))
-            }
+            ActionResolution::Ambiguous { .. } => Some("неоднозначно".into()),
             ActionResolution::Resolved(action) => match action.availability {
                 ActionAvailability::Unavailable { reason } => {
                     Some(format!("{}: {}", action.title, explain_oam_reason(&reason)))
@@ -3858,10 +3856,17 @@ fn object_view_quick_actions_with(
             break;
         }
         match resolution {
-            ActionResolution::Ambiguous { action_id, .. } => out.push(ObjectQuickAction {
-                title: action_id,
-                reason: Some("неоднозначно".into()),
-            }),
+            ActionResolution::Ambiguous { candidates, .. } => {
+                let title = candidates
+                    .first()
+                    .map(|candidate| candidate.title.clone())
+                    .filter(|title| !title.is_empty())
+                    .unwrap_or_else(|| "неоднозначно".into());
+                out.push(ObjectQuickAction {
+                    title,
+                    reason: Some("неоднозначно".into()),
+                });
+            }
             ActionResolution::Resolved(action) => {
                 let reason = match action.availability {
                     ActionAvailability::Unavailable { reason } => {
@@ -24779,6 +24784,55 @@ mod tests {
             &policy_engine::PolicyEngine::new(),
         )
         .is_none());
+    }
+
+    #[test]
+    fn object_view_permission_hides_ambiguous_action_id() {
+        let note = test_entity("note.doc", serde_json::Map::new());
+        let mut registry = saai_object_actions::ObjectActionRegistry::new();
+        for (tool, provider) in [
+            ("note.inspect", "saai.local-system"),
+            ("note.inspect.alt", "saai.other-system"),
+        ] {
+            registry
+                .register(saai_object_actions::ObjectActionSpec {
+                    action_id: "note.inspect".into(),
+                    title: "Прочитать заметку".into(),
+                    description: "Тест Ambiguous не печатает id".into(),
+                    applies_to: saai_object_actions::ObjectSelector {
+                        entity_types: vec!["note.doc".into()],
+                    },
+                    tool_name: tool.into(),
+                    arguments: Vec::new(),
+                    required_properties: Vec::new(),
+                    provider_id: provider.into(),
+                    requires_confirmation: false,
+                })
+                .expect("spec");
+        }
+        let mut tools = tool_registry::ToolRegistry::new();
+        for name in ["note.inspect", "note.inspect.alt"] {
+            tools.register(std::sync::Arc::new(tool_registry::CataloguedTool::new(
+                tool_registry::ToolSpec {
+                    name: name.into(),
+                    description: "test".into(),
+                    risk: tool_registry::RiskLevel::Low,
+                    timeout_ms: 500,
+                    input_schema: serde_json::json!({"type":"object","properties":{}}),
+                    output_schema: serde_json::json!({"type":"object"}),
+                    requires_confirmation: false,
+                },
+            )));
+        }
+        let policy = policy_engine::PolicyEngine::new();
+        assert_eq!(
+            super::object_view_permission_with(&note, &registry, &tools, &policy).as_deref(),
+            Some("неоднозначно")
+        );
+        let actions = super::object_view_quick_actions_with(&note, &registry, &tools, &policy);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].title, "Прочитать заметку");
+        assert_eq!(actions[0].reason.as_deref(), Some("неоднозначно"));
     }
 
     #[test]

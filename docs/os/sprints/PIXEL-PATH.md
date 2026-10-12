@@ -294,6 +294,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | WORK-08 unknown status | unknown Task `status` is «Нет статуса» **host** (ADR-521; no shell flash) |
 | ATTN-07 OAM reason | unknown OAM/Policy reason is «недоступно» **host** (ADR-522; no shell flash) |
 | ATTN-07 Allow only | NOW suggestion requires Policy Allow, not AskUser **host** (ADR-523; no shell flash) |
+| ATTN-07 Ambiguous id | Ambiguous OAM hides `action_id` **host** (ADR-524; no shell flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -385,6 +386,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - WORK-08 unknown status: unknown Task `status` is «Нет статуса» (ADR-521; host; no shell flash)
 - ATTN-07 OAM reason: unknown OAM/Policy reason is «недоступно» (ADR-522; host; no shell flash)
 - ATTN-07 Allow only: NOW suggestion requires Policy Allow (ADR-523; host; no shell flash)
+- ATTN-07 Ambiguous id: Ambiguous OAM hides `action_id` (ADR-524; host; no shell flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
