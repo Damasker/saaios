@@ -1,8 +1,8 @@
 //! Build a projection from loaded entities. No I/O.
 
 use crate::model::{
-    AttentionActionability, AttentionItem, AttentionKey, AttentionPriority, AttentionProjection,
-    AttentionRelevance, AttentionSource, AttentionSurfaces,
+    AttentionActionability, AttentionContext, AttentionItem, AttentionKey, AttentionPriority,
+    AttentionProjection, AttentionRelevance, AttentionSource, AttentionSurfaces,
 };
 use chrono::Utc;
 use saai_entity_store::Entity;
@@ -25,17 +25,30 @@ pub fn project_with_health(
     entities: &[Entity],
     health: Option<&HealthReport>,
 ) -> AttentionProjection {
+    project_with_context(entities, health, &AttentionContext::default())
+}
+
+/// ATTN-05: label items from ContextFrame spaces and the focused object.
+/// No AI score. Background stays in the projection and Inbox; NOW and
+/// Orb omit it.
+pub fn project_with_context(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+    context: &AttentionContext,
+) -> AttentionProjection {
     let mut items = Vec::new();
     let mut seen = HashSet::new();
     for entity in entities {
-        if let Some(item) = from_waiting_confirmation_task(entity) {
+        if let Some(mut item) = from_waiting_confirmation_task(entity) {
+            apply_context(&mut item, entity, context);
             if seen.insert(item.key.clone()) {
                 items.push(item);
             }
         }
     }
     for entity in entities {
-        if let Some(item) = from_undismissed_notification(entity) {
+        if let Some(mut item) = from_undismissed_notification(entity) {
+            apply_context(&mut item, entity, context);
             if seen.insert(item.key.clone()) {
                 items.push(item);
             }
@@ -124,6 +137,49 @@ fn from_undismissed_notification(entity: &Entity) -> Option<AttentionItem> {
         object: None,
         occurred_at: Some(entity.updated_at),
     })
+}
+
+fn apply_context(item: &mut AttentionItem, entity: &Entity, context: &AttentionContext) {
+    item.relevance = relevance_of(entity, context);
+    if item.relevance == AttentionRelevance::Background {
+        item.surfaces.now = false;
+        item.surfaces.orb = false;
+    }
+}
+
+fn property_uuid(entity: &Entity, key: &str) -> Option<Uuid> {
+    entity
+        .properties
+        .get(key)
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+}
+
+fn relevance_of(entity: &Entity, context: &AttentionContext) -> AttentionRelevance {
+    if context.object_id == Some(entity.id)
+        || context
+            .object_id
+            .is_some_and(|id| property_uuid(entity, "object_id") == Some(id))
+        || context
+            .object_id
+            .is_some_and(|id| property_uuid(entity, "target") == Some(id))
+    {
+        return AttentionRelevance::CurrentObject;
+    }
+    if context.primary_space_id.as_deref() == Some(entity.space_id.as_str()) {
+        return AttentionRelevance::CurrentContext;
+    }
+    if context
+        .space_ids
+        .iter()
+        .any(|space| space == &entity.space_id)
+    {
+        return AttentionRelevance::RelatedContext;
+    }
+    if context.primary_space_id.is_some() || !context.space_ids.is_empty() {
+        return AttentionRelevance::Background;
+    }
+    AttentionRelevance::Global
 }
 
 fn from_health(report: &HealthReport) -> Option<AttentionItem> {
@@ -348,6 +404,89 @@ mod tests {
         let mut item = project_from_entities(&[notification(false, Map::new())]).items;
         item[0].relevance = AttentionRelevance::Background;
         assert_eq!(item.len(), 1);
+    }
+
+    fn in_space(mut entity: Entity, space_id: &str) -> Entity {
+        entity.space_id = space_id.into();
+        entity
+    }
+
+    #[test]
+    fn empty_context_keeps_global_relevance() {
+        let note = notification(false, Map::new());
+        let item = &project_from_entities(&[note]).items[0];
+        assert_eq!(item.relevance, AttentionRelevance::Global);
+        assert!(item.surfaces.now);
+        assert!(item.surfaces.inbox);
+    }
+
+    #[test]
+    fn other_space_is_background_and_stays_in_inbox() {
+        let home = in_space(task(WAITING_CONFIRMATION), "home");
+        let work = in_space(notification(false, Map::new()), "work");
+        let ctx = AttentionContext::from_primary_space("home");
+        let proj = project_with_context(&[home.clone(), work.clone()], None, &ctx);
+        assert_eq!(proj.items.len(), 2);
+        let home_item = proj
+            .items
+            .iter()
+            .find(|item| matches!(item.source, AttentionSource::WorkflowTask { .. }))
+            .expect("home task");
+        let work_item = proj
+            .items
+            .iter()
+            .find(|item| matches!(item.source, AttentionSource::Notification { .. }))
+            .expect("work note");
+        assert_eq!(home_item.relevance, AttentionRelevance::CurrentContext);
+        assert!(home_item.surfaces.now);
+        assert_eq!(work_item.relevance, AttentionRelevance::Background);
+        assert!(!work_item.surfaces.now);
+        assert!(work_item.surfaces.inbox);
+        assert!(!work_item.surfaces.orb);
+        let now: Vec<_> = proj.now_items().map(|item| item.key.clone()).collect();
+        assert_eq!(now, vec![home_item.key.clone()]);
+        let inbox: Vec<Uuid> = proj
+            .inbox_items()
+            .filter_map(|item| match &item.source {
+                AttentionSource::WorkflowTask { task_id } => Some(*task_id),
+                AttentionSource::Notification { notification_id } => Some(*notification_id),
+                AttentionSource::Health { .. } => None,
+            })
+            .collect();
+        assert_eq!(inbox, vec![home.id, work.id]);
+    }
+
+    #[test]
+    fn frame_space_that_is_not_primary_is_related() {
+        let car = in_space(notification(false, Map::new()), "car");
+        let ctx = AttentionContext {
+            space_ids: vec!["home".into(), "car".into()],
+            primary_space_id: Some("home".into()),
+            object_id: None,
+        };
+        let item = &project_with_context(&[car], None, &ctx).items[0];
+        assert_eq!(item.relevance, AttentionRelevance::RelatedContext);
+        assert!(item.surfaces.now);
+    }
+
+    #[test]
+    fn focused_object_is_current_object() {
+        let note = notification(false, Map::new());
+        let ctx = AttentionContext {
+            space_ids: vec!["home".into()],
+            primary_space_id: Some("home".into()),
+            object_id: Some(note.id),
+        };
+        let item = &project_with_context(&[note], None, &ctx).items[0];
+        assert_eq!(item.relevance, AttentionRelevance::CurrentObject);
+    }
+
+    #[test]
+    fn health_stays_global_under_a_space_context() {
+        let ctx = AttentionContext::from_primary_space("home");
+        let proj = project_with_context(&[], Some(&report(HealthState::Unhealthy)), &ctx);
+        assert_eq!(proj.items[0].relevance, AttentionRelevance::Global);
+        assert!(proj.items[0].surfaces.orb);
     }
 
     #[test]

@@ -7,10 +7,11 @@ mod model;
 mod project;
 
 pub use model::{
-    AttentionActionability, AttentionItem, AttentionKey, AttentionPriority, AttentionProjection,
-    AttentionRelevance, AttentionSource, AttentionSurfaces,
+    AttentionActionability, AttentionContext, AttentionItem, AttentionKey, AttentionPriority,
+    AttentionProjection, AttentionRelevance, AttentionSource, AttentionSurfaces,
 };
 pub use project::{
-    has_orb_attention, inbox_source_ids, project_from_entities, project_with_health,
+    has_orb_attention, inbox_source_ids, project_from_entities, project_with_context,
+    project_with_health,
 };
 pub use saai_observation::{HealthReport, HealthState};

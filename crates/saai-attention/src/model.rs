@@ -93,12 +93,34 @@ pub struct AttentionProjection {
     pub items: Vec<AttentionItem>,
 }
 
+/// Active ContextFrame for ATTN-05. Empty means no space judgment:
+/// every item stays [`AttentionRelevance::Global`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AttentionContext {
+    pub space_ids: Vec<String>,
+    pub primary_space_id: Option<String>,
+    pub object_id: Option<Uuid>,
+}
+
+impl AttentionContext {
+    pub fn from_primary_space(space_id: impl Into<String>) -> Self {
+        let space_id = space_id.into();
+        Self {
+            space_ids: vec![space_id.clone()],
+            primary_space_id: Some(space_id),
+            object_id: None,
+        }
+    }
+}
+
 impl AttentionProjection {
     pub fn inbox_items(&self) -> impl Iterator<Item = &AttentionItem> {
         self.items.iter().filter(|item| item.surfaces.inbox)
     }
 
     pub fn now_items(&self) -> impl Iterator<Item = &AttentionItem> {
-        self.items.iter().filter(|item| item.surfaces.now)
+        self.items.iter().filter(|item| {
+            item.surfaces.now && item.relevance != AttentionRelevance::Background
+        })
     }
 }

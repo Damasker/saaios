@@ -440,7 +440,8 @@ fn space_for_wifi_ssid(system_entities: &[Entity], ssid: &str) -> Option<String>
         .map(str::to_string)
 }
 use saai_attention::{
-    has_orb_attention, inbox_source_ids, project_from_entities, project_with_health,
+    has_orb_attention, inbox_source_ids, project_from_entities, project_with_context,
+    project_with_health, AttentionContext,
     AttentionActionability, AttentionItem, AttentionProjection, AttentionSource, HealthReport,
     HealthState,
 };
@@ -5297,6 +5298,31 @@ fn orb_attention(entities: &[Entity], health: Option<&HealthReport>) -> bool {
     has_orb_attention(&project_with_health(entities, health))
 }
 
+fn attention_context_from_space(space_id: &str, frame: &[ContextFrameEntry]) -> AttentionContext {
+    let mut space_ids: Vec<String> = frame.iter().map(|entry| entry.space_id.clone()).collect();
+    if !space_ids.iter().any(|id| id == space_id) {
+        space_ids.push(space_id.to_string());
+    }
+    AttentionContext {
+        space_ids,
+        primary_space_id: Some(space_id.to_string()),
+        object_id: None,
+    }
+}
+
+fn project_live_attention(
+    entities: &[Entity],
+    health: Option<&HealthReport>,
+    space_id: &str,
+    frame: &[ContextFrameEntry],
+) -> saai_attention::AttentionProjection {
+    project_with_context(
+        entities,
+        health,
+        &attention_context_from_space(space_id, frame),
+    )
+}
+
 fn orb_failed_work(entities: &[Entity]) -> bool {
     entities.iter().any(|entity| {
         entity.entity_type == "saaios.task"
@@ -7069,6 +7095,7 @@ fn now_attention_paint_rows(
         width,
         height,
         0,
+        None,
     )
 }
 
@@ -7080,11 +7107,15 @@ fn now_attention_paint_rows_scrolled(
     width: u32,
     height: u32,
     scroll_offset: i32,
+    context: Option<&AttentionContext>,
 ) -> Vec<(Rect, DataRow)> {
     if width == 0 || height == 0 {
         return Vec::new();
     }
-    let projection = project_with_health(entities, health);
+    let projection = match context {
+        Some(context) => project_with_context(entities, health, context),
+        None => project_with_health(entities, health),
+    };
     let items: Vec<&AttentionItem> = projection.now_items().collect();
     let empty_caption = items.is_empty() && store_connected && has_other_now_content;
     if items.is_empty() && !empty_caption {
@@ -11498,9 +11529,11 @@ impl TouchHandler for Shell {
             } else if self.current_page == RootPage::Now && !self.apps_open {
                 // VUI-03 (ADR-113): footer rows stay tappable. ADR-217:
                 // ObjectSummary and footer hits come from compile_v2.
-                let attention = project_with_health(
+                let attention = project_live_attention(
                     &self.selected_entities,
                     read_runtime_live_facts().health.as_ref(),
+                    &self.selected_space_id,
+                    &self.context_frame,
                 );
                 let items: Vec<&AttentionItem> = attention.now_items().collect();
                 let follow: Vec<bool> = items
@@ -12435,6 +12468,10 @@ impl Shell {
             let has_other = sections
                 .iter()
                 .any(|section| section.title != "Требует внимания");
+            let attention_ctx = attention_context_from_space(
+                &self.selected_space_id,
+                &self.context_frame,
+            );
             let attention_rows = now_attention_paint_rows_scrolled(
                 &self.selected_entities,
                 read_runtime_live_facts().health.as_ref(),
@@ -12443,10 +12480,13 @@ impl Shell {
                 width,
                 height,
                 self.now_scroll_offset,
+                Some(&attention_ctx),
             );
-            let follow: Vec<bool> = project_with_health(
+            let follow: Vec<bool> = project_live_attention(
                 &self.selected_entities,
                 read_runtime_live_facts().health.as_ref(),
+                &self.selected_space_id,
+                &self.context_frame,
             )
             .now_items()
             .map(|item| now_attention_follow_id(item).is_some())
@@ -14622,9 +14662,11 @@ impl Shell {
     /// remain the composer. Live locality weather is a separate
     /// `now.weather` row (ADR-476), not invented chrome.
     fn now_live_scroll_max(&self) -> i32 {
-        let attention = project_with_health(
+        let attention = project_live_attention(
             &self.selected_entities,
             read_runtime_live_facts().health.as_ref(),
+            &self.selected_space_id,
+            &self.context_frame,
         );
         let follow_len = attention.now_items().count();
         let empty_attention = follow_len == 0
@@ -24339,6 +24381,27 @@ mod tests {
             other => panic!("expected status row, got {other:?}"),
         }
         assert!(super::now_attention_section(&[running]).is_none());
+    }
+
+    #[test]
+    fn now_paint_omits_background_space_attention() {
+        let mut home = task_entity("Подтвердите удаление", None);
+        home.space_id = "home".into();
+        let mut work = notification_entity("Work note", "body");
+        work.space_id = "work".into();
+        let ctx = super::attention_context_from_space("home", &[]);
+        let rows = super::now_attention_paint_rows_scrolled(
+            &[home, work],
+            None,
+            true,
+            true,
+            1080,
+            2400,
+            0,
+            Some(&ctx),
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.primary, "Подтвердите удаление");
     }
 
     #[test]
