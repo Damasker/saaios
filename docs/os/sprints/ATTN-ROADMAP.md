@@ -107,7 +107,8 @@ object. No execution. ADR-511 catalogs live `system.identity` so
 ADR-512: no swarm/`agentd` in this slice; that is deferral, not a
 ban on Advisor or later distributed attention. ADR-513 fills live
 `object_id` from the NOW ObjectSummary entity. ADR-515: NOW tap follows
-that `ObjectRef` when present.
+that `ObjectRef` when present. ADR-522: unknown OAM reason is
+«недоступно», not the English Policy string.
 
 **Test:** host `cargo test -p saai-attention` and
 `attn07_empty_tools_are_not_a_suggested_action` /

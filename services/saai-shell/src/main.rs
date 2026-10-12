@@ -3907,7 +3907,7 @@ fn explain_oam_reason(reason: &str) -> String {
     } else if reason.starts_with("missing context space_id") {
         "нет пространства".to_string()
     } else {
-        reason.to_string()
+        "недоступно".to_string()
     }
 }
 
@@ -23483,6 +23483,26 @@ mod tests {
         );
         let action = painted.2[0].expect("oam row");
         assert_eq!(action, saai_ui_core::Rect::new(49, 284, 982, action.height));
+    }
+
+    #[test]
+    fn explain_oam_reason_hides_unknown_english() {
+        assert_eq!(
+            super::explain_oam_reason("provider tool unavailable"),
+            "нет инструмента"
+        );
+        assert_eq!(
+            super::explain_oam_reason("missing object property: hostname"),
+            "нет данных объекта"
+        );
+        assert_eq!(
+            super::explain_oam_reason("missing context space_id"),
+            "нет пространства"
+        );
+        assert_eq!(
+            super::explain_oam_reason("tool `display.inspect` is denied by default policy"),
+            "недоступно"
+        );
     }
 
     #[test]
