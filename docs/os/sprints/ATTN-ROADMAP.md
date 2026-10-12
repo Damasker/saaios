@@ -21,7 +21,7 @@ No second notification subsystem. No attention database.
 | ATTN-02 | NOW «Требует внимания» uses projection | **Done** (host) | **yes (VUI-05)** |
 | ATTN-03 | Inbox uses same projection | **Done** (host + panther) | **yes** |
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host) | **yes (VUI-04)** |
-| ATTN-05 | Context relevance (no AI) | **Done** (host, ADR-506) | no |
+| ATTN-05 | Context relevance (no AI) | **Done** (host, ADR-506 + live `object_id` ADR-513) | no |
 | ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`) | **yes** |
 | ATTN-07 | One OAM suggested action | **Host** (ADR-508) + live catalog **на panther** (ADR-511; `0fb762d1…`) | **yes** |
 
@@ -74,7 +74,7 @@ ATTN-03.
 **Test:** host `cargo test -p saai-attention` and the shell
 `now_paint_omits_background_space_attention` /
 `now_section_list_uses_the_same_context_as_paint` cases
-(ADR-509).
+(ADR-509). Live NOW object is `object_id` (ADR-513).
 
 **Rollback:** drop context; restore Global-only `project_with_health`.
 
@@ -104,7 +104,8 @@ Exactly one permitted candidate. Inbox/Orb omit it. Tap opens the
 object. No execution. ADR-511 catalogs live `system.identity` so
 `display.inspect` can resolve. Panther `0fb762d1…` under dest-no-lock.
 ADR-512: no swarm/`agentd` in this slice; that is deferral, not a
-ban on Advisor or later distributed attention.
+ban on Advisor or later distributed attention. ADR-513 fills live
+`object_id` from the NOW ObjectSummary entity.
 
 **Test:** host `cargo test -p saai-attention` and
 `attn07_empty_tools_are_not_a_suggested_action` /

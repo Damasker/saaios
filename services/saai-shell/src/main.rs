@@ -5306,7 +5306,11 @@ fn orb_attention(entities: &[Entity], health: Option<&HealthReport>) -> bool {
     has_orb_attention(&project_with_health(entities, health))
 }
 
-fn attention_context_from_space(space_id: &str, frame: &[ContextFrameEntry]) -> AttentionContext {
+fn attention_context_from_space(
+    space_id: &str,
+    frame: &[ContextFrameEntry],
+    focused: Option<Uuid>,
+) -> AttentionContext {
     let mut space_ids: Vec<String> = frame.iter().map(|entry| entry.space_id.clone()).collect();
     if !space_ids.iter().any(|id| id == space_id) {
         space_ids.push(space_id.to_string());
@@ -5314,8 +5318,16 @@ fn attention_context_from_space(space_id: &str, frame: &[ContextFrameEntry]) -> 
     AttentionContext {
         space_ids,
         primary_space_id: Some(space_id.to_string()),
-        object_id: None,
+        object_id: focused,
     }
+}
+
+fn live_attention_context(
+    space_id: &str,
+    frame: &[ContextFrameEntry],
+    entities: &[Entity],
+) -> AttentionContext {
+    attention_context_from_space(space_id, frame, entities.first().map(|entity| entity.id))
 }
 
 fn project_live_attention(
@@ -5328,7 +5340,7 @@ fn project_live_attention(
     project_with_suggestion(
         entities,
         health,
-        &attention_context_from_space(space_id, frame),
+        &live_attention_context(space_id, frame, entities),
         suggested.as_ref(),
     )
 }
@@ -12539,9 +12551,10 @@ impl Shell {
             let has_other = sections
                 .iter()
                 .any(|section| section.title != "Требует внимания");
-            let attention_ctx = attention_context_from_space(
+            let attention_ctx = live_attention_context(
                 &self.selected_space_id,
                 &self.context_frame,
+                &self.selected_entities,
             );
             let attention_rows = now_attention_paint_rows_scrolled(
                 &self.selected_entities,
@@ -14809,7 +14822,11 @@ impl Shell {
     }
 
     fn now_sections(&self) -> Vec<SystemSection> {
-        let context = attention_context_from_space(&self.selected_space_id, &self.context_frame);
+        let context = live_attention_context(
+            &self.selected_space_id,
+            &self.context_frame,
+            &self.selected_entities,
+        );
         now_workflow_sections_with(
             &self.selected_entities,
             &self.relationships,
@@ -24456,7 +24473,7 @@ mod tests {
         home.space_id = "home".into();
         let mut work = notification_entity("Work note", "body");
         work.space_id = "work".into();
-        let ctx = super::attention_context_from_space("home", &[]);
+        let ctx = super::attention_context_from_space("home", &[], None);
         let rows = super::now_attention_paint_rows_scrolled(
             &[home, work],
             None,
@@ -24499,7 +24516,7 @@ mod tests {
         home.space_id = "home".into();
         let mut work = notification_entity("Work note", "body");
         work.space_id = "work".into();
-        let ctx = super::attention_context_from_space("home", &[]);
+        let ctx = super::attention_context_from_space("home", &[], None);
         let sections = super::now_workflow_sections_with(
             &[home.clone(), work.clone()],
             &[],
@@ -24524,6 +24541,32 @@ mod tests {
             .find(|section| section.title == "Требует внимания")
             .expect("global attention");
         assert_eq!(wide.rows.len(), 2);
+    }
+
+    #[test]
+    fn live_attention_context_focuses_the_now_object() {
+        let mut home = task_entity("Подтвердите удаление", None);
+        home.space_id = "home".into();
+        let ctx = super::live_attention_context("home", &[], &[home.clone()]);
+        assert_eq!(ctx.object_id, Some(home.id));
+        assert_eq!(ctx.primary_space_id.as_deref(), Some("home"));
+    }
+
+    #[test]
+    fn live_attention_marks_the_now_object_current() {
+        let mut home = task_entity("Подтвердите удаление", None);
+        home.space_id = "home".into();
+        let proj = super::project_live_attention(&[home.clone()], None, "home", &[]);
+        assert_eq!(
+            proj.items[0].relevance,
+            saai_attention::AttentionRelevance::CurrentObject
+        );
+        let space_only = super::attention_context_from_space("home", &[], None);
+        let without = saai_attention::project_with_context(&[home], None, &space_only);
+        assert_eq!(
+            without.items[0].relevance,
+            saai_attention::AttentionRelevance::CurrentContext
+        );
     }
 
     #[test]
