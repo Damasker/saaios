@@ -6768,8 +6768,15 @@ fn lock_pin_field_rect(width: u32) -> Rect {
 /// `bt-scan` rows. Empty only after `DONE`. Scan-in-progress with no
 /// devices is loading. `PAIR-ERROR` is Failed and wins over scan.
 /// Paired is a SAVED name. Slot 0 of a pattern is not Сопрячь.
+fn bluetooth_pair_error_copy(reason: &str) -> String {
+    match reason {
+        "timeout" | "TIMEOUT" => "Ошибка сопряжения: Таймаут".into(),
+        _ => "Ошибка сопряжения".into(),
+    }
+}
+
 fn bluetooth_failed_pattern(reason: &str) -> SurfacePattern {
-    SurfacePattern::failed(format!("Ошибка сопряжения: {reason}"))
+    SurfacePattern::failed(bluetooth_pair_error_copy(reason))
 }
 
 fn bluetooth_scan_pattern(device_count: usize, scan_done: bool) -> Option<SurfacePattern> {
@@ -17379,12 +17386,16 @@ mod tests {
         );
         assert_eq!(
             bluetooth_list_pattern(0, false, Some("timeout")),
-            Some(SurfacePattern::failed("Ошибка сопряжения: timeout"))
+            Some(SurfacePattern::failed("Ошибка сопряжения: Таймаут"))
+        );
+        assert_eq!(
+            bluetooth_list_pattern(0, false, Some("STATUS-5")),
+            Some(SurfacePattern::failed("Ошибка сопряжения"))
         );
         let saved: Vec<String> = Vec::new();
         let failed = bluetooth_list_rows(&[], false, &saved, Some("timeout"));
         assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].row.primary, "Ошибка сопряжения: timeout");
+        assert_eq!(failed[0].row.primary, "Ошибка сопряжения: Таймаут");
         assert!(!failed[0].row.is_actionable());
         assert!(failed[0].indicator.is_some());
         let failed_card = bluetooth_card_from_row(&failed[0]);
@@ -17396,7 +17407,7 @@ mod tests {
         }];
         let with_device = bluetooth_list_rows(&devices, true, &saved, Some("timeout"));
         assert_eq!(with_device.len(), 2);
-        assert_eq!(with_device[0].row.primary, "Ошибка сопряжения: timeout");
+        assert_eq!(with_device[0].row.primary, "Ошибка сопряжения: Таймаут");
         assert!(!with_device[0].row.is_actionable());
         assert_eq!(with_device[1].row.primary, "Speaker");
         assert_eq!(bluetooth_card_from_row(&with_device[1]).action, "Сопрячь");
