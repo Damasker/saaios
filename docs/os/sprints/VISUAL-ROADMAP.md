@@ -1513,6 +1513,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Host chrome on panther under dest-no-lock (ADR-503).
   Lock SIGTRAP stays open. Still Experimental. Not Visual v1
   sign-off.
+- [x] dest-no-lock leftover lock client unlocks on shell death
+  (ADR-510; host; no displayd flash). Not a lock-formula change.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

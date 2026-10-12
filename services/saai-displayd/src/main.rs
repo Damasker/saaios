@@ -20,6 +20,8 @@ use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
 mod data_device;
 #[cfg(feature = "panther-hardware")]
 mod hardware;
+#[allow(dead_code)]
+mod leftover_lock;
 mod hid;
 mod layer_geom;
 mod text_ime;
@@ -631,6 +633,9 @@ impl State {
 }
 
 #[cfg(feature = "panther-hardware")]
+use leftover_lock::{dest_no_lock_marker_present, should_unlock_dead_lock_client};
+
+#[cfg(feature = "panther-hardware")]
 impl State {
     fn launch_shell(&mut self) -> bool {
         loop {
@@ -677,6 +682,10 @@ impl State {
         );
         if failures >= SHELL_RESTART_LIMIT {
             return false;
+        }
+        if should_unlock_dead_lock_client(self.locked, dest_no_lock_marker_present()) {
+            println!("saai-displayd: lock client died under dest-no-lock, unlocking");
+            self.unlock();
         }
         self.launch_shell()
     }

@@ -121,6 +121,7 @@ The verification ledger stays in
 | Cell | Evidence |
 |---|---|
 | lock / unlock cycle | ADR-209; HEAD `3850427a…`; PIN null; tap-unlock; `/run/saaios/dev-no-lock` restored |
+| dest-no-lock leftover lock | ADR-510; host; dead lock client kept `locked=true` after ADR-503 swap; live recovery was displayd restart; no displayd flash |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |

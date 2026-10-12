@@ -280,6 +280,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | WORK-05 ready priority | High Pending admits before Normal; no preemption **host** (ADR-507; no taskd flash) |
 | ATTN-07 one OAM verb | exactly one permitted suggestion on NOW **host** (ADR-508; no shell flash) |
 | ATTN-05 NOW sections | section list uses the same ContextFrame as paint **host** (ADR-509; no shell flash) |
+| dest-no-lock leftover lock | dead lock client unlocks only with dest-no-lock **host** (ADR-510; no displayd flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -356,6 +357,8 @@ diagnose (ADR-238, `351b0b6f…`).
 - WORLD-04 shared Linux observers: one `/proc` parser for tools and Observation (ADR-505; host; no runtime flash)
 - ATTN-05 ContextFrame relevance: other-space items stay Inbox, leave NOW/Orb (ADR-506; host; no shell flash)
 - ATTN-07 one OAM suggestion: exactly one permitted verb on NOW (ADR-508; host; no shell flash)
+- ATTN-05 NOW sections use the same ContextFrame as paint (ADR-509; host; no shell flash)
+- dest-no-lock leftover lock: dead lock client unlocks only with the marker (ADR-510; host; no displayd flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
