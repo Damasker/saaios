@@ -1,11 +1,11 @@
-//! Lock SHM slot policy (ADR-532).
+//! SHM slot policy for lock (ADR-532), OSK, and the status bar
+//! (ADR-534).
 //!
 //! `9551b854` died SIGTRAP after the first lock frame because the pixel7
 //! build uses `panic_immediate_abort` and the lock `SlotPool` was sized
-//! for one 1080×2400 buffer. The compositor's second configure (or a
-//! redraw while the first buffer is still busy) then hit
-//! `expect("create lock buffer")`. dest-no-lock stays; this module does
-//! not lift it.
+//! for one 1080×2400 buffer. OSK and the status-bar SHM fallback used
+//! the same one-slot pool and cleared the buffer on every configure.
+//! dest-no-lock stays; this module does not lift it.
 
 /// Two slots so a busy first lock frame cannot exhaust the pool.
 pub const LOCK_SHM_SLOTS: usize = 2;
@@ -65,5 +65,14 @@ mod tests {
     fn new_size_replaces_pool_and_buffer() {
         assert!(super::lock_size_replaced(1080, 2400, 1080, 120));
         assert!(super::lock_size_replaced(720, 2400, 1080, 2400));
+    }
+
+    #[test]
+    fn status_bar_pool_holds_two_page_aligned_frames() {
+        let frame = super::lock_shm_frame_bytes(1080, 120);
+        assert_eq!(frame, 518_400);
+        let pool = super::lock_shm_pool_bytes(1080, 120);
+        assert!(pool >= frame * 2);
+        assert_eq!(pool, frame.next_multiple_of(4096) * 2);
     }
 }

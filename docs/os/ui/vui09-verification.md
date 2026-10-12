@@ -158,7 +158,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Long-RU fixtures stay in tests (ADR-502).
   Host chrome on panther under dest-no-lock (ADR-503).
   Lock SIGTRAP class is one-slot lock SHM (ADR-532).
-  Host 515–532 chrome is on panther (ADR-533; `efca9bd3…`);
+  Host 515–532 chrome is on panther (ADR-533; `efca9bd3…`).
+  OSK and status-bar SHM use two slots (ADR-534);
   dest-no-lock stays; unlock is not proven on panther.
   Gallery page taps stay a
   whole-surface formula.

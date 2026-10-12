@@ -11020,17 +11020,23 @@ impl LayerShellHandler for Shell {
             .is_some_and(|osk| osk.wl_surface() == layer.wl_surface())
         {
             println!("saai-shell: OSK layer configure at {width}x{height}");
+            if lock_shm::lock_size_replaced(self.osk_width, self.osk_height, width, height) {
+                self.osk_buffer = None;
+                self.osk_pool = None;
+            }
             self.osk_width = width;
             self.osk_height = height;
-            self.osk_buffer = None;
             self.present_foreign_osk(qh);
             return;
         }
         println!("saai-shell: layer surface configure at {width}x{height}");
+        if lock_shm::lock_size_replaced(self.layer_width, self.layer_height, width, height) {
+            self.layer_buffer = None;
+            self.layer_pool = None;
+            self.last_statusbar_snapshot = None;
+        }
         self.layer_width = width;
         self.layer_height = height;
-        self.layer_buffer = None;
-        self.last_statusbar_snapshot = None;
         self.present_status_bar(qh);
     }
 }
@@ -15659,37 +15665,44 @@ impl Shell {
         let stride = width as i32 * 4;
         if self.osk_pool.is_none() {
             self.osk_pool = Some(
-                SlotPool::new(width as usize * height as usize * 4, &self.shm)
+                SlotPool::new(lock_shm::lock_shm_pool_bytes(width, height), &self.shm)
                     .expect("create OSK surface pool"),
             );
         }
         let pool = self.osk_pool.as_mut().expect("just ensured OSK pool");
         if self.osk_buffer.is_none() {
-            let (buffer, _canvas) = pool
-                .create_buffer(
-                    width as i32,
-                    height as i32,
-                    stride,
-                    wl_shm::Format::Xrgb8888,
-                )
-                .expect("create OSK buffer");
+            let (buffer, _canvas) = match pool.create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Xrgb8888,
+            ) {
+                Ok(pair) => pair,
+                Err(error) => {
+                    eprintln!("saai-shell: OSK SHM has no free slot ({error}), skipping frame");
+                    return;
+                }
+            };
             self.osk_buffer = Some(buffer);
         }
         let buffer = self.osk_buffer.as_mut().expect("just ensured OSK buffer");
         let canvas = match pool.canvas(buffer) {
             Some(canvas) => canvas,
-            None => {
-                let (second_buffer, canvas) = pool
-                    .create_buffer(
-                        width as i32,
-                        height as i32,
-                        stride,
-                        wl_shm::Format::Xrgb8888,
-                    )
-                    .expect("create OSK buffer");
-                *buffer = second_buffer;
-                canvas
-            }
+            None => match pool.create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Xrgb8888,
+            ) {
+                Ok((second_buffer, canvas)) => {
+                    *buffer = second_buffer;
+                    canvas
+                }
+                Err(error) => {
+                    eprintln!("saai-shell: OSK SHM has no free slot ({error}), skipping frame");
+                    return;
+                }
+            },
         };
         let keys = osk_layer::osk_keys(width, height, self.osk_keyboard.mode);
         let pressed = self.pressed_key.clone();
@@ -15704,7 +15717,10 @@ impl Shell {
         render::apply_contrast_boost(canvas, contrast);
         let surface = layer.wl_surface();
         surface.damage_buffer(0, 0, width as i32, height as i32);
-        buffer.attach_to(surface).expect("OSK buffer attach");
+        if let Err(error) = buffer.attach_to(surface) {
+            eprintln!("saai-shell: OSK buffer attach failed ({error}), skipping frame");
+            return;
+        }
         layer.commit();
     }
 
@@ -15801,39 +15817,46 @@ impl Shell {
 
         if self.layer_pool.is_none() {
             self.layer_pool = Some(
-                SlotPool::new(width as usize * height as usize * 4, &self.shm)
+                SlotPool::new(lock_shm::lock_shm_pool_bytes(width, height), &self.shm)
                     .expect("create layer surface pool"),
             );
         }
         let pool = self.layer_pool.as_mut().expect("just ensured above");
 
         if self.layer_buffer.is_none() {
-            let (buffer, _canvas) = pool
-                .create_buffer(
-                    width as i32,
-                    height as i32,
-                    stride,
-                    wl_shm::Format::Xrgb8888,
-                )
-                .expect("create layer buffer");
+            let (buffer, _canvas) = match pool.create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Xrgb8888,
+            ) {
+                Ok(pair) => pair,
+                Err(error) => {
+                    eprintln!("saai-shell: status SHM has no free slot ({error}), skipping frame");
+                    return;
+                }
+            };
             self.layer_buffer = Some(buffer);
         }
         let buffer = self.layer_buffer.as_mut().expect("just ensured above");
 
         let canvas = match pool.canvas(buffer) {
             Some(canvas) => canvas,
-            None => {
-                let (second_buffer, canvas) = pool
-                    .create_buffer(
-                        width as i32,
-                        height as i32,
-                        stride,
-                        wl_shm::Format::Xrgb8888,
-                    )
-                    .expect("create layer buffer");
-                *buffer = second_buffer;
-                canvas
-            }
+            None => match pool.create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Xrgb8888,
+            ) {
+                Ok((second_buffer, canvas)) => {
+                    *buffer = second_buffer;
+                    canvas
+                }
+                Err(error) => {
+                    eprintln!("saai-shell: status SHM has no free slot ({error}), skipping frame");
+                    return;
+                }
+            },
         };
         render::draw_status_bar(
             &mut render::Canvas::new(canvas, width, height),
@@ -15846,7 +15869,10 @@ impl Shell {
 
         let surface = self.layer.wl_surface();
         surface.damage_buffer(0, 0, width as i32, height as i32);
-        buffer.attach_to(surface).expect("buffer attach");
+        if let Err(error) = buffer.attach_to(surface) {
+            eprintln!("saai-shell: status buffer attach failed ({error}), skipping frame");
+            return;
+        }
         self.layer.commit();
         self.last_statusbar_snapshot = Some(snapshot);
     }
@@ -22943,6 +22969,8 @@ mod tests {
         assert!(src.contains("draw_lock_sleep"));
         assert!(src.contains("lock_shm_pool_bytes"));
         assert!(src.contains("lock_size_replaced"));
+        assert!(src.contains("OSK SHM has no free slot"));
+        assert!(src.contains("status SHM has no free slot"));
     }
 
     #[test]
