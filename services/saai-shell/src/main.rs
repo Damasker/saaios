@@ -5394,9 +5394,9 @@ fn one_suggested_oam_with(
                 let permitted = match action.availability {
                     ActionAvailability::Unavailable { .. } => false,
                     ActionAvailability::Available => {
-                        !matches!(
+                        matches!(
                             preflight(policy, tools, &action).verdict,
-                            protocol::PolicyVerdict::Deny
+                            protocol::PolicyVerdict::Allow
                         )
                     }
                 };
@@ -24739,6 +24739,46 @@ mod tests {
         assert_eq!(suggested.action_id, "display.inspect");
         assert_eq!(suggested.title, "Состояние экрана");
         assert_eq!(suggested.object_id, display.id);
+    }
+
+    #[test]
+    fn attn07_ask_user_is_not_a_suggested_action() {
+        let note = test_entity("note.doc", serde_json::Map::new());
+        let mut registry = saai_object_actions::ObjectActionRegistry::new();
+        registry
+            .register(saai_object_actions::ObjectActionSpec {
+                action_id: "note.inspect".into(),
+                title: "Прочитать заметку".into(),
+                description: "Тест AskUser не становится suggestion".into(),
+                applies_to: saai_object_actions::ObjectSelector {
+                    entity_types: vec!["note.doc".into()],
+                },
+                tool_name: "note.inspect".into(),
+                arguments: Vec::new(),
+                required_properties: Vec::new(),
+                provider_id: "saai.local-system".into(),
+                requires_confirmation: true,
+            })
+            .expect("note spec");
+        let mut tools = tool_registry::ToolRegistry::new();
+        tools.register(std::sync::Arc::new(tool_registry::CataloguedTool::new(
+            tool_registry::ToolSpec {
+                name: "note.inspect".into(),
+                description: "test".into(),
+                risk: tool_registry::RiskLevel::High,
+                timeout_ms: 500,
+                input_schema: serde_json::json!({"type":"object","properties":{}}),
+                output_schema: serde_json::json!({"type":"object"}),
+                requires_confirmation: true,
+            },
+        )));
+        assert!(super::one_suggested_oam_with(
+            &note,
+            &registry,
+            &tools,
+            &policy_engine::PolicyEngine::new(),
+        )
+        .is_none());
     }
 
     #[test]

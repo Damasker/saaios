@@ -108,11 +108,13 @@ ADR-512: no swarm/`agentd` in this slice; that is deferral, not a
 ban on Advisor or later distributed attention. ADR-513 fills live
 `object_id` from the NOW ObjectSummary entity. ADR-515: NOW tap follows
 that `ObjectRef` when present. ADR-522: unknown OAM reason is
-«недоступно», not the English Policy string.
+«недоступно», not the English Policy string. ADR-523: AskUser is not
+a NOW suggestion.
 
 **Test:** host `cargo test -p saai-attention` and
 `attn07_empty_tools_are_not_a_suggested_action` /
 `attn07_live_identity_is_one_suggested_action` /
+`attn07_ask_user_is_not_a_suggested_action` /
 `now_attention_follow_prefers_current_object_ref`.
 
 **Rollback:** drop the suggestion types.
