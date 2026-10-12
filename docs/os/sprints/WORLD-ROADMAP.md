@@ -1,6 +1,7 @@
 # SaaiOS World Model / Observation Layer — delivery roadmap
 
-Status: **WORLD-00/01/02 host complete. WORLD-05 host (ADR-274): Verifier
+Status: **WORLD-00/01/02 host complete. WORLD-04 shared Linux observers
+(ADR-505). WORLD-05 host (ADR-274): Verifier
 reads Fresh rows from runtime `status`. WORLD-06 host (ADR-287): CPU
 sampler Health. WORLD-07 host (ADR-290): ObservationThreshold on
 schedules. No `saai-deviced`.**
@@ -34,7 +35,7 @@ Do not start with a monitoring product or HealthState.
 | WORLD-01 | Observation types + `system.metrics` conversion | **Done** (host) | no |
 | WORLD-02 | ObservationCache + snapshot revision | **Done** (host + panther runtime `93ad729c…`) | **yes** |
 | WORLD-03 | `saai-deviced` UDS GetSnapshot/Subscribe | Backlog | no |
-| WORLD-04 | Shared Linux observers (no `/proc` copy) | Backlog | no |
+| WORLD-04 | Shared Linux observers (no `/proc` copy) | **Done** (host, ADR-505) | no |
 | WORLD-05 | Verification uses fresh observation | **Done** (host, ADR-274) | no |
 | WORLD-06 | One deterministic Health component | **Done** (host, ADR-287) | no |
 | WORLD-07 | Automation ObservationThreshold (legacy stays) | **Done** (host, ADR-290) | no |
@@ -72,6 +73,22 @@ not Unhealthy; sampler fills cache and still publishes ToolResult.
 ToolResult again.
 
 **Threat:** none — in-memory, no new listener, no secrets, no graphs.
+
+## WORLD-04
+
+**Goal:** Observation and `system-tools` share one `/proc` reader.
+
+**Change:** `saai-observation::linux` owns loadavg/meminfo/stat parsers
+and `HostMetricsSample`. `LinuxBackend::metrics` calls those helpers.
+JSON conversion stays WORLD-01. No `saai-deviced`.
+
+**Test:** host `cargo test -p saai-observation linux` plus
+`cargo test -p system-tools`.
+
+**Rollback:** restore inline `/proc` reads in `system-tools`; drop
+`linux.rs`.
+
+**Threat:** none — crate-only, no phone binary.
 
 ## WORLD-06
 

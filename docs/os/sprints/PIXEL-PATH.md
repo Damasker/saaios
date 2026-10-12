@@ -275,6 +275,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 long-RU fixtures | long Russian titles stay in tests; 150% is paint-only **host** (ADR-502; Experimental; leave Сейчас) |
 | VUI-09 dest-no-lock shell | host 494–502 chrome on `/data` **на panther** (ADR-503; `f00e571d…`; dest-no-lock; lock SIGTRAP open; leave Сейчас) |
 | WORK-04 read-only bound | `read_only` Tasks admit beside mutating, cap 2 **host** (ADR-504; no taskd flash; lock SIGTRAP open) |
+| WORLD-04 shared /proc | `saai-observation::linux` owns load/mem/cpu parsers **host** (ADR-505; no runtime flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -347,6 +348,7 @@ diagnose (ADR-238, `351b0b6f…`).
 
 - WORK-03 Verifying: Result is not Done; Fresh Observation is (ADR-259; shell chrome ADR-295; Result screen ADR-301; Orb Complete ADR-302; Orb Failed ADR-303; panther `4dc19018…` pid 6710; no taskd flash)
 - WORK-04 read-only bound: `read_only` Tasks use a separate cap of 2 (ADR-504; host; no taskd flash)
+- WORLD-04 shared Linux observers: one `/proc` parser for tools and Observation (ADR-505; host; no runtime flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

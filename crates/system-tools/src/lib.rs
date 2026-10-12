@@ -474,15 +474,16 @@ struct LinuxBackend;
 #[async_trait]
 impl SystemBackend for LinuxBackend {
     async fn metrics(&self) -> Result<SystemMetrics, ToolError> {
-        let load = std::fs::read_to_string("/proc/loadavg")
-            .map_err(|e| ToolError::Execution(e.to_string()))?;
-        let load_average = load
-            .split_whitespace()
-            .next()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0);
-        let mem = read_meminfo().unwrap_or((0.0, 0.0));
-        let cpu_usage = sample_cpu_usage().await.unwrap_or(0.0);
+        // WORLD-04 / ADR-505: shared /proc parsers in saai-observation.
+        let a = saai_observation::read_cpu_times();
+        sleep(Duration::from_millis(100)).await;
+        let b = saai_observation::read_cpu_times();
+        let cpu_usage = match (a, b) {
+            (Some(a), Some(b)) => saai_observation::cpu_usage_between(a, b),
+            _ => 0.0,
+        };
+        let load_average = saai_observation::read_load_average().unwrap_or(0.0);
+        let mem = saai_observation::read_meminfo_mb().unwrap_or((0.0, 0.0));
         let mem_used_pct = if mem.1 > 0.0 {
             (mem.0 / mem.1) * 100.0
         } else {
@@ -551,21 +552,6 @@ impl SystemBackend for LinuxBackend {
     async fn kill(&self, pid: u32, signal: &str) -> Result<Value, ToolError> {
         real_kill(pid, signal)
     }
-}
-
-fn read_meminfo() -> Option<(f64, f64)> {
-    let content = std::fs::read_to_string("/proc/meminfo").ok()?;
-    let mut total_kb = 0.0;
-    let mut available_kb = 0.0;
-    for line in content.lines() {
-        if let Some(v) = line.strip_prefix("MemTotal:") {
-            total_kb = parse_kb(v)?;
-        } else if let Some(v) = line.strip_prefix("MemAvailable:") {
-            available_kb = parse_kb(v)?;
-        }
-    }
-    let used = (total_kb - available_kb) / 1024.0;
-    Some((used, total_kb / 1024.0))
 }
 
 fn read_disk_usage() -> Value {
@@ -876,10 +862,6 @@ fn real_kill(pid: u32, signal: &str) -> Result<Value, ToolError> {
     }
 }
 
-fn parse_kb(v: &str) -> Option<f64> {
-    v.split_whitespace().next()?.parse().ok()
-}
-
 fn read_total_jiffies() -> Option<u64> {
     let content = std::fs::read_to_string("/proc/stat").ok()?;
     let line = content.lines().next()?;
@@ -892,31 +874,6 @@ fn read_total_jiffies() -> Option<u64> {
         sum = sum.saturating_add(part.parse::<u64>().ok()?);
     }
     Some(sum)
-}
-
-async fn sample_cpu_usage() -> Option<f64> {
-    let a = read_cpu_times()?;
-    sleep(Duration::from_millis(100)).await;
-    let b = read_cpu_times()?;
-    let idle_delta = b.1.saturating_sub(a.1) as f64;
-    let total_delta = b.0.saturating_sub(a.0).max(1) as f64;
-    Some(((1.0 - idle_delta / total_delta) * 100.0).clamp(0.0, 100.0))
-}
-
-fn read_cpu_times() -> Option<(u64, u64)> {
-    let content = std::fs::read_to_string("/proc/stat").ok()?;
-    let line = content.lines().next()?;
-    let parts: Vec<u64> = line
-        .split_whitespace()
-        .skip(1)
-        .filter_map(|p| p.parse().ok())
-        .collect();
-    if parts.len() < 4 {
-        return None;
-    }
-    let idle = parts[3] + parts.get(4).copied().unwrap_or(0);
-    let total: u64 = parts.iter().sum();
-    Some((total, idle))
 }
 
 fn snapshot_process_cpu() -> Result<HashMap<u32, (String, u64, f64)>, ToolError> {

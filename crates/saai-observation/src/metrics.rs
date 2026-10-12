@@ -1,5 +1,5 @@
 //! Convert existing `system.metrics` JSON into Observations.
-//! Does not re-read /proc; that stays in `system-tools` until WORLD-04.
+//! `/proc` parsers live in `linux` (ADR-505). This module stays JSON-shaped.
 
 use crate::model::{
     Observation, ObservationQuality, ObservationSource, ObservationSourceKind, ObservationSubject,

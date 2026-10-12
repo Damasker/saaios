@@ -1,4 +1,5 @@
-//! World Model v1 (ADR-122 WORLD-01/02/06): Observation, cache, one Health.
+//! World Model v1 (ADR-122 WORLD-01/02/04/06): Observation, cache, Linux
+//! observers, one Health.
 //!
 //! Does not own Attention or a daemon. Does not write Entities.
 //! `system.metrics` tool JSON stays the compatibility input.
@@ -6,6 +7,7 @@
 mod cache;
 mod cellular;
 mod health;
+mod linux;
 mod locality;
 mod metrics;
 mod model;
@@ -27,6 +29,10 @@ pub use cellular::{
     KEY_BEARER, KEY_CP_STATE, KEY_REGISTRATION_RAW,
 };
 pub use health::{cpu_sampler_health, health_of, HealthReport, HealthState, COMPONENT_CPU_SAMPLER};
+pub use linux::{
+    cpu_usage_between, read_cpu_times, read_load_average, read_meminfo_mb,
+    sample_host_metrics_blocking, HostMetricsSample,
+};
 pub use locality::{
     observations_from_locality_cache, observations_from_open_meteo_current, wmo_condition_label,
     Locality, LocalityCache, ATTRIBUTION, KEY_ATTRIBUTION, KEY_CONDITION, KEY_HUMIDITY,
