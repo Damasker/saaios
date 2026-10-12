@@ -1529,10 +1529,13 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   shell flash). Still Experimental.
 - [x] Data-session suffix uses Observation labels (ADR-531; host;
   no shell flash). Still Experimental.
-- [ ] Lock re-enable is a defect track, not a permanent skip
-  (ADR-512): reproduce SIGTRAP, name the cause, recover a dead
-  lock client, prove unlock again. Do not lift dest-no-lock
-  before that. Not Visual v1 sign-off.
+- [x] Name the lock SIGTRAP class (ADR-532): one-slot lock SHM
+  plus configure drop, not keymap. Two page-aligned frames.
+  dest-no-lock stays. Unlock is not proven on panther. Still
+  Experimental. Not Visual v1 sign-off.
+- [ ] Lock re-enable remainder (ADR-512): prove unlock on
+  panther after the marker can be lifted. Do not lift
+  dest-no-lock before that. Not Visual v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1662,8 +1665,10 @@ MemoryKind (ADR-527). Unknown device_class
 is «Узел» (ADR-528). Unknown capability/app
 state hide schema tokens (ADR-529). Bluetooth
 PAIR-ERROR hides the log token (ADR-530). Data-session
-suffix uses Observation labels (ADR-531). Keyboard keys,
-gallery page, and lock idle/wake stay formulas until a board
-names them. Public subset stays Experimental. Acceptance stays
-unchecked until panther evidence. Do not fake weather / voice /
-Android VM Ready.
+suffix uses Observation labels (ADR-531). Lock SIGTRAP class
+is one-slot lock SHM (ADR-532). dest-no-lock stays. Unlock
+is not proven on panther. Keyboard keys, gallery page, and
+lock idle/wake stay formulas until a board names them. Public
+subset stays Experimental. Acceptance stays unchecked until
+panther evidence. Do not fake weather / voice / Android VM
+Ready.

@@ -86,6 +86,7 @@ mod entityd_client;
 mod haptic;
 mod hardware_keyboard;
 mod intent_context;
+mod lock_shm;
 mod lock_widgets;
 mod osk_layer;
 mod portal_server;
@@ -10975,12 +10976,16 @@ impl SessionLockHandler for Shell {
         let (width, height) = configure.new_size;
         let (width, height) = (width.max(1), height.max(1));
         println!("saai-shell: lock surface configure at {width}x{height}");
+        // Same-size configure must keep the live buffer (ADR-532). The
+        // compositor's second lock configure used to drop the only SHM
+        // slot and panic on `create lock buffer` — SIGTRAP under
+        // `panic_immediate_abort`.
+        if lock_shm::lock_size_replaced(self.lock_width, self.lock_height, width, height) {
+            self.lock_buffer = None;
+            self.lock_pool = None;
+        }
         self.lock_width = width;
         self.lock_height = height;
-        // A fresh configure means a new size -- the old buffer (if any)
-        // was sized for the previous one and `present_lock_pin_entry`
-        // never resizes an existing buffer itself.
-        self.lock_buffer = None;
         self.present_lock_pin_entry(qh);
     }
 }
@@ -16057,39 +16062,46 @@ impl Shell {
 
         if self.lock_pool.is_none() {
             self.lock_pool = Some(
-                SlotPool::new(width as usize * height as usize * 4, &self.shm)
+                SlotPool::new(lock_shm::lock_shm_pool_bytes(width, height), &self.shm)
                     .expect("create lock surface pool"),
             );
         }
         let pool = self.lock_pool.as_mut().expect("just ensured above");
 
         if self.lock_buffer.is_none() {
-            let (buffer, _canvas) = pool
-                .create_buffer(
-                    width as i32,
-                    height as i32,
-                    stride,
-                    wl_shm::Format::Xrgb8888,
-                )
-                .expect("create lock buffer");
+            let (buffer, _canvas) = match pool.create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Xrgb8888,
+            ) {
+                Ok(pair) => pair,
+                Err(error) => {
+                    eprintln!("saai-shell: lock SHM has no free slot ({error}), skipping frame");
+                    return;
+                }
+            };
             self.lock_buffer = Some(buffer);
         }
         let buffer = self.lock_buffer.as_mut().expect("just ensured above");
 
         let canvas = match pool.canvas(buffer) {
             Some(canvas) => canvas,
-            None => {
-                let (second_buffer, canvas) = pool
-                    .create_buffer(
-                        width as i32,
-                        height as i32,
-                        stride,
-                        wl_shm::Format::Xrgb8888,
-                    )
-                    .expect("create lock buffer");
-                *buffer = second_buffer;
-                canvas
-            }
+            None => match pool.create_buffer(
+                width as i32,
+                height as i32,
+                stride,
+                wl_shm::Format::Xrgb8888,
+            ) {
+                Ok((second_buffer, canvas)) => {
+                    *buffer = second_buffer;
+                    canvas
+                }
+                Err(error) => {
+                    eprintln!("saai-shell: lock SHM has no free slot ({error}), skipping frame");
+                    return;
+                }
+            },
         };
 
         let mut frame = render::Canvas::new(canvas, width, height);
@@ -16120,7 +16132,10 @@ impl Shell {
 
         let surface = lock_surface.wl_surface();
         surface.damage_buffer(0, 0, width as i32, height as i32);
-        buffer.attach_to(surface).expect("buffer attach");
+        if let Err(error) = buffer.attach_to(surface) {
+            eprintln!("saai-shell: lock buffer attach failed ({error}), skipping frame");
+            return;
+        }
         surface.commit();
     }
 
@@ -22926,6 +22941,8 @@ mod tests {
         assert!(src.contains("fn present_lock_pin_entry("));
         assert!(src.contains("draw_lock_idle"));
         assert!(src.contains("draw_lock_sleep"));
+        assert!(src.contains("lock_shm_pool_bytes"));
+        assert!(src.contains("lock_size_replaced"));
     }
 
     #[test]

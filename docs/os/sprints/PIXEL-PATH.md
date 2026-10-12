@@ -302,6 +302,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | AUTH/APP unknown token | unknown capability/app state is not the schema id **host** (ADR-529; no shell flash) |
 | VUI-07 BT pair error | PAIR-ERROR token is not the Failed label **host** (ADR-530; no shell flash) |
 | WORLD-02 data-call copy | session suffix uses CID / флаг / тип, not English fields **host** (ADR-531; no shell flash) |
+| VUI-09 lock SHM slots | two page-aligned frames; same-size configure keeps the buffer **host** (ADR-532; no shell flash; dest-no-lock stays) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -401,6 +402,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - AUTH/APP unknown token: capability «недоступно», app state «Нет статуса» (ADR-529; host; no shell flash)
 - VUI-07 BT pair error: timeout is «Таймаут»; other log tokens stay off the row (ADR-530; host; no shell flash)
 - WORLD-02 data-call copy: session suffix reuses Observation labels (ADR-531; host; no shell flash)
+- VUI-09 lock SIGTRAP class: one-slot lock SHM + configure drop; two page-aligned frames (ADR-532; host; no shell flash; dest-no-lock stays)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
