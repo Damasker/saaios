@@ -7041,10 +7041,38 @@ fn now_attention_follow_id(item: &AttentionItem) -> Option<Uuid> {
     }
 }
 
+fn now_attention_title(item: &AttentionItem) -> String {
+    match &item.source {
+        AttentionSource::Health { component_id } => health_attention_title(component_id),
+        _ => item.title.clone(),
+    }
+}
+
 fn now_attention_reason(item: &AttentionItem) -> String {
-    match item.actionability {
-        AttentionActionability::RequiresDecision => "Ждёт подтверждения".to_string(),
-        _ => item.summary.clone().unwrap_or_default(),
+    match &item.source {
+        AttentionSource::Health { .. } => health_attention_reason(item.summary.as_deref()),
+        _ => match item.actionability {
+            AttentionActionability::RequiresDecision => "Ждёт подтверждения".to_string(),
+            _ => item.summary.clone().unwrap_or_default(),
+        },
+    }
+}
+
+/// WORLD-06 sampler is the same observation Система already names
+/// «Процессор». A spoofed component id is not a new board label.
+fn health_attention_title(component_id: &str) -> String {
+    if component_id == "system.cpu.sampler" {
+        observation_row_label("system.cpu.usage")
+    } else {
+        "Наблюдения".into()
+    }
+}
+
+/// Crate summaries stay domain tokens. Chrome does not print them.
+fn health_attention_reason(summary: Option<&str>) -> String {
+    match summary {
+        Some("unhealthy") => "Ошибка".into(),
+        _ => String::new(),
     }
 }
 
@@ -7304,14 +7332,16 @@ fn now_attention_paint_rows_scrolled(
         .enumerate()
         .filter_map(|(index, item)| {
             let loc = format!("now.attention.{index}");
-            let row = if now_attention_follow_id(item).is_some() {
-                DataRow::new(item.title.clone(), DataRowVariant::Navigation)
-                    .with_secondary(now_attention_reason(item))
+            let mut row = if now_attention_follow_id(item).is_some() {
+                DataRow::new(now_attention_title(item), DataRowVariant::Navigation)
                     .with_action(loc.clone())
             } else {
-                DataRow::new(item.title.clone(), DataRowVariant::Static)
-                    .with_secondary(now_attention_reason(item))
+                DataRow::new(now_attention_title(item), DataRowVariant::Static)
             };
+            let reason = now_attention_reason(item);
+            if !reason.is_empty() {
+                row = row.with_secondary(reason);
+            }
             saai_ui_compiler::layout_v1_find(&tree, &loc).map(|node| (node.rect, row))
         })
         .collect()
@@ -7591,15 +7621,13 @@ fn attention_section_from_projection(projection: &AttentionProjection) -> Option
 }
 
 fn now_attention_row(item: &AttentionItem) -> SystemSectionRow {
-    let reason = match item.actionability {
-        AttentionActionability::RequiresDecision => "Ждёт подтверждения".to_string(),
-        _ => item.summary.clone().unwrap_or_default(),
-    };
-    SystemSectionRow::Status(
-        StatusIndicator::new(UniversalState::Attention, item.title.clone())
-            .with_reason(reason)
-            .with_variant(StatusIndicatorVariant::Normal),
-    )
+    let mut status = StatusIndicator::new(UniversalState::Attention, now_attention_title(item))
+        .with_variant(StatusIndicatorVariant::Normal);
+    let reason = now_attention_reason(item);
+    if !reason.is_empty() {
+        status = status.with_reason(reason);
+    }
+    SystemSectionRow::Status(status)
 }
 
 fn inbox_v2_source(entities: &[Entity], store_connected: bool) -> String {
@@ -26417,8 +26445,8 @@ mod tests {
         assert_eq!(section.rows.len(), 1);
         match &section.rows[0] {
             SystemSectionRow::Status(status) => {
-                assert_eq!(status.label, "system.cpu.sampler");
-                assert_eq!(status.reason.as_deref(), Some("unhealthy"));
+                assert_eq!(status.label, "Процессор");
+                assert_eq!(status.reason.as_deref(), Some("Ошибка"));
             }
             other => panic!("expected status row, got {other:?}"),
         }
@@ -26426,6 +26454,43 @@ mod tests {
             super::orb_visual_state_with(true, true, &[], false, Some(&report), None),
             UniversalState::Attention
         );
+    }
+
+    #[test]
+    fn now_health_copy_hides_schema_tokens() {
+        let degraded = cpu_sampler_health(HealthState::Degraded);
+        let section =
+            super::now_attention_section_with(&[], Some(&degraded), None).expect("degraded");
+        match &section.rows[0] {
+            SystemSectionRow::Status(status) => {
+                assert_eq!(status.label, "Процессор");
+                assert_eq!(status.reason, None);
+            }
+            other => panic!("expected status row, got {other:?}"),
+        }
+        let spoofed = HealthReport {
+            component_id: "evil.component".into(),
+            state: HealthState::Unhealthy,
+            observation_id: None,
+            freshness: None,
+        };
+        let section = super::now_attention_section_with(&[], Some(&spoofed), None).expect("spoofed");
+        match &section.rows[0] {
+            SystemSectionRow::Status(status) => {
+                assert_eq!(status.label, "Наблюдения");
+                assert_eq!(status.reason.as_deref(), Some("Ошибка"));
+                assert!(!status.label.contains('.'));
+            }
+            other => panic!("expected status row, got {other:?}"),
+        }
+        assert_eq!(super::health_attention_reason(Some("critical")), "");
+        assert_eq!(super::health_attention_reason(Some("degraded")), "");
+        assert_eq!(super::health_attention_reason(Some("unhealthy")), "Ошибка");
+        let rows = super::now_attention_paint_rows(&[], Some(&degraded), true, false, 1080, 2400);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.primary, "Процессор");
+        assert_eq!(rows[0].1.secondary, None);
+        assert!(!rows[0].1.is_actionable());
     }
 
     #[test]

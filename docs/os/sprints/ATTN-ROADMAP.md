@@ -22,7 +22,7 @@ No second notification subsystem. No attention database.
 | ATTN-03 | Inbox uses same projection | **Done** (host + panther) | **yes** |
 | ATTN-04 | Orb Attention uses same projection (WaitingConfirmation lights Orb) | **Done** (host + live ContextFrame ADR-516) | **yes (VUI-04)** |
 | ATTN-05 | Context relevance (no AI) | **Done** (host, ADR-506 + live `object_id` ADR-513 + ObjectRef ADR-514) | no |
-| ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`) | **yes** |
+| ATTN-06 | One World Model Health adapter | **Done** (host ADR-291 + shell wire ADR-293; panther `4dc19018…`; NOW copy ADR-525) | **yes** |
 | ATTN-07 | One OAM suggested action | **Host** (ADR-508) + live catalog **на panther** (ADR-511; `0fb762d1…`) | **yes** |
 
 ## ATTN-01
@@ -88,9 +88,12 @@ carries `ObjectRef` (ADR-514).
 **Change:** `project_with_health`. Unknown/Healthy omitted. Degraded is
 NOW only. Unhealthy lights Orb. Inbox stays Task/Notification.
 Shell parses `status.health` and calls `project_with_health` (ADR-293).
-Do not flash shell.
+ADR-525: NOW paints «Процессор» / «Ошибка», not `system.cpu.sampler`
+or English `unhealthy`. Do not flash shell.
 
-**Test:** host `cargo test -p saai-attention` and `cargo test -p saai-shell --offline live_health`.
+**Test:** host `cargo test -p saai-attention` and
+`cargo test -p saai-shell --offline live_health` /
+`now_health_copy_hides_schema_tokens`.
 
 **Rollback:** drop `AttentionSource::Health`.
 
