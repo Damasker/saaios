@@ -1634,7 +1634,8 @@ tiles scroll above the tab strip (ADR-498). Object View history
 stays behind Disclosure (ADR-499). Intent Confirm
 only when AskUser exists (ADR-500). Intent Progress
 is sourced or indeterminate (ADR-501). Long-RU
-fixtures stay in tests (ADR-502). Keyboard keys,
+fixtures stay in tests (ADR-502). Host chrome
+on panther under dest-no-lock (ADR-503). Keyboard keys,
 gallery page, and lock idle/wake stay formulas until a board
 names them. Public subset stays Experimental. Acceptance stays
 unchecked until panther evidence. Do not fake weather / voice /
