@@ -59,7 +59,7 @@ use saai_entity_protocol::{
 use saai_entity_store::EventPayload;
 use saai_object_actions::{display_inspect_spec, ObjectActionRegistry};
 use replan::{should_issue_replan, REPLAN_COUNT_PROPERTY};
-use scheduler::{admit_frontier, derive_ready_set, mutating_in_flight, MAX_MUTATING_IN_FLIGHT};
+use scheduler::{admit_ready, derive_ready_set, mutating_in_flight};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -783,16 +783,13 @@ impl Daemon {
 
     /// ADR-237: Ready is derived; this is the only place that starts
     /// planner work. `WaitingConfirmation` is never admitted.
-    /// Mutating in-flight stays at 1.
+    /// Mutating in-flight stays at 1. Read-only Tasks use a separate
+    /// bound (`MAX_READ_ONLY_IN_FLIGHT`) and may start beside a mutator.
     pub async fn dispatch_ready(&mut self) -> Result<usize, ClientError> {
         let mut started = 0;
         loop {
             let ready = derive_ready_set(&self.known_tasks);
-            let in_flight = mutating_in_flight(&self.known_tasks);
-            let Some(id) = admit_frontier(&ready, in_flight, MAX_MUTATING_IN_FLIGHT)
-                .into_iter()
-                .next()
-            else {
+            let Some(id) = admit_ready(&self.known_tasks).into_iter().next() else {
                 break;
             };
             let Some(task) = self
@@ -806,8 +803,9 @@ impl Daemon {
             if status_of(&task) != Some(WorkflowStatus::Pending) {
                 break;
             }
+            let in_flight = mutating_in_flight(&self.known_tasks);
             eprintln!(
-                "saai-taskd: admit {} ready={} in_flight={}",
+                "saai-taskd: admit {} ready={} mutating_in_flight={}",
                 task.id,
                 ready.len(),
                 in_flight

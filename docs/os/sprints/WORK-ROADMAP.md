@@ -1,6 +1,6 @@
 # SaaiOS Work Scheduler v2 — delivery roadmap
 
-Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-06 host FailureClass (ADR-288); WORK-07 host ReplanRequest (ADR-289); WORK-08 visibility on panther shell `63b8b64`.**
+Status: **WORK-00 complete; WORK-01 host; WORK-02 host+panther dispatch (ADR-237); WORK-03 host Verifying (ADR-259); WORK-04 host read-only bound (ADR-504); WORK-06 host FailureClass (ADR-288); WORK-07 host ReplanRequest (ADR-289); WORK-08 visibility on panther shell `63b8b64`.**
 Phone visibility (WORK-08) rides VUI-05, not a separate weekend.
 See [PIXEL-PATH.md](PIXEL-PATH.md).
 
@@ -26,7 +26,7 @@ Planner the scheduler.
 | WORK-01 | Task dependency model + DAG validation | **Done** (host) | no |
 | WORK-02 | Derived ready set + concurrency = 1 | **Done** (host + panther dispatch ADR-237) | **yes** |
 | WORK-03 | Verification lifecycle (`Verifying`) | **Done** (host, ADR-259) | no |
-| WORK-04 | Read-only bounded parallelism | Backlog | measure first |
+| WORK-04 | Read-only bounded parallelism | **Done** (host, ADR-504) | measure first |
 | WORK-05 | Priority scheduling | Backlog | no |
 | WORK-06 | Retry + failure taxonomy | **Done** (host, ADR-288) | no |
 | WORK-07 | Bounded ReplanRequest | **Done** (host, ADR-289) | no |
@@ -77,6 +77,27 @@ Pending with one Running admits nothing; reboot snapshot matches;
 **Rollback:** diagnose again inside `process_planner_intent`.
 
 **Threat:** one live diagnose per admit; no new queue.
+
+## WORK-04
+
+**Goal:** read-only Tasks do not consume the mutating slot.
+
+**Change:** optional Task property `read_only: true`. Separate
+`read_only_in_flight` counter. Bounds stay `MAX_MUTATING_IN_FLIGHT = 1`
+and `MAX_READ_ONLY_IN_FLIGHT = 2`. `admit_ready` fills read-only first,
+then one mutating slot. `measure_parallelism` is the host measure
+before WORK-09 raises bounds. No taskd flash.
+
+**Test:** host `cargo test -p saai-taskd`. Two pending read-only admit
+together; a read-only admits beside a running mutator; a third
+read-only waits when two are in flight.
+
+**Acceptance:** host tests green. Phone=no this slice.
+
+**Rollback:** drop `read_only` handling; restore admit via mutating
+frontier only.
+
+**Threat:** none — host scheduler bound, no phone binary.
 
 ## WORK-03
 

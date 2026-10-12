@@ -1,4 +1,5 @@
 //! ADR-121 WORK-02: Ready is a derived view over the workflow store.
+//! ADR-504 WORK-04: read-only Tasks may share a separate bounded frontier.
 //!
 //! Never persist `ready` as a Task status. Default mutating concurrency is 1.
 //! WaitingConfirmation is not ready and is never auto-admitted. After
@@ -14,20 +15,48 @@ use serde_json::Value;
 use uuid::Uuid;
 
 pub const MAX_MUTATING_IN_FLIGHT: usize = 1;
+/// WORK-04: read-only Tasks do not share the mutating slot. Bound is
+/// host-measured; keep small until WORK-09 budgets land on Pixel.
+pub const MAX_READ_ONLY_IN_FLIGHT: usize = 2;
+pub const READ_ONLY_PROPERTY: &str = "read_only";
 
 pub fn is_completed(status: WorkflowStatus) -> bool {
     matches!(status, WorkflowStatus::Done)
 }
 
-pub fn is_mutating_in_flight(status: WorkflowStatus) -> bool {
+pub fn is_in_flight(status: WorkflowStatus) -> bool {
     matches!(status, WorkflowStatus::Running | WorkflowStatus::Verifying)
+}
+
+pub fn is_mutating_in_flight(status: WorkflowStatus) -> bool {
+    is_in_flight(status)
+}
+
+pub fn is_read_only(task: &Entity) -> bool {
+    task.properties
+        .get(READ_ONLY_PROPERTY)
+        .and_then(Value::as_bool)
+        == Some(true)
 }
 
 pub fn mutating_in_flight(tasks: &[Entity]) -> usize {
     tasks
         .iter()
         .filter(|task| {
-            task.entity_type == TASK_TYPE && status_of(task).is_some_and(is_mutating_in_flight)
+            task.entity_type == TASK_TYPE
+                && !is_read_only(task)
+                && status_of(task).is_some_and(is_in_flight)
+        })
+        .count()
+}
+
+pub fn read_only_in_flight(tasks: &[Entity]) -> usize {
+    tasks
+        .iter()
+        .filter(|task| {
+            task.entity_type == TASK_TYPE
+                && is_read_only(task)
+                && status_of(task).is_some_and(is_in_flight)
         })
         .count()
 }
@@ -88,11 +117,70 @@ pub fn admit_frontier(ready: &[Uuid], in_flight: usize, max: usize) -> Vec<Uuid>
     ready.iter().copied().take(slots).collect()
 }
 
-pub fn next_admission(tasks: &[Entity]) -> Option<Uuid> {
+fn task_by_id(tasks: &[Entity], id: Uuid) -> Option<&Entity> {
+    tasks.iter().find(|task| task.id == id)
+}
+
+/// WORK-04: admit read-only and mutating frontiers independently.
+/// Mutating stays capped at [`MAX_MUTATING_IN_FLIGHT`]. Read-only uses
+/// [`MAX_READ_ONLY_IN_FLIGHT`]. Order: all admitted read-only ids first
+/// (stable ready order), then mutating.
+pub fn admit_ready(tasks: &[Entity]) -> Vec<Uuid> {
     let ready = derive_ready_set(tasks);
-    admit_frontier(&ready, mutating_in_flight(tasks), MAX_MUTATING_IN_FLIGHT)
-        .into_iter()
-        .next()
+    let mut read_only_ready = Vec::new();
+    let mut mutating_ready = Vec::new();
+    for id in ready {
+        match task_by_id(tasks, id) {
+            Some(task) if is_read_only(task) => read_only_ready.push(id),
+            Some(_) => mutating_ready.push(id),
+            None => {}
+        }
+    }
+    let mut admitted = admit_frontier(
+        &read_only_ready,
+        read_only_in_flight(tasks),
+        MAX_READ_ONLY_IN_FLIGHT,
+    );
+    admitted.extend(admit_frontier(
+        &mutating_ready,
+        mutating_in_flight(tasks),
+        MAX_MUTATING_IN_FLIGHT,
+    ));
+    admitted
+}
+
+pub fn next_admission(tasks: &[Entity]) -> Option<Uuid> {
+    admit_ready(tasks).into_iter().next()
+}
+
+/// Host measure for WORK-04 before raising bounds (WORK-09 on Pixel).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParallelismMeasure {
+    pub ready_read_only: usize,
+    pub ready_mutating: usize,
+    pub read_only_in_flight: usize,
+    pub mutating_in_flight: usize,
+    pub read_only_slots_free: usize,
+    pub mutating_slots_free: usize,
+}
+
+pub fn measure_parallelism(tasks: &[Entity]) -> ParallelismMeasure {
+    let ready = derive_ready_set(tasks);
+    let ready_read_only = ready
+        .iter()
+        .filter(|id| task_by_id(tasks, **id).is_some_and(is_read_only))
+        .count();
+    let ready_mutating = ready.len().saturating_sub(ready_read_only);
+    let ro_flight = read_only_in_flight(tasks);
+    let mut_flight = mutating_in_flight(tasks);
+    ParallelismMeasure {
+        ready_read_only,
+        ready_mutating,
+        read_only_in_flight: ro_flight,
+        mutating_in_flight: mut_flight,
+        read_only_slots_free: MAX_READ_ONLY_IN_FLIGHT.saturating_sub(ro_flight),
+        mutating_slots_free: MAX_MUTATING_IN_FLIGHT.saturating_sub(mut_flight),
+    }
 }
 
 #[cfg(test)]
@@ -265,5 +353,63 @@ mod tests {
     #[test]
     fn ready_is_not_a_persisted_status() {
         assert!(WorkflowStatus::parse("ready").is_none());
+    }
+
+    fn read_only_task(status: WorkflowStatus) -> Entity {
+        let mut entity = task(status, &[]);
+        entity
+            .properties
+            .insert(READ_ONLY_PROPERTY.into(), json!(true));
+        entity
+    }
+
+    #[test]
+    fn work04_two_read_only_admit_while_mutating_idle() {
+        let a = read_only_task(WorkflowStatus::Pending);
+        let b = read_only_task(WorkflowStatus::Pending);
+        let admitted = admit_ready(&[a.clone(), b.clone()]);
+        assert_eq!(admitted.len(), 2);
+        assert!(admitted.contains(&a.id));
+        assert!(admitted.contains(&b.id));
+        let measure = measure_parallelism(&[a, b]);
+        assert_eq!(measure.ready_read_only, 2);
+        assert_eq!(measure.read_only_slots_free, 2);
+        assert_eq!(measure.mutating_slots_free, 1);
+    }
+
+    #[test]
+    fn work04_read_only_admits_beside_mutating_in_flight() {
+        let running = task(WorkflowStatus::Running, &[]);
+        let pending_ro = read_only_task(WorkflowStatus::Pending);
+        let pending_mut = task(WorkflowStatus::Pending, &[]);
+        assert_eq!(mutating_in_flight(&[running.clone(), pending_ro.clone()]), 1);
+        assert_eq!(
+            admit_ready(&[running.clone(), pending_ro.clone()]),
+            vec![pending_ro.id]
+        );
+        assert_eq!(
+            admit_ready(&[running, pending_ro.clone(), pending_mut]),
+            vec![pending_ro.id]
+        );
+    }
+
+    #[test]
+    fn work04_read_only_bound_is_two() {
+        let running = read_only_task(WorkflowStatus::Running);
+        let a = read_only_task(WorkflowStatus::Pending);
+        let b = read_only_task(WorkflowStatus::Pending);
+        let c = read_only_task(WorkflowStatus::Pending);
+        let admitted = admit_ready(&[running.clone(), a.clone(), b.clone(), c.clone()]);
+        assert_eq!(admitted.len(), 1);
+        assert_eq!(read_only_in_flight(&[running, a, b, c]), 1);
+        assert_eq!(MAX_READ_ONLY_IN_FLIGHT, 2);
+    }
+
+    #[test]
+    fn work04_third_read_only_waits_for_a_slot() {
+        let a = read_only_task(WorkflowStatus::Running);
+        let b = read_only_task(WorkflowStatus::Running);
+        let c = read_only_task(WorkflowStatus::Pending);
+        assert!(admit_ready(&[a, b, c]).is_empty());
     }
 }
