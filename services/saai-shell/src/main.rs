@@ -5469,7 +5469,7 @@ fn today_schedules(entities: &[Entity]) -> Vec<&Entity> {
 /// `running` or `verifying`. Worker Result is not Done (ADR-259).
 /// `waiting_confirmation` stays in "Требует внимания".
 fn in_progress_work(entities: &[Entity]) -> Vec<&Entity> {
-    entities
+    let mut work: Vec<&Entity> = entities
         .iter()
         .filter(|entity| {
             entity.entity_type == "saaios.task"
@@ -5478,7 +5478,13 @@ fn in_progress_work(entities: &[Entity]) -> Vec<&Entity> {
                     Some(TASK_STATUS_RUNNING | TASK_STATUS_VERIFYING)
                 )
         })
-        .collect()
+        .collect();
+    work.sort_by(|left, right| {
+        now_task_priority(right)
+            .cmp(&now_task_priority(left))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    work
 }
 
 /// VUI-03: the "next action" data source the sprint's own inventory task
@@ -5605,8 +5611,7 @@ fn failed_status_text(entity: &Entity) -> String {
         Some("unreachable") => "Нет связи".into(),
         Some("verification_mismatch") => "Не подтвердилось".into(),
         Some("malformed") => "Ошибка формата".into(),
-        Some("unknown") => "Ошибка".into(),
-        Some(other) => other.to_string(),
+        Some("unknown") | Some(_) => "Ошибка".into(),
         None if entity.properties.get("retryable").and_then(Value::as_bool) == Some(true) => {
             "Таймаут".into()
         }
@@ -16244,6 +16249,22 @@ mod tests {
     }
 
     #[test]
+    fn in_progress_work_orders_high_before_list_order() {
+        let mut normal = serde_json::Map::new();
+        normal.insert("status".into(), serde_json::Value::String("running".into()));
+        let mut high = serde_json::Map::new();
+        high.insert("status".into(), serde_json::Value::String("running".into()));
+        high.insert("priority".into(), serde_json::Value::String("high".into()));
+        let first = test_entity("saaios.task", normal);
+        let second = test_entity("saaios.task", high);
+        let entities = [first.clone(), second.clone()];
+        let ordered = in_progress_work(&entities);
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].id, second.id);
+        assert_eq!(ordered[1].id, first.id);
+    }
+
+    #[test]
     fn failed_status_text_names_the_class_not_one_generic_error() {
         let mut timeout = serde_json::Map::new();
         timeout.insert("status".into(), serde_json::Value::String("failed".into()));
@@ -16286,6 +16307,17 @@ mod tests {
         assert_eq!(
             super::task_status_text(&down, std::slice::from_ref(&down)),
             "Нет связи"
+        );
+        let mut spoofed = serde_json::Map::new();
+        spoofed.insert("status".into(), serde_json::Value::String("failed".into()));
+        spoofed.insert(
+            "error_kind".into(),
+            serde_json::Value::String("critical".into()),
+        );
+        let fake = test_entity("saaios.task", spoofed);
+        assert_eq!(
+            super::task_status_text(&fake, std::slice::from_ref(&fake)),
+            "Ошибка"
         );
     }
 
