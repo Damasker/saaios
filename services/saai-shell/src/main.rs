@@ -4585,9 +4585,8 @@ fn consent_action_at(pos: (f64, f64), width: u32, height: u32) -> Option<bool> {
 }
 
 /// Human-readable (Russian) label for one ADR-020 vocabulary entry. Falls
-/// back to the raw dotted name for anything not yet in this list, so an
-/// unrecognized capability is still visible, not silently dropped from the
-/// screen.
+/// Known caps keep their board words. An unrecognized dotted name is
+/// not a new grant label (ADR-529).
 fn capability_label(name: &str) -> &str {
     match name {
         "space.entities.read" => "Чтение объектов пространства",
@@ -4597,21 +4596,20 @@ fn capability_label(name: &str) -> &str {
         "clipboard.write" => "Запись в буфер обмена",
         "portal.open_file" => "Выбор файла",
         "notifications.post" => "Отправка уведомлений",
-        other => other,
+        _ => "недоступно",
     }
 }
 
 /// S13 Change 3: `saai-appd`'s own state vocabulary
-/// (`services/saai-appd/src/daemon.rs`), translated the same
-/// fallback-to-the-raw-string way `capability_label` handles anything
-/// it doesn't recognize.
+/// (`services/saai-appd/src/daemon.rs`). Unknown is missing, not a
+/// new named state (ADR-529).
 fn app_state_label(state: &str) -> &str {
     match state {
         "running" => "Работает",
         "stopped" => "Остановлено",
         "crash_limited" => "Отключено после сбоев",
         "installed" => "Установлено",
-        other => other,
+        _ => "Нет статуса",
     }
 }
 
@@ -22286,7 +22284,9 @@ mod tests {
     #[test]
     fn capability_label_translates_known_vocabulary_and_falls_back_for_unknown() {
         assert_eq!(capability_label("net.internet"), "Доступ в интернет");
-        assert_eq!(capability_label("net.bluetooth"), "net.bluetooth");
+        assert_eq!(capability_label("net.bluetooth"), "недоступно");
+        assert_eq!(super::app_state_label("running"), "Работает");
+        assert_eq!(super::app_state_label("hacking"), "Нет статуса");
     }
 
     #[test]

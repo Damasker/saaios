@@ -299,6 +299,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | WORLD-02 unknown key | unmapped Observation is omitted, not the dotted id **host** (ADR-526; no shell flash) |
 | MEM-08 kind token | «Записи» hides MemoryKind; hypothesis omitted **host** (ADR-527; no shell flash) |
 | PCE-25 unknown class | live device_class is phone/computer only **host** (ADR-528; no shell flash) |
+| AUTH/APP unknown token | unknown capability/app state is not the schema id **host** (ADR-529; no shell flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -395,6 +396,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - WORLD-02 unknown Observation key: unmapped rows are omitted, not the dotted id (ADR-526; host; no shell flash)
 - MEM-08 kind token: «Записи» hides MemoryKind; learned_hypothesis omitted (ADR-527; host; no shell flash)
 - PCE-25 unknown device_class: only phone/computer; else local guess (ADR-528; host; no shell flash)
+- AUTH/APP unknown token: capability «недоступно», app state «Нет статуса» (ADR-529; host; no shell flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
