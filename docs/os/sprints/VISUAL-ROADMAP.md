@@ -1592,6 +1592,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Locality Observation source is Open-Meteo, not the
   helper id (ADR-555; host; no shell flash). Still
   Experimental.
+- [x] Записи space id is the space name (ADR-556; host;
+  no shell flash). Key stays. Still Experimental.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.

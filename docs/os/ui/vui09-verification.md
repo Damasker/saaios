@@ -188,6 +188,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   panther (ADR-554; `181cffbf…`); dest-no-lock stays;
   unlock is not proven on panther. Locality source is
   Open-Meteo, not `open-meteo.forecast` (ADR-555).
+  Записи space id is the space name (ADR-556).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

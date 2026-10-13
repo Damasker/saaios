@@ -8630,9 +8630,15 @@ struct LiveMemoryFact {
     kind: String,
 }
 
+/// ADR-268 still shows the record key. Known space ids reuse
+/// `space_display_name`; other values stay.
+fn memory_value_copy(value: &str) -> String {
+    space_display_name(&[], value)
+}
+
 impl LiveMemoryFact {
     fn value_line(&self) -> String {
-        self.value.clone()
+        memory_value_copy(&self.value)
     }
 }
 
@@ -26792,8 +26798,11 @@ mod tests {
             .iter()
             .find(|row| row.card.label == "host.role")
             .expect("global memory row");
-        assert_eq!(remembered.card.status, "home");
+        assert_eq!(remembered.card.status, "Дом");
+        assert!(!remembered.card.status.contains("home"));
         assert!(!remembered.card.status.contains("explicit_fact"));
+        assert_eq!(super::memory_value_copy("work"), "Работа");
+        assert_eq!(super::memory_value_copy("maybe"), "maybe");
         assert!(remembered.dispatch.is_none());
         assert!(!rows.iter().any(|row| row.card.label == "deploy"));
         facts.memory_records = vec![super::LiveMemoryFact {
