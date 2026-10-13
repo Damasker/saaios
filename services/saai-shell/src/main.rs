@@ -8706,7 +8706,7 @@ fn observation_row_label(key: &str) -> Option<String> {
         "cellular.signal" => "Сигнал".into(),
         "cellular.link_down" => "Вниз".into(),
         "cellular.link_up" => "Вверх".into(),
-        "cellular.rat" => "Радио".into(),
+        "cellular.rat" => "RAT".into(),
         "cellular.band" => "Диапазон".into(),
         "cellular.bandwidth" => "Ширина".into(),
         "cellular.bandwidth_up" => "Ширина вверх".into(),
@@ -26018,6 +26018,14 @@ mod tests {
         assert!(super::observation_row_label("cellular.sgc").is_none());
         assert!(super::observation_row_label("cellular.tty").is_none());
         assert!(super::observation_row_label("locality.weather.code").is_none());
+        assert_eq!(
+            super::observation_row_label("cellular.rat").as_deref(),
+            Some("RAT")
+        );
+        assert_eq!(
+            super::observation_row_label("cellular.radio").as_deref(),
+            Some("Радио")
+        );
         assert_eq!(
             super::observation_row_label("system.cpu.usage").as_deref(),
             Some("Процессор")

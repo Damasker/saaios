@@ -1669,6 +1669,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] DataRow technical values are mono and copyable
   (ADR-580; host). dest-no-lock stays off. Copy is not
   navigation. Still Experimental.
+- [x] RAT label is RAT, not Радио (ADR-581; host).
+  dest-no-lock stays off. Radio stays «Радио». Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1851,7 +1854,8 @@ wrap (ADR-569). DataRow long content reflows
 (ADR-577). AgentSummary execution titles wrap
 (ADR-578). DecisionOverlay object names wrap
 (ADR-579). DataRow technical values are
-mono and copyable (ADR-580). dest-no-lock stays off.
+mono and copyable (ADR-580). RAT label is RAT
+(ADR-581). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
