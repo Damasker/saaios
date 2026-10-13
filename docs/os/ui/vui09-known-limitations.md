@@ -119,7 +119,8 @@ is on panther (ADR-540; `39453be9…`). Sistema playback
 is «есть» / «нет» (ADR-541). ObjectSummary names
 «Уведомление» / «Расписание» (ADR-542). Descriptor
 owner is «процесс» (ADR-543). Duty `cp-left` is
-«модем ушёл» (ADR-544). dest-no-lock stays;
+«модем ушёл» (ADR-544). Host 541–544 chrome is on
+panther (ADR-545; `abd38350…`). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
@@ -138,6 +139,7 @@ The verification ledger stays in
 | dest-no-lock 515–532 shell | ADR-533; `efca9bd3…`; PUT+rename; displayd 26159 stayed; shell 2320; `surface=now`; marker stayed; unlock not proven |
 | dest-no-lock 534–535 shell | ADR-536; `0bc48f1a…`; PUT+rename; displayd 26159 stayed; shell 28902; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | dest-no-lock 537–539 shell | ADR-540; `39453be9…`; PUT+rename; displayd 26159 stayed; shell 1169; `surface=now` `backend=shm`; marker stayed; unlock not proven |
+| dest-no-lock 541–544 shell | ADR-545; `abd38350…`; PUT+rename; displayd 26159 stayed; shell 5233; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |
