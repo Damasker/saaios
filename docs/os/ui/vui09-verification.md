@@ -232,6 +232,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   IntentSummary long titles wrap (ADR-576).
   dest-no-lock stays off.
+  ObjectSummary long titles wrap (ADR-577).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

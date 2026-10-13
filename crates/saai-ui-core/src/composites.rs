@@ -206,6 +206,13 @@ impl ObjectSummary {
         SemanticText::new(self.title.clone(), TextRole::Body, ColorRole::TextPrimary)
     }
 
+    /// Section 1: long Russian titles wrap. Meta stays one identity line.
+    pub const MAX_TITLE_LINES: usize = 2;
+
+    pub fn title_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.title, Self::MAX_TITLE_LINES, fits)
+    }
+
     pub fn meta_text(&self) -> SemanticText {
         SemanticText::new(
             self.meta.clone(),
@@ -1135,6 +1142,22 @@ mod tests {
     fn object_summary_with_value_trailing_has_no_separate_trailing_accessibility() {
         let summary = ObjectSummary::new("Батарея", "Metric").with_value("87%");
         assert!(summary.trailing_accessibility().is_none());
+    }
+
+    #[test]
+    fn object_summary_long_title_wraps_and_keeps_the_meta_line() {
+        let summary = ObjectSummary::new("Ежедневный отчёт по заряду", "saaios.task · версия 3");
+        let lines = summary.title_lines(|s| s.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(summary.meta, "saaios.task · версия 3");
+        assert_eq!(
+            summary.accessibility().name.as_deref(),
+            Some("Ежедневный отчёт по заряду")
+        );
+        assert_eq!(
+            summary.accessibility().value.as_deref(),
+            Some("saaios.task · версия 3")
+        );
     }
 
     #[test]
