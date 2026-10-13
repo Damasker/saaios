@@ -357,7 +357,8 @@ real phone interface consistently.
   screenshot; it now wraps at a word boundary and truncates cleanly. Still
   open for every other primitive with label text (`Button`
   ADR-568, `Field` ADR-569, `DataRow` ADR-570, `Metric`
-  ADR-571; still `Disclosure`, `StatusIndicator`) -- each has its own
+  ADR-571, `Disclosure` ADR-572; still `StatusIndicator`) --
+  each has its own
   separate, not-yet-implemented wrap behavior per their own
   component-library-v1.md anatomy notes, so this criterion is not yet met
   for the component set as a whole.
@@ -1642,6 +1643,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Metric labels wrap (ADR-571; host). dest-no-lock
   stays off. Value stays one line. Disclosure and
   StatusIndicator stay open. Still Experimental.
+- [x] Disclosure long labels wrap (ADR-572; host).
+  dest-no-lock stays off. Hit stays 48. StatusIndicator
+  stays open. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1816,7 +1820,7 @@ displayd writes connector DPMS On after present
 (ADR-566). Elevation token is 0 / 4 / 8 / 12 (ADR-567). Button long
 labels wrap to two lines (ADR-568). Field label and support
 wrap (ADR-569). DataRow long content reflows
-(ADR-570). Metric labels wrap (ADR-571).
+(ADR-570). Metric labels wrap (ADR-571). Disclosure long labels wrap (ADR-572).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

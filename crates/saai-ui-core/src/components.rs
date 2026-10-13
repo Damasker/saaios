@@ -920,6 +920,22 @@ impl Disclosure {
         next
     }
 
+    /// Long labels wrap to two lines. The chevron stays 16–20; hit stays
+    /// at least 48.
+    pub const MAX_LABEL_LINES: usize = 2;
+
+    pub fn label_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.label, Self::MAX_LABEL_LINES, fits)
+    }
+
+    pub fn min_hit_height(&self, line_count: u32) -> LogicalUnit {
+        if line_count > 1 {
+            TWO_LINE_ROW_HEIGHT
+        } else {
+            MIN_TOUCH_TARGET
+        }
+    }
+
     /// `value` is a `disclosure.collapsed`/`disclosure.expanded`
     /// translation key, this module's usual convention for a state that
     /// needs display language a caller supplies. Section 6.10:
@@ -1185,6 +1201,19 @@ mod tests {
 
         let back = expanded.toggled();
         assert_eq!(back.state, DisclosureState::Collapsed);
+    }
+
+    #[test]
+    fn disclosure_long_label_wraps_and_keeps_the_full_name() {
+        let disclosure = Disclosure::new("Подробности диагностики устройства", "panel");
+        let lines = disclosure.label_lines(|s| s.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(disclosure.min_hit_height(1), MIN_TOUCH_TARGET);
+        assert_eq!(disclosure.min_hit_height(2), TWO_LINE_ROW_HEIGHT);
+        assert_eq!(
+            disclosure.accessibility().name.as_deref(),
+            Some("Подробности диагностики устройства")
+        );
     }
 
     #[test]
