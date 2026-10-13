@@ -178,6 +178,7 @@ The verification ledger stays in
 | DataRow technical | ADR-580; host; MonoBody value; copy is not navigation; dest-no-lock stays off |
 | RAT label | ADR-581; host; `cellular.rat` is RAT; radio stays «Радио»; dest-no-lock stays off |
 | unsolff off chrome | ADR-582; host; no row; fact still read; dest-no-lock stays off |
+| unsol off chrome | ADR-583; host; no row; fact still read; dest-no-lock stays off |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |
