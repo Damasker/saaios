@@ -1543,6 +1543,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Host 534–535 SHM on panther under dest-no-lock
   (ADR-536; `0bc48f1a…`). Unlock is not proven. Still
   Experimental. Not Visual v1 sign-off.
+- [x] Bluetooth transport is BLE or omitted (ADR-537; host;
+  no shell flash). CLASSIC and unknown stay off the row.
+  Still Experimental.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.
@@ -1680,7 +1683,8 @@ is one-slot lock SHM (ADR-532). Host 515–532 chrome is on
 panther under dest-no-lock (ADR-533; `efca9bd3…`). OSK and
 status-bar SHM use two slots (ADR-534). Main window SHM
 uses two slots (ADR-535). Host 534–535 SHM is on
-panther under dest-no-lock (ADR-536; `0bc48f1a…`). Unlock
+panther under dest-no-lock (ADR-536; `0bc48f1a…`). Bluetooth
+transport is BLE or omitted (ADR-537). Unlock
 is not proven on panther. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

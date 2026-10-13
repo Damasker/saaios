@@ -6786,6 +6786,16 @@ fn bluetooth_pair_error_copy(reason: &str) -> String {
     }
 }
 
+/// ADR-537: BLE is the RAT-class acronym already on the row. CLASSIC
+/// and any other `bt-scan` transport stay off chrome. The parser still
+/// keeps the raw token.
+fn bluetooth_transport_copy(transport: &str) -> String {
+    match transport.trim() {
+        "BLE" | "LE" => "BLE".into(),
+        _ => String::new(),
+    }
+}
+
 fn bluetooth_failed_pattern(reason: &str) -> SurfacePattern {
     SurfacePattern::failed(bluetooth_pair_error_copy(reason))
 }
@@ -6824,7 +6834,7 @@ fn bluetooth_list_rows(
     rows.extend(devices.iter().map(|device| {
         BluetoothRow::open(
             device.name.clone(),
-            device.transport.clone(),
+            bluetooth_transport_copy(&device.transport),
             saved.iter().any(|name| name == &device.name),
         )
     }));
@@ -16211,6 +16221,7 @@ mod tests {
         bearer_is_live, bluetooth_card_from_row, bluetooth_hci_present_in_listing,
         bluetooth_header, bluetooth_list_action_at, bluetooth_list_pattern,
         bluetooth_list_row_count, bluetooth_list_rows, bluetooth_pair_error_from,
+        bluetooth_transport_copy,
         bluetooth_scan_pattern, calibration_requested, capability_label,
         capture_nodes_from_v4l_listing, cellular_ifaces_from_net_listing, cellular_row_status,
         consent_action_at, consent_content_cards, consent_header, cp_state_token,
@@ -23129,6 +23140,29 @@ mod tests {
         assert_eq!(live[1].row.primary, "Speaker");
         assert!(!live[1].paired);
         assert!(live[1].row.value.is_none());
+        let classic = bluetooth_list_rows(
+            &[BluetoothDevice {
+                name: "Speaker".into(),
+                transport: "CLASSIC".into(),
+            }],
+            true,
+            &saved,
+            None,
+        );
+        assert!(classic[0].row.value.is_none());
+        let unknown = bluetooth_list_rows(
+            &[BluetoothDevice {
+                name: "Speaker".into(),
+                transport: "BR/EDR".into(),
+            }],
+            true,
+            &saved,
+            None,
+        );
+        assert!(unknown[0].row.value.is_none());
+        assert_eq!(bluetooth_transport_copy("LE"), "BLE");
+        assert_eq!(bluetooth_transport_copy("CLASSIC"), "");
+        assert_eq!(bluetooth_transport_copy("hacking"), "");
         assert_eq!(bluetooth_card_from_row(&live[1]).action, "Сопрячь");
         assert!(!live.iter().any(|row| row.row.primary.contains("dBm")
             || row.row.value.as_deref().unwrap_or("").contains("RSSI")));
