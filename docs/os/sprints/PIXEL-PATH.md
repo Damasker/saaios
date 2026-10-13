@@ -357,6 +357,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-06 screen off chrome | `cellular.screen` has no row; device «Экран» stays **host** (ADR-584; dest-no-lock stays off) |
 | VUI-06 cellinfo off chrome | `cellular.cellinfo` has no row **host** (ADR-585; dest-no-lock stays off) |
 | VUI-06 aptime off chrome | `cellular.aptime` has no row **host** (ADR-586; dest-no-lock stays off) |
+| VUI-06 slot off chrome | `cellular.slot` has no row **host** (ADR-587; dest-no-lock stays off) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -511,6 +512,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-06 screen off chrome: `cellular.screen` has no row; device «Экран» stays (ADR-584; host; dest-no-lock stays off)
 - VUI-06 cellinfo off chrome: `cellular.cellinfo` has no row (ADR-585; host; dest-no-lock stays off)
 - VUI-06 aptime off chrome: `cellular.aptime` has no row (ADR-586; host; dest-no-lock stays off)
+- VUI-06 slot off chrome: `cellular.slot` has no row (ADR-587; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

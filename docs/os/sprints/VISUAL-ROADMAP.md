@@ -1683,6 +1683,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   stays off. SMSC stays. Still Experimental.
 - [x] aptime stays off chrome (ADR-586; host). dest-no-lock
   stays off. «Трасса» stays. Still Experimental.
+- [x] slot stays off chrome (ADR-587; host). dest-no-lock
+  stays off. PS stays. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1871,7 +1873,8 @@ mono and copyable (ADR-580). RAT label is RAT
 (ADR-583). cellular.screen stays off
 chrome (ADR-584). cellinfo stays off chrome
 (ADR-585). aptime stays off chrome
-(ADR-586). dest-no-lock stays off.
+(ADR-586). slot stays off chrome
+(ADR-587). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
