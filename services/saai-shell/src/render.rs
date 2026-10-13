@@ -3,8 +3,8 @@ use saai_ui_core::{
     composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
     DataRow, DataRowVariant, DecisionOverlay, Disclosure, Divider, Field, FieldKind, FontFamily,
     FontWeight, Icon, IconGlyph, IconSize, LogicalUnit, Metric, MetricValue, NavigationItem,
-    ObjectSummary, ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText, SpacingToken,
-    TaskSummary,
+    IntentSummary, ObjectSummary, ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText,
+    SpacingToken, TaskSummary,
     StatusIndicator, StatusIndicatorVariant, StatusMark, StrokeToken, SurfacePattern, SurfaceScale,
     SystemSection, SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
@@ -2212,6 +2212,69 @@ fn draw_gallery_task(
     height
 }
 
+fn gallery_intent_paint(
+    intent: &IntentSummary,
+    fits: impl FnMut(&str) -> bool,
+) -> (Vec<String>, u32) {
+    let lines = intent.title_lines(fits);
+    let line_count = u32::try_from(lines.len()).unwrap_or(1).max(1);
+    let mut height = scaled_line_height(TextRole::Body).saturating_mul(line_count);
+    if intent.missing_task_text().is_some() {
+        height = height.saturating_add(scaled_line_height(TextRole::Caption));
+    }
+    (lines, height)
+}
+
+fn draw_gallery_intent(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    intent: &IntentSummary,
+    left: u32,
+    top: u32,
+    max_width: u32,
+) -> u32 {
+    let (font, size) = fonts.resolve(TextRole::Body);
+    let (lines, mut height) = gallery_intent_paint(intent, |text| {
+        text_width(font, text, size * text_scale()) as u32 <= max_width
+    });
+    let mut cursor_y = top;
+    let title_lh = scaled_line_height(TextRole::Body);
+    for line in &lines {
+        draw_text(
+            canvas,
+            font,
+            line,
+            size,
+            left,
+            cursor_y,
+            theme_color(ColorRole::TextPrimary),
+        );
+        cursor_y = cursor_y.saturating_add(title_lh);
+    }
+    if let Some(missing) = intent.missing_task_text() {
+        let (caption_font, caption_size) = fonts.resolve(TextRole::Caption);
+        draw_text(
+            canvas,
+            caption_font,
+            &missing.content,
+            caption_size,
+            left,
+            cursor_y,
+            theme_color(ColorRole::TextSecondary),
+        );
+    } else if let Some(task) = &intent.task {
+        height = height.saturating_add(draw_gallery_task(
+            canvas,
+            fonts,
+            task,
+            left,
+            cursor_y,
+            max_width,
+        ));
+    }
+    height
+}
+
 /// One `cursor_y` per row `draw_gallery` paints, in draw order (0 is the
 /// title). Pulled out of `draw_gallery` itself so it is testable without a
 /// loaded font or a device -- ADR-105's own bug (two rows' text colliding)
@@ -2501,24 +2564,14 @@ pub fn draw_composite_gallery(
         rows[3],
         content_width,
     );
-    draw_semantic_text(
+    draw_gallery_intent(
         canvas,
         fonts,
-        &fixtures.intent.heading(),
+        &fixtures.intent,
         margin,
         rows[4],
         content_width,
     );
-    if let Some(missing) = fixtures.intent.missing_task_text() {
-        draw_semantic_text(
-            canvas,
-            fonts,
-            &missing,
-            margin,
-            rows[4] + physical_line_height(TextRole::Caption),
-            content_width,
-        );
-    }
     draw_semantic_text(
         canvas,
         fonts,
@@ -3372,7 +3425,7 @@ mod tests {
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
         fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint,
         gallery_context_header_paint, gallery_disclosure_paint, gallery_field_paint,
-        gallery_task_paint,
+        gallery_intent_paint, gallery_task_paint,
         gallery_metric_paint, gallery_status_paint,
         gallery_row_positions,
         now_empty_pattern, physical,
@@ -3382,7 +3435,8 @@ mod tests {
     use saai_ui_core::{
         composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
         DataRow, DataRowVariant, DecisionOverlay, Disclosure, Field, FieldKind, IconSize,
-        LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary, TaskSummary,
+        IntentSummary, LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary,
+        TaskSummary,
         Progress, Rect, SpacingToken, StatusIndicator, StatusIndicatorVariant, StatusMark,
         SurfacePattern, SystemStatus,
         TextRole, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
@@ -3904,6 +3958,37 @@ mod tests {
             scaled_line_height(TextRole::Body).max(physical(IconSize::Medium.value()))
         );
         assert!(short.related_text().is_none());
+    }
+
+    #[test]
+    fn gallery_intent_long_title_wraps_and_keeps_missing_task() {
+        let intent = IntentSummary::new("Подготовить демо на этом телефоне");
+        let (lines, height) = gallery_intent_paint(&intent, |text| text.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            height,
+            scaled_line_height(TextRole::Body) * 2 + scaled_line_height(TextRole::Caption)
+        );
+        assert_eq!(
+            intent.missing_task_text().map(|text| text.content),
+            Some("Нет задачи".into())
+        );
+        assert_eq!(
+            intent.accessibility().name.as_deref(),
+            Some("Подготовить демо на этом телефоне")
+        );
+        let short = IntentSummary::new("Пустое намерение");
+        let (one, short_height) =
+            gallery_intent_paint(&short, |text| text.chars().count() <= 20);
+        assert_eq!(one, vec!["Пустое намерение".to_string()]);
+        assert_eq!(
+            short_height,
+            scaled_line_height(TextRole::Body) + scaled_line_height(TextRole::Caption)
+        );
+        assert_eq!(
+            short.missing_task_text().map(|text| text.content),
+            Some("Нет задачи".into())
+        );
     }
 
     #[test]
