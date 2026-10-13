@@ -327,6 +327,13 @@ impl IntentSummary {
         self
     }
 
+    /// Long Russian titles wrap. Missing work stays «Нет задачи».
+    pub const MAX_TITLE_LINES: usize = 2;
+
+    pub fn title_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.title, Self::MAX_TITLE_LINES, fits)
+    }
+
     pub fn heading(&self) -> SemanticText {
         SemanticText::new(self.title.clone(), TextRole::Body, ColorRole::TextPrimary)
     }
@@ -1185,6 +1192,21 @@ mod tests {
         assert_eq!(
             with_task.task.as_ref().map(|task| task.title.as_str()),
             Some("Подтвердите: демо")
+        );
+    }
+
+    #[test]
+    fn intent_summary_long_title_wraps_and_keeps_missing_task() {
+        let intent = IntentSummary::new("Подготовить демо на этом телефоне");
+        let lines = intent.title_lines(|s| s.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            intent.missing_task_text().map(|text| text.content),
+            Some("Нет задачи".into())
+        );
+        assert_eq!(
+            intent.accessibility().name.as_deref(),
+            Some("Подготовить демо на этом телефоне")
         );
     }
 
