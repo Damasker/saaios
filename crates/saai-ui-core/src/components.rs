@@ -612,6 +612,11 @@ impl Field {
         self
     }
 
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.help = Some(help.into());
+        self
+    }
+
     pub fn revealed(mut self, revealed: bool) -> Self {
         self.revealed = revealed;
         self
@@ -638,6 +643,31 @@ impl Field {
     pub fn disabled(mut self) -> Self {
         self.disabled = true;
         self
+    }
+
+    /// Section 6.7: the persistent label wraps; the editor stays one line.
+    pub const MAX_LABEL_LINES: usize = 2;
+    pub const MAX_SUPPORT_LINES: usize = 2;
+
+    pub fn label_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.label, Self::MAX_LABEL_LINES, fits)
+    }
+
+    /// Error wins over help. Offline and permission stay `help`.
+    pub fn support_text(&self) -> Option<&str> {
+        self.error.as_deref().or(self.help.as_deref())
+    }
+
+    pub fn support_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        match self.support_text() {
+            Some(text) => wrap_words(text, Self::MAX_SUPPORT_LINES, fits),
+            None => Vec::new(),
+        }
+    }
+
+    /// The editor hit stays 48. Wrap grows lines above and below it.
+    pub fn min_hit_height(&self) -> LogicalUnit {
+        MIN_TOUCH_TARGET
     }
 
     /// `name` is the persistent label, never the placeholder -- section
@@ -997,6 +1027,39 @@ mod tests {
         assert!(field.is_empty());
         assert_eq!(field.value, "");
         assert_eq!(field.placeholder.as_deref(), Some("Не выбрано"));
+    }
+
+    #[test]
+    fn field_long_label_wraps_and_keeps_the_full_name() {
+        let field = Field::new("Имя сети для подключения", FieldKind::Text);
+        let lines = field.label_lines(|s| s.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(field.min_hit_height(), MIN_TOUCH_TARGET);
+        assert_eq!(
+            field.accessibility().name.as_deref(),
+            Some("Имя сети для подключения")
+        );
+    }
+
+    #[test]
+    fn field_error_wraps_and_hides_help() {
+        let field = Field::new("SSID", FieldKind::Text)
+            .with_help("Нет связи с точкой")
+            .with_error("Пароль не принят сетью");
+        assert_eq!(field.support_text(), Some("Пароль не принят сетью"));
+        let lines = field.support_lines(|s| s.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+    }
+
+    #[test]
+    fn field_value_stays_one_line() {
+        let field = Field::new("Намерение", FieldKind::Text)
+            .with_value("один два три четыре");
+        assert_eq!(field.accessible_value(), "один два три четыре");
+        assert_eq!(
+            field.label_lines(|s| s.chars().count() <= 4),
+            vec!["Намерение".to_string()]
+        );
     }
 
     #[test]
