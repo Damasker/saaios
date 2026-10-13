@@ -1333,7 +1333,7 @@ fn supervisor_phrase(token: &str) -> Option<&'static str> {
     match token {
         "hold" => Some("удержание"),
         "owner-gone" => Some("процесс ушёл"),
-        "cp-left" => Some("CP ушёл"),
+        "cp-left" => Some("модем ушёл"),
         "attend" => Some("уже запущен"),
         "launch-once" => Some("запуск"),
         _ => None,
@@ -18780,6 +18780,14 @@ mod tests {
         );
         assert_eq!(super::barring_phrase(Some("set")), Some("ограничение есть"));
         assert_eq!(super::barring_phrase(Some("nope")), None);
+    }
+
+    #[test]
+    fn supervisor_phrase_names_modem_not_cp() {
+        assert_eq!(super::supervisor_phrase("hold"), Some("удержание"));
+        assert_eq!(super::supervisor_phrase("owner-gone"), Some("процесс ушёл"));
+        assert_eq!(super::supervisor_phrase("cp-left"), Some("модем ушёл"));
+        assert_eq!(super::supervisor_phrase("nope"), None);
     }
 
     #[test]

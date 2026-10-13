@@ -171,7 +171,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   not proven on panther. Sistema playback is «есть» / «нет»
   (ADR-541). ObjectSummary names «Уведомление» /
   «Расписание» (ADR-542). Descriptor owner is «процесс»
-  (ADR-543).
+  (ADR-543). Duty `cp-left` is «модем ушёл» (ADR-544).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

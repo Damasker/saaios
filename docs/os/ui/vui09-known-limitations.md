@@ -118,7 +118,8 @@ meta uses Search kind labels (ADR-539). Host 537–539 chrome
 is on panther (ADR-540; `39453be9…`). Sistema playback
 is «есть» / «нет» (ADR-541). ObjectSummary names
 «Уведомление» / «Расписание» (ADR-542). Descriptor
-owner is «процесс» (ADR-543). dest-no-lock stays;
+owner is «процесс» (ADR-543). Duty `cp-left` is
+«модем ушёл» (ADR-544). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
