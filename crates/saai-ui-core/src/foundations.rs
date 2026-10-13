@@ -172,6 +172,36 @@ impl StrokeToken {
     }
 }
 
+/// Stacking lift in the same logical units as spacing. Paint stays a
+/// `SurfaceLevel` fill; this token does not invent a drop shadow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ElevationToken {
+    Flat,
+    Rest,
+    Raised,
+    Overlay,
+}
+
+impl ElevationToken {
+    pub const fn value(self) -> LogicalUnit {
+        LogicalUnit::new(match self {
+            Self::Flat => 0,
+            Self::Rest => 4,
+            Self::Raised => 8,
+            Self::Overlay => 12,
+        })
+    }
+
+    pub const fn level(self) -> SurfaceLevel {
+        match self {
+            Self::Flat => SurfaceLevel::Canvas,
+            Self::Rest => SurfaceLevel::Surface,
+            Self::Raised => SurfaceLevel::Raised,
+            Self::Overlay => SurfaceLevel::Overlay,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IconSize {
     Small,
@@ -313,6 +343,15 @@ impl SurfaceLevel {
                 fill: ColorRole::Elevated,
                 border: Some(ColorRole::Border),
             },
+        }
+    }
+
+    pub const fn elevation(self) -> ElevationToken {
+        match self {
+            Self::Canvas => ElevationToken::Flat,
+            Self::Surface => ElevationToken::Rest,
+            Self::Raised => ElevationToken::Raised,
+            Self::Overlay => ElevationToken::Overlay,
         }
     }
 }
@@ -835,6 +874,28 @@ mod tests {
             SurfaceLevel::Overlay.style().border,
             Some(ColorRole::Border)
         );
+    }
+
+    #[test]
+    fn elevation_uses_the_four_unit_rhythm_and_maps_surface_levels() {
+        let tokens = [
+            ElevationToken::Flat,
+            ElevationToken::Rest,
+            ElevationToken::Raised,
+            ElevationToken::Overlay,
+        ];
+        let mut previous = 0;
+        for token in tokens {
+            let value = token.value().get();
+            assert_eq!(value % 4, 0);
+            assert!(value >= previous);
+            previous = value;
+            assert_eq!(token.level().elevation(), token);
+        }
+        assert_eq!(ElevationToken::Flat.value(), LogicalUnit::ZERO);
+        assert_eq!(SurfaceLevel::Canvas.elevation(), ElevationToken::Flat);
+        assert_eq!(SurfaceLevel::Overlay.elevation(), ElevationToken::Overlay);
+        assert!(ElevationToken::Overlay > ElevationToken::Raised);
     }
 
     #[test]

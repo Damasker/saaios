@@ -24,7 +24,8 @@ pub use composites::{
 pub use foundations::{
     frame_reason, frame_surface, FontFamily, FontWeight, FrameBackend, FramePace, FrameReason,
     FrameSample, FrameSurface, IconGlyph, IconSize, LogicalUnit, MotionClock, MotionToken,
-    RadiusToken, SafeInsets, SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale, SurfaceStyle,
+    ElevationToken, RadiusToken, SafeInsets, SpacingToken, StrokeToken, SurfaceLevel, SurfaceScale,
+    SurfaceStyle,
     TextRole, TextStyle, CONTROL_VISUAL_HEIGHT, FIRST_FEEDBACK_LIMIT_MS, FRAME_PACE_CAP,
     FRAME_PACE_P95_LIMIT_MS, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
