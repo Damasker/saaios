@@ -1806,52 +1806,88 @@ fn draw_gallery_field(
     }
 }
 
+fn gallery_data_row_paint(
+    row: &DataRow,
+    mut fits_primary: impl FnMut(&str) -> bool,
+    mut fits_secondary: impl FnMut(&str) -> bool,
+) -> (Vec<String>, Vec<String>, u32) {
+    let primary = row.primary_lines(&mut fits_primary);
+    let secondary = row.secondary_lines(&mut fits_secondary);
+    let height = physical(row.visual_height(
+        u32::try_from(primary.len()).unwrap_or(1),
+        u32::try_from(secondary.len()).unwrap_or(0),
+    ));
+    (primary, secondary, height)
+}
+
 pub(crate) fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) {
-    canvas.fill_rect(rect, theme_color(ColorRole::Surface));
     let inset = physical(SpacingToken::Small.value());
     let top_inset = physical(SpacingToken::XSmall.value());
-    let mut cursor_x = rect.x + inset;
-    if let Some(glyph) = row.icon {
-        if let Some(icon_font) = fonts.icon() {
-            let icon_size = physical(IconSize::Large.value());
-            draw_text(
-                canvas,
-                icon_font,
-                &glyph.codepoint().to_string(),
-                icon_size as f32,
-                cursor_x,
-                rect.y + top_inset,
-                theme_color(ColorRole::TextSecondary),
-            );
-            cursor_x += icon_size + inset;
-        }
-    }
+    let icon_size = physical(IconSize::Large.value());
+    let icon_width = if row.icon.is_some() && fonts.icon().is_some() {
+        icon_size + inset
+    } else {
+        0
+    };
+    let text_left = rect.x + inset + icon_width;
+    let (value_font, value_size) = fonts.resolve(row.value_role());
+    let value_reserve = row.value.as_deref().map_or(0, |value| {
+        text_width(value_font, value, value_size * text_scale()) as u32 + inset
+    });
+    let text_max = (rect.x + rect.width)
+        .saturating_sub(inset)
+        .saturating_sub(value_reserve)
+        .saturating_sub(text_left);
     let (primary_font, primary_size) = fonts.resolve(TextRole::Body);
-    draw_text(
-        canvas,
-        primary_font,
-        &row.primary,
-        primary_size,
-        cursor_x,
-        rect.y + top_inset,
-        theme_color(ColorRole::TextPrimary),
+    let (secondary_font, secondary_size) = fonts.resolve(TextRole::Caption);
+    let (primary, secondary, min_height) = gallery_data_row_paint(
+        row,
+        |text| text_width(primary_font, text, primary_size * text_scale()) as u32 <= text_max,
+        |text| text_width(secondary_font, text, secondary_size * text_scale()) as u32 <= text_max,
     );
-    if let Some(secondary) = &row.secondary {
-        let (secondary_font, secondary_size) = fonts.resolve(TextRole::Caption);
+    let paint = Rect::new(rect.x, rect.y, rect.width, rect.height.max(min_height));
+    canvas.fill_rect(paint, theme_color(ColorRole::Surface));
+    if let (Some(glyph), Some(icon_font)) = (row.icon, fonts.icon()) {
         draw_text(
             canvas,
-            secondary_font,
-            secondary,
-            secondary_size,
-            cursor_x,
-            rect.y + top_inset + scaled_line_height(TextRole::Body),
+            icon_font,
+            &glyph.codepoint().to_string(),
+            icon_size as f32,
+            paint.x + inset,
+            paint.y + top_inset,
             theme_color(ColorRole::TextSecondary),
         );
     }
+    let mut cursor_y = paint.y + top_inset;
+    let primary_lh = scaled_line_height(TextRole::Body);
+    for line in &primary {
+        draw_text(
+            canvas,
+            primary_font,
+            line,
+            primary_size,
+            text_left,
+            cursor_y,
+            theme_color(ColorRole::TextPrimary),
+        );
+        cursor_y = cursor_y.saturating_add(primary_lh);
+    }
+    let secondary_lh = scaled_line_height(TextRole::Caption);
+    for line in &secondary {
+        draw_text(
+            canvas,
+            secondary_font,
+            line,
+            secondary_size,
+            text_left,
+            cursor_y,
+            theme_color(ColorRole::TextSecondary),
+        );
+        cursor_y = cursor_y.saturating_add(secondary_lh);
+    }
     if let Some(value) = &row.value {
-        let (value_font, value_size) = fonts.resolve(TextRole::Body);
-        let value_width = text_width(value_font, value, value_size) as u32;
-        let value_left = (rect.x + rect.width)
+        let value_width = text_width(value_font, value, value_size * text_scale()) as u32;
+        let value_left = (paint.x + paint.width)
             .saturating_sub(inset)
             .saturating_sub(value_width);
         draw_text(
@@ -1860,7 +1896,7 @@ pub(crate) fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRo
             value,
             value_size,
             value_left,
-            rect.y + top_inset,
+            paint.y + top_inset,
             theme_color(ColorRole::TextSecondary),
         );
     }
@@ -3076,14 +3112,16 @@ mod tests {
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
-        fingerprint_wrap_box, gallery_button_paint, gallery_field_paint, gallery_row_positions,
+        fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint, gallery_field_paint,
+        gallery_row_positions,
         now_empty_pattern, physical,
         physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
         text_scale, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
         composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
-        DecisionOverlay, Field, FieldKind, IconSize, LogicalUnit, NavigationItem, ObjectSummary,
+        DataRow, DataRowVariant, DecisionOverlay, Field, FieldKind, IconSize, LogicalUnit,
+        NavigationItem, ObjectSummary,
         Progress, Rect, SpacingToken, StatusIndicator, StatusMark, SurfacePattern, SystemStatus,
         TextRole, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
     };
@@ -3469,6 +3507,35 @@ mod tests {
             physical_line_height(TextRole::Caption) + physical(MIN_TOUCH_TARGET)
         );
         assert_eq!(pin.accessible_value(), "\u{2022}\u{2022}\u{2022}\u{2022}");
+    }
+
+    #[test]
+    fn gallery_data_row_long_primary_reflows_and_keeps_the_value() {
+        let row = DataRow::new("Яркость экрана ночью", DataRowVariant::Navigation)
+            .with_secondary("автоматически по датчику")
+            .with_value("50%");
+        let (primary, secondary, height) = gallery_data_row_paint(
+            &row,
+            |text| text.chars().count() <= 10,
+            |text| text.chars().count() <= 14,
+        );
+        assert_eq!(primary.len(), 2);
+        assert_eq!(secondary.len(), 2);
+        assert_eq!(height, physical(TWO_LINE_ROW_HEIGHT));
+        assert_eq!(row.value.as_deref(), Some("50%"));
+        assert_eq!(
+            row.accessibility().name.as_deref(),
+            Some("Яркость экрана ночью")
+        );
+        let short = DataRow::new("Wi-Fi", DataRowVariant::Navigation);
+        let (one, none, short_height) = gallery_data_row_paint(
+            &short,
+            |text| text.chars().count() <= 20,
+            |text| text.chars().count() <= 20,
+        );
+        assert_eq!(one, vec!["Wi-Fi".to_string()]);
+        assert!(none.is_empty());
+        assert_eq!(short_height, physical(MIN_TOUCH_TARGET));
     }
 
     #[test]

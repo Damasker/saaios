@@ -166,6 +166,7 @@ The verification ledger stays in
 | Button label wrap | ADR-568; host; two lines; full name stays; dest-no-lock stays off |
 | gallery Button wrap paint | ADR-594; host; `label_lines`; dest-no-lock stays off |
 | gallery Field wrap paint | ADR-595; host; label/support wrap; editor one line; dest-no-lock stays off |
+| gallery DataRow wrap paint | ADR-596; host; primary/secondary reflow; value one line; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

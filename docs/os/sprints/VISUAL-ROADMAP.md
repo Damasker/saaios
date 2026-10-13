@@ -359,9 +359,9 @@ real phone interface consistently.
   (ADR-569), `DataRow` (ADR-570), `Metric` (ADR-571),
   `Disclosure` (ADR-572), and `StatusIndicator` (ADR-573).
   Gallery Button paint uses `label_lines` (ADR-594). Gallery
-  Field paint wraps label and support (ADR-595). DataRow and
-  the rest of the gallery set stay unwired, so this
-  criterion is not yet met as a whole.
+  Field paint wraps label and support (ADR-595). DataRow paint
+  reflows (ADR-596). Metric and the rest of the gallery set
+  stay unwired, so this criterion is not yet met as a whole.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
   requires running `build-native-c-image.sh`, which needs a real
@@ -1706,6 +1706,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Gallery Field paint wraps label and support (ADR-595;
   host). dest-no-lock stays off. Editor stays one line.
   Still Experimental.
+- [x] Gallery DataRow paint reflows long content (ADR-596;
+  host). dest-no-lock stays off. Value stays one line.
+  Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1903,7 +1906,8 @@ chrome (ADR-584). cellinfo stays off chrome
 (ADR-592). Host 566–592 chrome on
 panther (ADR-593; `74a69097…`). Gallery Button paint
 wraps (ADR-594). Gallery Field paint wraps
-(ADR-595). dest-no-lock stays off.
+(ADR-595). Gallery DataRow paint reflows
+(ADR-596). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
