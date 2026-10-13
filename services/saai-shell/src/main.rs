@@ -628,11 +628,13 @@ fn playback_ready_from_paths(tinyplay: bool, tone: bool) -> bool {
     tinyplay && tone
 }
 
+/// ADR-541: Sistema names presence, not the helper binaries.
+/// «есть» / «нет» already exist on cellular. Not «Готово». Not voice.
 fn playback_status(ready: bool) -> &'static str {
     if ready {
-        "tinyplay · test-tone"
+        "есть"
     } else {
-        "Нет tinyplay"
+        "нет"
     }
 }
 
@@ -21864,9 +21866,12 @@ mod tests {
         assert!(!playback_ready_from_paths(true, false));
         assert!(!playback_ready_from_paths(false, true));
         assert!(playback_ready_from_paths(true, true));
-        assert_eq!(playback_status(false), "Нет tinyplay");
-        assert_eq!(playback_status(true), "tinyplay · test-tone");
+        assert_eq!(playback_status(false), "нет");
+        assert_eq!(playback_status(true), "есть");
+        assert!(!playback_status(true).contains("tinyplay"));
+        assert!(!playback_status(true).contains("test-tone"));
         assert!(!playback_status(true).contains("Слушает"));
+        assert!(!playback_status(true).contains("Готово"));
     }
 
     #[test]
@@ -21876,7 +21881,7 @@ mod tests {
             .iter()
             .find(|row| row.card.label == "Воспроизведение")
             .expect("playback");
-        assert_eq!(playback.card.status, "Нет tinyplay");
+        assert_eq!(playback.card.status, "нет");
         assert!(playback.dispatch.is_none());
         let mut facts = me_fixture_facts();
         facts.playback_ready = true;
@@ -21885,8 +21890,9 @@ mod tests {
             .iter()
             .find(|row| row.card.label == "Воспроизведение")
             .expect("playback ready");
-        assert_eq!(playback.card.status, "tinyplay · test-tone");
+        assert_eq!(playback.card.status, "есть");
         assert!(playback.dispatch.is_none());
+        assert!(!playback.card.status.contains("tinyplay"));
         assert!(!playback.card.status.contains("Слушает"));
     }
 

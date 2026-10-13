@@ -115,7 +115,8 @@ slots (ADR-535). Host 534–535 SHM is on panther
 or omitted (ADR-537). DevSurface ContextFrame
 source is «вручную» / «Wi-Fi» (ADR-538). ObjectSummary
 meta uses Search kind labels (ADR-539). Host 537–539 chrome
-is on panther (ADR-540; `39453be9…`). dest-no-lock stays;
+is on panther (ADR-540; `39453be9…`). Sistema playback
+is «есть» / «нет» (ADR-541). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,

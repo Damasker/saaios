@@ -168,7 +168,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   (ADR-538). ObjectSummary meta uses Search kind labels
   (ADR-539). Host 537–539 chrome is on panther
   (ADR-540; `39453be9…`); dest-no-lock stays; unlock is
-  not proven on panther.
+  not proven on panther. Sistema playback is «есть» / «нет»
+  (ADR-541).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
