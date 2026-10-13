@@ -8741,7 +8741,6 @@ fn observation_row_label(key: &str) -> Option<String> {
         "locality.weather.temperature" => "Температура".into(),
         "locality.weather.humidity" => "Влажность".into(),
         "locality.weather.wind_speed" => "Ветер".into(),
-        "locality.weather.code" => "Код".into(),
         "locality.weather.condition" => "Погода".into(),
         "locality.attribution" => "Источник".into(),
         _ => return None,
@@ -25964,11 +25963,18 @@ mod tests {
                         "key": "locality.attribution",
                         "value": "Open-Meteo (CC BY 4.0)",
                         "source": "open-meteo.forecast"
+                    },
+                    {
+                        "key": "locality.weather.code",
+                        "value": 3,
+                        "source": "open-meteo.forecast"
                     }
                 ]
             }
         }));
         assert_eq!(locality.len(), 4);
+        assert!(!locality.iter().any(|row| row.key == "locality.weather.code"));
+        assert!(!locality.iter().any(|row| row.label == "Код"));
         assert_eq!(locality[0].label, "Температура");
         assert_eq!(locality[0].value, "10.2 °C");
         assert_eq!(locality[0].source, saai_observation::SOURCE_OPEN_METEO);
@@ -25992,6 +25998,7 @@ mod tests {
         assert!(super::observation_row_label("cellular.gpsnfw").is_none());
         assert!(super::observation_row_label("cellular.sgc").is_none());
         assert!(super::observation_row_label("cellular.tty").is_none());
+        assert!(super::observation_row_label("locality.weather.code").is_none());
         assert_eq!(
             super::observation_row_label("system.cpu.usage").as_deref(),
             Some("Процессор")
