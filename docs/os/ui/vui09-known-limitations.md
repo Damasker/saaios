@@ -155,6 +155,7 @@ The verification ledger stays in
 | dest-no-lock 546–547 shell | ADR-548; `425fbafc…`; PUT+rename; displayd 26159 stayed; shell 7651; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | dest-no-lock 549–550 shell | ADR-551; `e1205a3e…`; PUT+rename; displayd 26159 stayed; shell 8910; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | dest-no-lock 552–553 shell | ADR-554; `181cffbf…`; PUT+rename; displayd 26159 stayed; shell 10132; `surface=now` `backend=shm`; marker stayed; unlock not proven |
+| dest-no-lock 555–556 shell | ADR-557; `126b72c8…`; PUT+rename; displayd 26159 stayed; shell 12687; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |
