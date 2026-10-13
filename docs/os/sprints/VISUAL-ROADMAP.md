@@ -1651,6 +1651,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] ContextHeader Space name wraps (ADR-574; host).
   dest-no-lock stays off. Section title is not the Space
   name. Still Experimental.
+- [x] TaskSummary long titles wrap (ADR-575; host).
+  dest-no-lock stays off. Related caption stays separate.
+  Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1827,7 +1830,8 @@ labels wrap to two lines (ADR-568). Field label and support
 wrap (ADR-569). DataRow long content reflows
 (ADR-570). Metric labels wrap (ADR-571). Disclosure long labels wrap (ADR-572). StatusIndicator reason wraps
 (ADR-573). ContextHeader Space name wraps
-(ADR-574). dest-no-lock stays off.
+(ADR-574). TaskSummary long titles wrap
+(ADR-575). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

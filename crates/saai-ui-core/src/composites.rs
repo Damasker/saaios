@@ -265,6 +265,13 @@ impl TaskSummary {
         self
     }
 
+    /// Section 7.6: long Russian titles wrap; they do not truncate.
+    pub const MAX_TITLE_LINES: usize = 2;
+
+    pub fn title_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.title, Self::MAX_TITLE_LINES, fits)
+    }
+
     pub fn status(&self) -> StatusIndicator {
         let mut indicator = StatusIndicator::new(self.state, self.title.clone());
         if let Some(reason) = &self.reason {
@@ -1141,6 +1148,25 @@ mod tests {
         assert!(TaskSummary::new("Ожидает", UniversalState::Waiting)
             .related_text()
             .is_none());
+    }
+
+    #[test]
+    fn task_summary_long_title_wraps_and_keeps_the_full_name() {
+        let task = TaskSummary::new(
+            "Копирует файлы на этот телефон",
+            UniversalState::Running,
+        )
+        .with_related("Подготовить демо");
+        let lines = task.title_lines(|s| s.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            task.accessibility().name.as_deref(),
+            Some("Копирует файлы на этот телефон")
+        );
+        assert_eq!(
+            task.related_text().map(|text| text.content),
+            Some("Подготовить демо".into())
+        );
     }
 
     #[test]
