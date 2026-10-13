@@ -316,6 +316,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-07 endpoint owner | Sistema descriptor owner is «процесс», not `camp` **host** (ADR-543; no shell flash) |
 | VUI-07 supervisor cp-left | Sistema duty `cp-left` is «модем ушёл», not `CP` **host** (ADR-544; no shell flash) |
 | VUI-09 dest-no-lock 541–544 | host 541–544 chrome on `/data` **на panther** (ADR-545; `abd38350…`; dest-no-lock; unlock not proven; leave Сейчас) |
+| VUI-07 prefmodem off chrome | Sistema drops `pref` / `Pref` **host** (ADR-546; no shell flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -429,6 +430,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-07 endpoint owner: Sistema descriptor owner is «процесс», not `camp` (ADR-543; host; no shell flash)
 - VUI-07 supervisor cp-left: Sistema duty is «модем ушёл», not `CP` (ADR-544; host; no shell flash)
 - VUI-09 dest-no-lock 541–544: shell `abd38350…` on `/data` (ADR-545; panther; dest-no-lock; unlock not proven)
+- VUI-07 prefmodem off chrome: Sistema drops `pref` / `Pref` (ADR-546; host; no shell flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

@@ -1568,6 +1568,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Host 541–544 chrome on panther under dest-no-lock
   (ADR-545; `abd38350…`). Unlock is not proven. Still
   Experimental. Not Visual v1 sign-off.
+- [x] Sistema drops `pref` / `Pref` (ADR-546; host;
+  no shell flash). Still Experimental.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.
@@ -1715,7 +1717,8 @@ ObjectSummary meta uses Search kind labels (ADR-539). Host
 «Расписание» (ADR-542). Descriptor owner is
 «процесс» (ADR-543). Duty `cp-left` is
 «модем ушёл» (ADR-544). Host 541–544 chrome is on
-panther under dest-no-lock (ADR-545; `abd38350…`). Unlock
+panther under dest-no-lock (ADR-545; `abd38350…`).
+`pref` / `Pref` stay off chrome (ADR-546). Unlock
 is not proven on panther. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

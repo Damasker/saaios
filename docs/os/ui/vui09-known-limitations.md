@@ -120,7 +120,8 @@ is «есть» / «нет» (ADR-541). ObjectSummary names
 «Уведомление» / «Расписание» (ADR-542). Descriptor
 owner is «процесс» (ADR-543). Duty `cp-left` is
 «модем ушёл» (ADR-544). Host 541–544 chrome is on
-panther (ADR-545; `abd38350…`). dest-no-lock stays;
+panther (ADR-545; `abd38350…`). `pref` / `Pref` stay
+off chrome (ADR-546). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
