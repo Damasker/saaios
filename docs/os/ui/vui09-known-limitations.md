@@ -174,6 +174,7 @@ The verification ledger stays in
 | gallery TaskSummary wrap paint | ADR-601; host; title wraps; related stays separate; dest-no-lock stays off |
 | gallery IntentSummary wrap paint | ADR-602; host; title wraps; «Нет задачи» stays; dest-no-lock stays off |
 | gallery ObjectSummary wrap paint | ADR-603; host; title wraps; meta one line; dest-no-lock stays off |
+| gallery AgentSummary wrap paint | ADR-604; host; execution title wraps; «Нет исполнения» stays; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

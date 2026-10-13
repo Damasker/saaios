@@ -366,7 +366,8 @@ real phone interface consistently.
   ContextHeader paint wraps the Space name (ADR-600). Gallery
   TaskSummary paint wraps the title (ADR-601). Gallery
   IntentSummary paint wraps the title (ADR-602). Gallery
-  ObjectSummary paint wraps the title (ADR-603). Wrap
+  ObjectSummary paint wraps the title (ADR-603). Gallery
+  AgentSummary paint wraps the execution title (ADR-604). Wrap
   Acceptance stays unchecked: host only; font compare and
   panther evidence still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
@@ -1739,6 +1740,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   host). dest-no-lock stays off. Meta stays one line.
   Live `draw_object_summary` stays `title_text()`. Still
   Experimental.
+- [x] Gallery AgentSummary paint wraps the execution title
+  (ADR-604; host). dest-no-lock stays off. Unassigned
+  stays «Нет исполнения». Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1944,7 +1948,8 @@ wraps (ADR-594). Gallery Field paint wraps
 (ADR-600). Gallery TaskSummary paint wraps
 (ADR-601). Gallery IntentSummary paint wraps
 (ADR-602). Gallery ObjectSummary paint wraps
-(ADR-603). dest-no-lock stays off.
+(ADR-603). Gallery AgentSummary paint wraps
+(ADR-604). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
