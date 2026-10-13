@@ -2275,6 +2275,59 @@ fn draw_gallery_intent(
     height
 }
 
+fn gallery_object_paint(
+    object: &ObjectSummary,
+    fits: impl FnMut(&str) -> bool,
+) -> (Vec<String>, u32) {
+    let lines = object.title_lines(fits);
+    let line_count = u32::try_from(lines.len()).unwrap_or(1).max(1);
+    (
+        lines,
+        scaled_line_height(TextRole::Body)
+            .saturating_mul(line_count)
+            .saturating_add(scaled_line_height(TextRole::Caption)),
+    )
+}
+
+fn draw_gallery_object(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    object: &ObjectSummary,
+    left: u32,
+    top: u32,
+    max_width: u32,
+) -> u32 {
+    let (font, size) = fonts.resolve(TextRole::Body);
+    let (lines, height) = gallery_object_paint(object, |text| {
+        text_width(font, text, size * text_scale()) as u32 <= max_width
+    });
+    let mut cursor_y = top;
+    let title_lh = scaled_line_height(TextRole::Body);
+    for line in &lines {
+        draw_text(
+            canvas,
+            font,
+            line,
+            size,
+            left,
+            cursor_y,
+            theme_color(ColorRole::TextPrimary),
+        );
+        cursor_y = cursor_y.saturating_add(title_lh);
+    }
+    let (caption_font, caption_size) = fonts.resolve(TextRole::Caption);
+    draw_text(
+        canvas,
+        caption_font,
+        &object.meta,
+        caption_size,
+        left,
+        cursor_y,
+        theme_color(ColorRole::TextSecondary),
+    );
+    height
+}
+
 /// One `cursor_y` per row `draw_gallery` paints, in draw order (0 is the
 /// title). Pulled out of `draw_gallery` itself so it is testable without a
 /// loaded font or a device -- ADR-105's own bug (two rows' text colliding)
@@ -2548,10 +2601,10 @@ pub fn draw_composite_gallery(
         rows[1],
         content_width,
     );
-    draw_semantic_text(
+    draw_gallery_object(
         canvas,
         fonts,
-        &fixtures.object.title_text(),
+        &fixtures.object,
         margin,
         rows[2],
         content_width,
@@ -3425,7 +3478,7 @@ mod tests {
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
         fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint,
         gallery_context_header_paint, gallery_disclosure_paint, gallery_field_paint,
-        gallery_intent_paint, gallery_task_paint,
+        gallery_intent_paint, gallery_object_paint, gallery_task_paint,
         gallery_metric_paint, gallery_status_paint,
         gallery_row_positions,
         now_empty_pattern, physical,
@@ -3989,6 +4042,35 @@ mod tests {
             short.missing_task_text().map(|text| text.content),
             Some("Нет задачи".into())
         );
+    }
+
+    #[test]
+    fn gallery_object_long_title_wraps_and_keeps_the_meta_line() {
+        let object = ObjectSummary::new("Ежедневный отчёт по заряду", "saaios.task · версия 3");
+        let (lines, height) = gallery_object_paint(&object, |text| text.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            height,
+            scaled_line_height(TextRole::Body) * 2 + scaled_line_height(TextRole::Caption)
+        );
+        assert_eq!(object.meta, "saaios.task · версия 3");
+        assert_eq!(
+            object.accessibility().name.as_deref(),
+            Some("Ежедневный отчёт по заряду")
+        );
+        assert_eq!(
+            object.accessibility().value.as_deref(),
+            Some("saaios.task · версия 3")
+        );
+        let short = ObjectSummary::new("Отчёт", "saaios.document · версия 3");
+        let (one, short_height) =
+            gallery_object_paint(&short, |text| text.chars().count() <= 20);
+        assert_eq!(one, vec!["Отчёт".to_string()]);
+        assert_eq!(
+            short_height,
+            scaled_line_height(TextRole::Body) + scaled_line_height(TextRole::Caption)
+        );
+        assert_eq!(short.meta, "saaios.document · версия 3");
     }
 
     #[test]
