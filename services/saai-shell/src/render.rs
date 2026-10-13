@@ -1975,6 +1975,15 @@ fn draw_gallery_metric(
     }
 }
 
+fn gallery_disclosure_paint(
+    disclosure: &Disclosure,
+    fits: impl FnMut(&str) -> bool,
+) -> (Vec<String>, u32) {
+    let lines = disclosure.label_lines(fits);
+    let line_count = u32::try_from(lines.len()).unwrap_or(1).max(1);
+    (lines, physical(disclosure.min_hit_height(line_count)))
+}
+
 fn draw_gallery_disclosure(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -1982,26 +1991,39 @@ fn draw_gallery_disclosure(
     rect: Rect,
 ) {
     let (font, size) = fonts.resolve(TextRole::Body);
-    draw_text(
-        canvas,
-        font,
-        &disclosure.label,
-        size,
-        rect.x,
-        rect.y,
-        theme_color(ColorRole::TextPrimary),
-    );
+    let inset = physical(SpacingToken::Small.value());
+    let icon_size = physical(IconSize::Medium.value());
+    let text_max = rect
+        .width
+        .saturating_sub(icon_size)
+        .saturating_sub(inset * 2);
+    let (lines, min_height) = gallery_disclosure_paint(disclosure, |text| {
+        text_width(font, text, size * text_scale()) as u32 <= text_max
+    });
+    let paint = Rect::new(rect.x, rect.y, rect.width, rect.height.max(min_height));
+    let line_height = scaled_line_height(TextRole::Body);
+    let mut cursor_y = paint.y;
+    for line in &lines {
+        draw_text(
+            canvas,
+            font,
+            line,
+            size,
+            paint.x,
+            cursor_y,
+            theme_color(ColorRole::TextPrimary),
+        );
+        cursor_y = cursor_y.saturating_add(line_height);
+    }
     if let Some(icon_font) = fonts.icon() {
-        let icon_size = physical(IconSize::Medium.value()) as f32;
         let glyph = disclosure.chevron().codepoint().to_string();
         draw_text(
             canvas,
             icon_font,
             &glyph,
-            icon_size,
-            (rect.x + rect.width)
-                .saturating_sub(icon_size as u32 + physical(SpacingToken::Small.value())),
-            rect.y,
+            icon_size as f32,
+            (paint.x + paint.width).saturating_sub(icon_size + inset),
+            paint.y,
             theme_color(ColorRole::TextSecondary),
         );
     }
@@ -3149,8 +3171,8 @@ mod tests {
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
-        fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint, gallery_field_paint,
-        gallery_metric_paint,
+        fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint,
+        gallery_disclosure_paint, gallery_field_paint, gallery_metric_paint,
         gallery_row_positions,
         now_empty_pattern, physical,
         physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
@@ -3158,8 +3180,8 @@ mod tests {
     };
     use saai_ui_core::{
         composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
-        DataRow, DataRowVariant, DecisionOverlay, Field, FieldKind, IconSize, LogicalUnit,
-        Metric, MetricValue, NavigationItem, ObjectSummary,
+        DataRow, DataRowVariant, DecisionOverlay, Disclosure, Field, FieldKind, IconSize,
+        LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary,
         Progress, Rect, SpacingToken, StatusIndicator, StatusMark, SurfacePattern, SystemStatus,
         TextRole, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
     };
@@ -3606,6 +3628,24 @@ mod tests {
             short_height,
             physical_line_height(TextRole::Caption) + physical_line_height(TextRole::Title)
         );
+    }
+
+    #[test]
+    fn gallery_disclosure_long_label_wraps_and_grows_height() {
+        let disclosure = Disclosure::new("Подробности диагностики устройства", "panel");
+        let (lines, height) =
+            gallery_disclosure_paint(&disclosure, |text| text.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(height, physical(TWO_LINE_ROW_HEIGHT));
+        assert_eq!(
+            disclosure.accessibility().name.as_deref(),
+            Some("Подробности диагностики устройства")
+        );
+        let short = Disclosure::new("Подробности", "diagnostics-panel");
+        let (one, short_height) =
+            gallery_disclosure_paint(&short, |text| text.chars().count() <= 20);
+        assert_eq!(one, vec!["Подробности".to_string()]);
+        assert_eq!(short_height, physical(MIN_TOUCH_TARGET));
     }
 
     #[test]
