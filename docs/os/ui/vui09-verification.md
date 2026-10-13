@@ -184,7 +184,9 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   (ADR-551; `e1205a3e…`); dest-no-lock stays; unlock is
   not proven on panther. Empty forecast is «нет данных»,
   not `current` (ADR-552). Transport fail is «сеть»
-  (ADR-553).
+  (ADR-553). Host 552–553 locality copy is on
+  panther (ADR-554; `181cffbf…`); dest-no-lock stays;
+  unlock is not proven on panther.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
