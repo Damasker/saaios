@@ -1902,23 +1902,47 @@ pub(crate) fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRo
     }
 }
 
+fn gallery_metric_paint(
+    metric: &Metric,
+    mut fits: impl FnMut(&str) -> bool,
+) -> (Vec<String>, Vec<String>, u32) {
+    let labels = metric.label_lines(&mut fits);
+    let verified = metric.verified_lines(fits);
+    let height = physical_line_height(TextRole::Caption)
+        .saturating_mul(labels.len() as u32)
+        .saturating_add(physical_line_height(TextRole::Title))
+        .saturating_add(
+            physical_line_height(TextRole::Caption).saturating_mul(verified.len() as u32),
+        );
+    (labels, verified, height)
+}
+
 fn draw_gallery_metric(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
     metric: &Metric,
     left: u32,
     top: u32,
+    max_width: u32,
 ) {
     let (label_font, label_size) = fonts.resolve(TextRole::Caption);
-    draw_text(
-        canvas,
-        label_font,
-        &metric.label,
-        label_size,
-        left,
-        top,
-        theme_color(ColorRole::TextSecondary),
-    );
+    let (labels, verified, _) = gallery_metric_paint(metric, |text| {
+        text_width(label_font, text, label_size * text_scale()) as u32 <= max_width
+    });
+    let caption = physical_line_height(TextRole::Caption);
+    let mut cursor_y = top;
+    for line in &labels {
+        draw_text(
+            canvas,
+            label_font,
+            line,
+            label_size,
+            left,
+            cursor_y,
+            theme_color(ColorRole::TextSecondary),
+        );
+        cursor_y = cursor_y.saturating_add(caption);
+    }
     let display = match &metric.value {
         MetricValue::Known(text) => match &metric.unit {
             Some(unit) => format!("{text} {unit}"),
@@ -1933,9 +1957,22 @@ fn draw_gallery_metric(
         &display,
         value_size,
         left,
-        top + physical_line_height(TextRole::Caption),
+        cursor_y,
         theme_color(ColorRole::TextPrimary),
     );
+    cursor_y = cursor_y.saturating_add(physical_line_height(TextRole::Title));
+    for line in &verified {
+        draw_text(
+            canvas,
+            label_font,
+            line,
+            label_size,
+            left,
+            cursor_y,
+            theme_color(ColorRole::TextSecondary),
+        );
+        cursor_y = cursor_y.saturating_add(caption);
+    }
 }
 
 fn draw_gallery_disclosure(
@@ -2161,7 +2198,7 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     );
 
     let metric = Metric::new("Батарея", MetricValue::Known("87".to_string())).with_unit("%");
-    draw_gallery_metric(canvas, fonts, &metric, margin, rows[9]);
+    draw_gallery_metric(canvas, fonts, &metric, margin, rows[9], content_width);
 
     let disclosure = Disclosure::new("Подробности", "diagnostics-panel").expanded();
     // Section 6.10: "Hit region is at least 48x48 even when the chevron
@@ -3113,6 +3150,7 @@ mod tests {
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
         fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint, gallery_field_paint,
+        gallery_metric_paint,
         gallery_row_positions,
         now_empty_pattern, physical,
         physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
@@ -3121,7 +3159,7 @@ mod tests {
     use saai_ui_core::{
         composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
         DataRow, DataRowVariant, DecisionOverlay, Field, FieldKind, IconSize, LogicalUnit,
-        NavigationItem, ObjectSummary,
+        Metric, MetricValue, NavigationItem, ObjectSummary,
         Progress, Rect, SpacingToken, StatusIndicator, StatusMark, SurfacePattern, SystemStatus,
         TextRole, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
     };
@@ -3536,6 +3574,38 @@ mod tests {
         assert_eq!(one, vec!["Wi-Fi".to_string()]);
         assert!(none.is_empty());
         assert_eq!(short_height, physical(MIN_TOUCH_TARGET));
+    }
+
+    #[test]
+    fn gallery_metric_long_label_wraps_and_keeps_the_value() {
+        let metric = Metric::new(
+            "Заряд батареи сейчас",
+            MetricValue::Known("87".to_string()),
+        )
+        .with_unit("%")
+        .with_verified_at("проверено сегодня утром");
+        let (labels, verified, height) =
+            gallery_metric_paint(&metric, |text| text.chars().count() <= 8);
+        assert_eq!(labels.len(), 2);
+        assert_eq!(verified.len(), 2);
+        assert_eq!(
+            height,
+            physical_line_height(TextRole::Caption) * 4 + physical_line_height(TextRole::Title)
+        );
+        assert_eq!(metric.accessibility().value.as_deref(), Some("87 %"));
+        assert_eq!(
+            metric.accessibility().name.as_deref(),
+            Some("Заряд батареи сейчас")
+        );
+        let short = Metric::new("Батарея", MetricValue::Known("87".to_string())).with_unit("%");
+        let (one, none, short_height) =
+            gallery_metric_paint(&short, |text| text.chars().count() <= 20);
+        assert_eq!(one, vec!["Батарея".to_string()]);
+        assert!(none.is_empty());
+        assert_eq!(
+            short_height,
+            physical_line_height(TextRole::Caption) + physical_line_height(TextRole::Title)
+        );
     }
 
     #[test]
