@@ -113,7 +113,8 @@ SHM use two slots (ADR-534). Main window SHM uses two
 slots (ADR-535). Host 534–535 SHM is on panther
 (ADR-536; `0bc48f1a…`). Bluetooth transport is BLE
 or omitted (ADR-537). DevSurface ContextFrame
-source is «вручную» / «Wi-Fi» (ADR-538). dest-no-lock stays;
+source is «вручную» / «Wi-Fi» (ADR-538). ObjectSummary
+meta uses Search kind labels (ADR-539). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,

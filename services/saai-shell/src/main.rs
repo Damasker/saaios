@@ -3752,12 +3752,14 @@ fn object_view_content_with(
 /// ADR-137: Object View identity is the same `ObjectSummary` NOW
 /// already shows. Meta is type/version, never the workflow status
 /// string — that belongs on trailing `StatusIndicator`.
+/// ADR-539: type is `search_kind_label`, not the dotted schema id.
+fn object_summary_meta(entity: &Entity) -> String {
+    format!("{} · версия {}", search_kind_label(entity), entity.revision)
+}
+
 fn object_view_summary(entity: &Entity, content: &ObjectViewContent) -> ObjectSummary {
-    ObjectSummary::new(
-        content.title.clone(),
-        format!("{} · версия {}", entity.entity_type, entity.revision),
-    )
-    .with_status(StatusIndicator::new(content.state, content.status.clone()))
+    ObjectSummary::new(content.title.clone(), object_summary_meta(entity))
+        .with_status(StatusIndicator::new(content.state, content.status.clone()))
 }
 
 fn object_view_history_lines(content: &ObjectViewContent) -> Vec<String> {
@@ -14897,10 +14899,7 @@ impl Shell {
     /// space, as a real `ObjectSummary`.
     fn now_object_summary(&self) -> Option<ObjectSummary> {
         self.selected_entities.first().map(|entity| {
-            let mut summary = ObjectSummary::new(
-                entity.title.clone(),
-                format!("{} · версия {}", entity.entity_type, entity.revision),
-            );
+            let mut summary = ObjectSummary::new(entity.title.clone(), object_summary_meta(entity));
             if let Some(status) =
                 live_task_trailing(entity, &self.selected_entities, &self.relationships)
             {
@@ -16250,7 +16249,8 @@ mod tests {
         object_view_content, object_view_content_with, object_view_details,
         object_view_history_lines, object_view_hit,
         object_view_permission_pattern,
-        object_view_related_peer_lines, object_view_step_lines, object_view_summary, orb_action_at,
+        object_summary_meta, object_view_related_peer_lines, object_view_step_lines,
+        object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
@@ -27019,9 +27019,16 @@ mod tests {
         assert_eq!(summary.title, "Пустое намерение");
         assert_eq!(
             summary.meta,
-            format!("saaios.intent · версия {}", intent.revision)
+            format!("Намерение · версия {}", intent.revision)
         );
+        assert!(!summary.meta.contains("saaios.intent"));
         assert!(!summary.meta.contains("Нет задачи"));
+        let unknown = test_entity("some.unknown.type", serde_json::Map::new());
+        assert_eq!(
+            object_summary_meta(&unknown),
+            format!("Объект · версия {}", unknown.revision)
+        );
+        assert!(!object_summary_meta(&unknown).contains("some.unknown.type"));
         let Some(ObjectSummaryTrailing::Status(status)) = summary.trailing else {
             panic!("workflow status belongs on trailing, not meta");
         };
