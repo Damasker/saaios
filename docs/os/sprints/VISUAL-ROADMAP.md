@@ -1619,9 +1619,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   on panther (ADR-564; `dce4a158…`). Tap unlock and idle
   re-lock proven. PIN null. Still Experimental. Not Visual
   v1 sign-off.
-- [x] displayd writes connector DPMS On on present
-  (ADR-565; host). dest-no-lock stays off. Panel lighting
-  after blank is not Visual v1 sign-off. Still Experimental.
+- [x] displayd writes connector DPMS On after present
+  (ADR-565; `2462a9e9…` on panther). dest-no-lock stays off.
+  Sysfs `dpms` still reads Off. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1790,8 +1790,9 @@ off chrome (ADR-561). Host 561 chrome is
 on panther under dest-no-lock
 (ADR-562; `035db4fa…`). dest-no-lock
 lifted (ADR-564; `dce4a158…`); unlock proven.
-displayd writes connector DPMS On on present
-(ADR-565). dest-no-lock stays off. Keyboard keys, gallery page, and
+displayd writes connector DPMS On after present
+(ADR-565; `2462a9e9…`). dest-no-lock stays off. Sysfs
+`dpms` still reads Off. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
 panther evidence. Do not fake weather / voice / Android VM

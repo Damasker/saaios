@@ -207,8 +207,9 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Host 563 lock field is on panther
   (ADR-564; `dce4a158…`); dest-no-lock lifted;
   tap unlock and idle re-lock proven.
-  displayd writes connector DPMS On on present
-  (ADR-565). dest-no-lock stays off.
+  displayd writes connector DPMS On after present
+  (ADR-565; `2462a9e9…`); dest-no-lock stays off;
+  sysfs `dpms` still reads Off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

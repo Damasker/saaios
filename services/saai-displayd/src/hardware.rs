@@ -738,11 +738,6 @@ impl HardwareOutput {
     /// rather than at confirmed completion, safe: see the module doc
     /// comment.
     pub fn present(&mut self, modeset: bool) -> Result<(), String> {
-        if let Err(err) = force_connector_dpms_on(&self.drm_fd, self.connector) {
-            eprintln!("saai-displayd: connector DPMS On skipped: {err}");
-        } else if modeset {
-            println!("saai-displayd: connector DPMS On");
-        }
         // ADR-024 continued: `end()` no longer blocks this thread until
         // the GPU finishes -- it returns almost immediately with a
         // fence fd instead. Passing it as this plane's IN_FENCE_FD
@@ -778,6 +773,14 @@ impl HardwareOutput {
         };
         result.map_err(|e| format!("present failed: {e}"))?;
         self.write_index = 1 - self.write_index;
+        // After the flip: Smithay's atomic commit can leave connector
+        // DPMS Off even when TEST/commit succeed. drm-splash SETCRTC
+        // implies On; sysfs is not writable from ash.
+        if let Err(err) = force_connector_dpms_on(&self.drm_fd, self.connector) {
+            eprintln!("saai-displayd: connector DPMS On skipped: {err}");
+        } else if modeset {
+            println!("saai-displayd: connector DPMS On");
+        }
         Ok(())
     }
 }
