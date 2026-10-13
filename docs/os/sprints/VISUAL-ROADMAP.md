@@ -1584,6 +1584,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Experimental. Not Visual v1 sign-off.
 - [x] Locality empty forecast hides `current` (ADR-552; host;
   no shell flash). Open-Meteo stays. Still Experimental.
+- [x] Locality transport fail is «сеть», not reqwest (ADR-553;
+  host; no shell flash). Still Experimental.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.
@@ -1740,7 +1742,8 @@ chrome (ADR-549). `tty` / `TTY` stay off
 chrome (ADR-550). Host 549–550 chrome is on
 panther under dest-no-lock (ADR-551; `e1205a3e…`).
 Empty forecast is «нет данных», not `current`
-(ADR-552). Unlock
+(ADR-552). Transport fail is «сеть»
+(ADR-553). Unlock
 is not proven on panther. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

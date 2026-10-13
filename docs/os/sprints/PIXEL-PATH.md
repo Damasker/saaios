@@ -323,6 +323,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-07 tty off chrome | Sistema drops `tty` / `TTY` **host** (ADR-550; no shell flash) |
 | VUI-09 dest-no-lock 549–550 | host 549–550 chrome on `/data` **на panther** (ADR-551; `e1205a3e…`; dest-no-lock; unlock not proven; leave Сейчас) |
 | WORLD-09 empty forecast copy | locality reason is «нет данных», not `current` **host** (ADR-552; no shell flash) |
+| WORLD-09 network fail copy | locality transport fail is «сеть», not reqwest **host** (ADR-553; no shell flash) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -443,6 +444,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-07 tty off chrome: Sistema drops `tty` / `TTY` (ADR-550; host; no shell flash)
 - VUI-09 dest-no-lock 549–550: shell `e1205a3e…` on `/data` (ADR-551; panther; dest-no-lock; unlock not proven)
 - WORLD-09 empty forecast copy: locality reason is «нет данных», not `current` (ADR-552; host; no shell flash)
+- WORLD-09 network fail copy: locality transport fail is «сеть», not reqwest (ADR-553; host; no shell flash)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

@@ -17,6 +17,7 @@ use std::time::Duration;
 
 pub const FETCH_ATTEMPTS: u32 = 5;
 pub const EMPTY_FORECAST: &str = "Open-Meteo · нет данных";
+const NETWORK_FAIL: &str = "сеть";
 const FORECAST_URL: &str = "https://api.open-meteo.com/v1/forecast";
 const USER_AGENT: &str = "SaaiOS-weather/0.1 (personal locality telemetry; Open-Meteo CC BY 4.0)";
 const FETCH_TIMEOUT_SECS: u64 = 4;
@@ -111,13 +112,11 @@ pub fn fetch_current(locality: &Locality) -> Result<Value, String> {
         .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
         .build()
         .and_then(|client| client.get(&url).send())
-        .map_err(|error| format!("сеть: {error}"))?;
+        .map_err(|_| NETWORK_FAIL.to_string())?;
     if !response.status().is_success() {
-        return Err(format!("Open-Meteo HTTP {}", response.status()));
+        return Err(EMPTY_FORECAST.to_string());
     }
-    response
-        .json()
-        .map_err(|error| format!("Open-Meteo JSON: {error}"))
+    response.json().map_err(|_| EMPTY_FORECAST.to_string())
 }
 
 pub fn fetch_with_retries(locality: &Locality, attempts: u32) -> Result<Value, String> {
@@ -325,15 +324,17 @@ mod tests {
     fn reason_is_held_until_five_attempts() {
         let early = FetchState {
             attempts: 2,
-            last_error: Some("сеть: timeout".into()),
+            last_error: Some(NETWORK_FAIL.into()),
         };
         assert!(early.attempts < FETCH_ATTEMPTS);
         let done = FetchState {
             attempts: FETCH_ATTEMPTS,
-            last_error: Some("сеть: timeout".into()),
+            last_error: Some(NETWORK_FAIL.into()),
         };
         assert_eq!(done.attempts, 5);
-        assert_eq!(done.last_error.as_deref(), Some("сеть: timeout"));
+        assert_eq!(done.last_error.as_deref(), Some(NETWORK_FAIL));
+        assert!(!NETWORK_FAIL.contains("timeout"));
+        assert!(!NETWORK_FAIL.contains(':'));
     }
 
     #[test]
