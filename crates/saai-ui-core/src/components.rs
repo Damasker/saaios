@@ -409,6 +409,22 @@ impl StatusIndicator {
         }
     }
 
+    /// Section 6.4: a reason wraps below the label rather than shrinking
+    /// it. Compact still hides the reason.
+    pub const MAX_LABEL_LINES: usize = 2;
+    pub const MAX_REASON_LINES: usize = 2;
+
+    pub fn label_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.label, Self::MAX_LABEL_LINES, fits)
+    }
+
+    pub fn reason_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        match self.visible_reason() {
+            Some(text) => wrap_words(text, Self::MAX_REASON_LINES, fits),
+            None => Vec::new(),
+        }
+    }
+
     /// `value` is the state's `label_key` (e.g. `"state.blocked"`), not
     /// display text -- resolved the same way `MetricValue::label_key`
     /// already is.
@@ -1015,6 +1031,23 @@ mod tests {
 
         let normal = indicator.with_variant(StatusIndicatorVariant::Normal);
         assert_eq!(normal.visible_reason(), Some("Нет сети"));
+    }
+
+    #[test]
+    fn status_indicator_reason_wraps_below_the_label() {
+        let indicator = StatusIndicator::new(UniversalState::Blocked, "Сеть недоступна сейчас")
+            .with_reason("нет связи с точкой доступа")
+            .with_variant(StatusIndicatorVariant::Normal);
+        let label = indicator.label_lines(|s| s.chars().count() <= 10);
+        let reason = indicator.reason_lines(|s| s.chars().count() <= 12);
+        assert_eq!(label.len(), 2);
+        assert_eq!(reason.len(), 2);
+        assert_eq!(
+            indicator.accessibility().name.as_deref(),
+            Some("Сеть недоступна сейчас")
+        );
+        let compact = indicator.with_variant(StatusIndicatorVariant::Compact);
+        assert!(compact.reason_lines(|s| s.chars().count() <= 12).is_empty());
     }
 
     #[test]

@@ -343,6 +343,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-02 DataRow wrap | DataRow primary/secondary reflow; value stays one line **host** (ADR-570; dest-no-lock stays off) |
 | VUI-02 Metric wrap | Metric label wraps; value stays one line **host** (ADR-571; dest-no-lock stays off) |
 | VUI-02 Disclosure wrap | Disclosure long labels wrap to two lines **host** (ADR-572; dest-no-lock stays off) |
+| VUI-02 Status wrap | StatusIndicator reason wraps below the label **host** (ADR-573; dest-no-lock stays off) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -483,6 +484,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-02 DataRow wrap: DataRow primary/secondary reflow; value stays one line (ADR-570; host; dest-no-lock stays off)
 - VUI-02 Metric wrap: Metric label wraps; value stays one line (ADR-571; host; dest-no-lock stays off)
 - VUI-02 Disclosure wrap: Disclosure long labels wrap to two lines (ADR-572; host; dest-no-lock stays off)
+- VUI-02 Status wrap: StatusIndicator reason wraps below the label (ADR-573; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

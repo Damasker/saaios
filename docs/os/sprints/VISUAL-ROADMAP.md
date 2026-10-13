@@ -354,14 +354,12 @@ real phone interface consistently.
   Partial (ADR-107): done for `SemanticText` -- real greedy word-wrap plus
   `max_lines`/ellipsis truncation, physically verified. The gallery's own
   demo string used to run off the right edge of the screen in every prior
-  screenshot; it now wraps at a word boundary and truncates cleanly. Still
-  open for every other primitive with label text (`Button`
-  ADR-568, `Field` ADR-569, `DataRow` ADR-570, `Metric`
-  ADR-571, `Disclosure` ADR-572; still `StatusIndicator`) --
-  each has its own
-  separate, not-yet-implemented wrap behavior per their own
-  component-library-v1.md anatomy notes, so this criterion is not yet met
-  for the component set as a whole.
+  screenshot; it now wraps at a word boundary and truncates cleanly. Host
+  wrap contracts exist for `Button` (ADR-568), `Field`
+  (ADR-569), `DataRow` (ADR-570), `Metric` (ADR-571),
+  `Disclosure` (ADR-572), and `StatusIndicator` (ADR-573).
+  Gallery paint is still unwired, so this criterion is not
+  yet met for the component set as a whole.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
   requires running `build-native-c-image.sh`, which needs a real
@@ -1646,6 +1644,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Disclosure long labels wrap (ADR-572; host).
   dest-no-lock stays off. Hit stays 48. StatusIndicator
   stays open. Still Experimental.
+- [x] StatusIndicator reason wraps below the label
+  (ADR-573; host). dest-no-lock stays off. Compact hides
+  the reason. Gallery paint stays unwired. Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1820,8 +1822,8 @@ displayd writes connector DPMS On after present
 (ADR-566). Elevation token is 0 / 4 / 8 / 12 (ADR-567). Button long
 labels wrap to two lines (ADR-568). Field label and support
 wrap (ADR-569). DataRow long content reflows
-(ADR-570). Metric labels wrap (ADR-571). Disclosure long labels wrap (ADR-572).
-dest-no-lock stays off.
+(ADR-570). Metric labels wrap (ADR-571). Disclosure long labels wrap (ADR-572). StatusIndicator reason wraps
+(ADR-573). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
