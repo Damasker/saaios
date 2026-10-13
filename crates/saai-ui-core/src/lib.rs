@@ -438,6 +438,11 @@ pub enum NodeKind {
     Leaf,
     Linear(Axis),
     Stack,
+    /// Viewport is this node's laid-out `rect`. Children are laid out
+    /// in content coordinates; `offset` shifts the hit sample down
+    /// into that content so a row scrolled above the viewport cannot
+    /// be hit (ADR-566).
+    Scroll { offset: u32 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -499,6 +504,21 @@ impl Node {
         }
     }
 
+    /// Vertical list whose own bounds are the visible viewport.
+    /// `offset` is content pixels already scrolled off the top.
+    pub fn scroll(id: impl Into<String>, offset: u32, children: Vec<Node>) -> Self {
+        Self {
+            id: id.into(),
+            kind: NodeKind::Scroll { offset },
+            width: Length::Fill,
+            height: Length::Fill,
+            padding: EdgeInsets::ZERO,
+            focus_order: None,
+            action: None,
+            children,
+        }
+    }
+
     /// A fixed-thickness divider (`StrokeToken::Hairline`) sized to fill the
     /// cross axis of the container it will sit inside -- `axis` is that
     /// container's own axis (a divider between vertically stacked rows
@@ -540,6 +560,9 @@ pub struct LayoutNode {
     pub rect: Rect,
     pub focus_order: Option<u32>,
     pub action: Option<String>,
+    /// Present on `NodeKind::Scroll` only. Hit samples add this to `y`
+    /// before walking children so off-screen content stays unhittable.
+    pub scroll_offset: Option<u32>,
     pub children: Vec<LayoutNode>,
 }
 
@@ -550,6 +573,10 @@ impl LayoutNode {
         if !self.rect.contains(x, y) {
             return None;
         }
+        let y = match self.scroll_offset {
+            Some(offset) => y + f64::from(offset),
+            None => y,
+        };
         self.children
             .iter()
             .rev()
@@ -568,12 +595,18 @@ fn layout_node(node: &Node, bounds: Rect) -> LayoutNode {
         NodeKind::Leaf => Vec::new(),
         NodeKind::Stack => vec![inner; node.children.len()],
         NodeKind::Linear(axis) => linear_rects(&node.children, inner, axis),
+        NodeKind::Scroll { .. } => scroll_content_rects(&node.children, inner),
+    };
+    let scroll_offset = match node.kind {
+        NodeKind::Scroll { offset } => Some(offset),
+        _ => None,
     };
     LayoutNode {
         id: node.id.clone(),
         rect: bounds,
         focus_order: node.focus_order,
         action: node.action.clone(),
+        scroll_offset,
         children: node
             .children
             .iter()
@@ -591,6 +624,24 @@ fn inset_rect(bounds: Rect, padding: EdgeInsets) -> Rect {
         bounds.y.saturating_add(padding.top),
         bounds.width.saturating_sub(horizontal),
         bounds.height.saturating_sub(vertical),
+    )
+}
+
+/// Children keep their `Px` heights even when the sum exceeds the
+/// viewport. `Fill` is one viewport tall so a lone fill still covers.
+fn scroll_content_rects(children: &[Node], bounds: Rect) -> Vec<Rect> {
+    let content_height = children
+        .iter()
+        .map(|child| match child.height {
+            Length::Px(value) => value,
+            Length::Fill => bounds.height,
+        })
+        .sum::<u32>()
+        .max(bounds.height);
+    linear_rects(
+        children,
+        Rect::new(bounds.x, bounds.y, bounds.width, content_height),
+        Axis::Vertical,
     )
 }
 
@@ -804,6 +855,47 @@ mod tests {
         let tree = layout(&root, Rect::new(0, 0, 100, 100));
         assert_eq!(tree.children[0].focus_order, Some(0));
         assert_eq!(tree.children[1].focus_order, Some(1));
+    }
+
+    fn two_scroll_rows() -> Node {
+        Node::scroll(
+            "list",
+            0,
+            vec![
+                Node::leaf("row-a")
+                    .with_size(Length::Fill, Length::Px(100))
+                    .with_action("open-a"),
+                Node::leaf("row-b")
+                    .with_size(Length::Fill, Length::Px(100))
+                    .with_action("open-b"),
+            ],
+        )
+    }
+
+    #[test]
+    fn scroll_offset_zero_hits_the_row_under_the_finger() {
+        let tree = layout(&two_scroll_rows(), Rect::new(0, 0, 200, 150));
+        assert_eq!(tree.scroll_offset, Some(0));
+        assert_eq!(tree.hit_test(10.0, 50.0).map(|node| node.id.as_str()), Some("row-a"));
+        assert_eq!(tree.hit_test(10.0, 120.0).map(|node| node.id.as_str()), Some("row-b"));
+    }
+
+    #[test]
+    fn scrolled_away_row_is_not_hit_at_its_content_rect() {
+        let mut source = two_scroll_rows();
+        source.kind = super::NodeKind::Scroll { offset: 100 };
+        let tree = layout(&source, Rect::new(0, 0, 200, 150));
+        assert_eq!(tree.children[0].rect, Rect::new(0, 0, 200, 100));
+        assert_eq!(tree.hit_test(10.0, 50.0).map(|node| node.id.as_str()), Some("row-b"));
+        assert_ne!(tree.hit_test(10.0, 50.0).map(|node| node.id.as_str()), Some("row-a"));
+    }
+
+    #[test]
+    fn touch_outside_the_scroll_viewport_hits_nothing() {
+        let mut source = two_scroll_rows();
+        source.kind = super::NodeKind::Scroll { offset: 100 };
+        let tree = layout(&source, Rect::new(0, 100, 200, 150));
+        assert!(tree.hit_test(10.0, 50.0).is_none());
     }
 
     #[test]

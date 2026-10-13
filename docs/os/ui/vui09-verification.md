@@ -210,6 +210,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   displayd writes connector DPMS On after present
   (ADR-565; `2462a9e9…`); dest-no-lock stays off;
   sysfs `dpms` still reads Off.
+  Scroll viewport clips `hit_test` (ADR-566).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

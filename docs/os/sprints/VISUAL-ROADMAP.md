@@ -264,13 +264,12 @@ real phone interface consistently.
   `fontdue` text path; a small curated `IconGlyph` set, extendable per real
   call site). Physically verified: fixed the PIN keypad's backspace tofu-box
   (ADR-099's own screenshot finding).
-- [ ] Implement shared layout primitives: stack, row, inset, separator, scroll
-  region, and focus/order metadata. Partially done (ADR-101): stack/row
-  already existed as `Node::linear` + `Axis`; inset (`EdgeInsets`),
-  `Node::separator`, and `Node::focus_order` metadata added. Scroll region
-  -- the harder, correctness-sensitive piece (`hit_test` needs to stop
-  matching children scrolled outside their viewport) -- remains open,
-  deliberately not folded into the same change.
+- [x] Implement shared layout primitives: stack, row, inset, separator, scroll
+  region, and focus/order metadata. ADR-101: stack/row already existed
+  as `Node::linear` + `Axis`; inset (`EdgeInsets`), `Node::separator`,
+  and `Node::focus_order` metadata added. ADR-566: `Node::scroll`
+  viewport clips `hit_test` so a row scrolled above the viewport is
+  not hit. Me / Sistema / list screens are not migrated this slice.
 - [x] Implement visual primitives: semantic text, icon, divider,
   `StatusIndicator`, progress, button, field, `DataRow`, metric, and disclosure.
   Done as Experimental contracts (ADR-102, ADR-103) -- component-library-v1.md
@@ -1622,6 +1621,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] displayd writes connector DPMS On after present
   (ADR-565; `2462a9e9…` on panther). dest-no-lock stays off.
   Sysfs `dpms` still reads Off. Still Experimental.
+- [x] Scroll viewport clips `hit_test` (ADR-566; host).
+  dest-no-lock stays off. Screens are not migrated. Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1792,7 +1794,8 @@ on panther under dest-no-lock
 lifted (ADR-564; `dce4a158…`); unlock proven.
 displayd writes connector DPMS On after present
 (ADR-565; `2462a9e9…`). dest-no-lock stays off. Sysfs
-`dpms` still reads Off. Keyboard keys, gallery page, and
+`dpms` still reads Off. Scroll viewport clips `hit_test`
+(ADR-566). dest-no-lock stays off. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
 panther evidence. Do not fake weather / voice / Android VM
