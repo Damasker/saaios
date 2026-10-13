@@ -266,6 +266,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   host 566–592 chrome on panther (ADR-593;
   `74a69097…`). dest-no-lock stays off.
+  gallery Button paint wraps (ADR-594).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

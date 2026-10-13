@@ -1666,6 +1666,15 @@ fn draw_gallery_progress(canvas: &mut Canvas<'_>, progress: &Progress, rect: Rec
     draw_progress_track(canvas, progress, rect);
 }
 
+fn gallery_button_paint(
+    button: &Button,
+    fits: impl FnMut(&str) -> bool,
+) -> (Vec<String>, u32) {
+    let lines = button.label_lines(fits);
+    let line_count = u32::try_from(lines.len()).unwrap_or(1).max(1);
+    (lines, physical(button.min_hit_height(line_count)))
+}
+
 fn draw_gallery_button(canvas: &mut Canvas<'_>, fonts: &Fonts, button: &Button, rect: Rect) {
     let (fill, text_color) = match (button.variant, button.enabled) {
         (_, false) => (ColorRole::DisabledSurface, ColorRole::DisabledText),
@@ -1674,17 +1683,28 @@ fn draw_gallery_button(canvas: &mut Canvas<'_>, fonts: &Fonts, button: &Button, 
         (ButtonVariant::Secondary, true) => (ColorRole::Elevated, ColorRole::TextPrimary),
         (ButtonVariant::Quiet, true) => (ColorRole::Surface, ColorRole::TextPrimary),
     };
-    canvas.fill_rect(rect, theme_color(fill));
     let (font, size) = fonts.resolve(TextRole::Label);
-    draw_text_centered(
-        canvas,
-        font,
-        &button.label,
-        size,
-        rect.x + rect.width / 2,
-        rect.y + rect.height / 2 - (size * 0.38) as u32,
-        theme_color(text_color),
-    );
+    let inset = physical(SpacingToken::Small.value());
+    let max_text = rect.width.saturating_sub(inset * 2);
+    let (lines, min_height) = gallery_button_paint(button, |text| {
+        text_width(font, text, size * text_scale()) as u32 <= max_text
+    });
+    let paint = Rect::new(rect.x, rect.y, rect.width, rect.height.max(min_height));
+    canvas.fill_rect(paint, theme_color(fill));
+    let line_height = scaled_line_height(TextRole::Label);
+    let total = line_height.saturating_mul(lines.len() as u32);
+    let start_y = paint.y + paint.height.saturating_sub(total) / 2;
+    for (index, line) in lines.iter().enumerate() {
+        draw_text_centered(
+            canvas,
+            font,
+            line,
+            size,
+            paint.x + paint.width / 2,
+            start_y + line_height.saturating_mul(index as u32),
+            theme_color(text_color),
+        );
+    }
 }
 
 fn draw_gallery_field(
@@ -2018,7 +2038,11 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
         .with_variant(StatusIndicatorVariant::Normal);
     draw_status_indicator(canvas, fonts, &status, margin, rows[4]);
 
-    let button = Button::new("Сохранить", "gallery:save", ButtonVariant::Primary);
+    let button = Button::new(
+        "Сохранить изменения и выйти",
+        "gallery:save",
+        ButtonVariant::Primary,
+    );
     draw_gallery_button(
         canvas,
         fonts,
@@ -3012,15 +3036,16 @@ mod tests {
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
-        fingerprint_wrap_box, gallery_row_positions, now_empty_pattern, physical,
+        fingerprint_wrap_box, gallery_button_paint, gallery_row_positions, now_empty_pattern,
+        physical,
         physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
         text_scale, theme_color, ActionCardView, Canvas,
     };
     use saai_ui_core::{
-        composite_gallery_fixtures, ColorRole, ContextColor, ContextHeader, DecisionOverlay, Field,
-        FieldKind, IconSize, LogicalUnit, NavigationItem, ObjectSummary, Progress, Rect,
-        SpacingToken, StatusIndicator, StatusMark, SurfacePattern, SystemStatus, TextRole,
-        UniversalState, MIN_TOUCH_TARGET,
+        composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
+        DecisionOverlay, Field, FieldKind, IconSize, LogicalUnit, NavigationItem, ObjectSummary,
+        Progress, Rect, SpacingToken, StatusIndicator, StatusMark, SurfacePattern, SystemStatus,
+        TextRole, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
     };
 
     #[test]
@@ -3359,6 +3384,26 @@ mod tests {
     fn gallery_rows_stay_within_the_screen() {
         let rows = gallery_row_positions(2400);
         assert!(*rows.last().unwrap() < 2400);
+    }
+
+    #[test]
+    fn gallery_button_long_label_wraps_and_grows_height() {
+        let button = Button::new(
+            "Сохранить изменения и выйти",
+            "gallery:save",
+            ButtonVariant::Primary,
+        );
+        let (lines, height) = gallery_button_paint(&button, |text| text.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(height, physical(TWO_LINE_ROW_HEIGHT));
+        assert_eq!(
+            button.accessibility().name.as_deref(),
+            Some("Сохранить изменения и выйти")
+        );
+        let short = Button::new("Сохранить", "gallery:save", ButtonVariant::Primary);
+        let (one, short_height) = gallery_button_paint(&short, |text| text.chars().count() <= 20);
+        assert_eq!(one, vec!["Сохранить".to_string()]);
+        assert_eq!(short_height, physical(MIN_TOUCH_TARGET));
     }
 
     #[test]
