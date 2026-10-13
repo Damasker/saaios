@@ -164,6 +164,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Host 534–535 SHM is on panther (ADR-536; `0bc48f1a…`);
   dest-no-lock stays; unlock is not proven on panther.
   Bluetooth transport is BLE or omitted (ADR-537).
+  DevSurface ContextFrame source is «вручную» / «Wi-Fi»
+  (ADR-538).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

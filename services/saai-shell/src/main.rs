@@ -419,6 +419,15 @@ fn upsert_context_entry(frame: &mut Vec<ContextFrameEntry>, entry: ContextFrameE
     frame.push(entry);
 }
 
+/// ADR-538: DevSurface names the source with board words. The enum
+/// stays Manual/Wifi. «вручную» already exists on cellular selection.
+fn context_source_copy(source: ContextSource) -> &'static str {
+    match source {
+        ContextSource::Manual => "вручную",
+        ContextSource::Wifi => "Wi-Fi",
+    }
+}
+
 fn remove_context_source(frame: &mut Vec<ContextFrameEntry>, source: ContextSource) {
     frame.retain(|existing| existing.source != source);
 }
@@ -14805,13 +14814,14 @@ impl Shell {
             rows.push(diagnostic_row("ContextFrame", "пусто"));
         } else {
             for entry in &self.context_frame {
-                let source = match entry.source {
-                    ContextSource::Manual => "manual",
-                    ContextSource::Wifi => "wifi",
-                };
                 rows.push(diagnostic_row(
                     "ContextFrame",
-                    format!("{} · увер. {} · {source}", entry.space_id, entry.confidence),
+                    format!(
+                        "{} · увер. {} · {}",
+                        entry.space_id,
+                        entry.confidence,
+                        context_source_copy(entry.source)
+                    ),
                 ));
             }
         }
@@ -16224,7 +16234,8 @@ mod tests {
         bluetooth_transport_copy,
         bluetooth_scan_pattern, calibration_requested, capability_label,
         capture_nodes_from_v4l_listing, cellular_ifaces_from_net_listing, cellular_row_status,
-        consent_action_at, consent_content_cards, consent_header, cp_state_token,
+        consent_action_at, consent_content_cards, consent_header, context_source_copy,
+        cp_state_token,
         dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
         diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
         field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
@@ -23278,6 +23289,15 @@ mod tests {
     #[test]
     fn effective_context_space_falls_back_with_an_empty_frame() {
         assert_eq!(effective_context_space(&[], "home"), "home");
+    }
+
+    #[test]
+    fn context_source_copy_uses_board_words_not_enum_tokens() {
+        assert_eq!(context_source_copy(ContextSource::Manual), "вручную");
+        assert_eq!(context_source_copy(ContextSource::Wifi), "Wi-Fi");
+        let src = include_str!("main.rs");
+        assert!(!src.contains("ContextSource::Manual => \"manual\""));
+        assert!(!src.contains("ContextSource::Wifi => \"wifi\""));
     }
 
     #[test]
