@@ -2026,9 +2026,7 @@ fn cellular_row_status(
     let _ = prefmodem;
     let _ = slot;
     let _ = sigcrit;
-    if let Some(phrase) = smsact.and_then(config_phrase) {
-        parts.push(format!("активация {phrase}"));
-    }
+    let _ = smsact;
     if let Some(phrase) = linkcrit.and_then(config_phrase) {
         parts.push(format!("связь {phrase}"));
     }
@@ -8707,7 +8705,6 @@ fn observation_row_label(key: &str) -> Option<String> {
         "cellular.vonrget" => "VoNR".into(),
         "cellular.dbgtrace" => "Трасса".into(),
         "cellular.pssvc" => "PS".into(),
-        "cellular.smsact" => "Активация".into(),
         "cellular.linkcrit" => "Связь".into(),
         "cellular.smscb" => "Рассылка".into(),
         "cellular.calllist" => "Список".into(),
@@ -21153,7 +21150,7 @@ mod tests {
                 None,
                 &[]
             ),
-            "активация дано"
+            "Нет модема"
         );
         assert_eq!(
             cellular_row_status(
@@ -21768,7 +21765,7 @@ mod tests {
                 Some("accepted"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · smsc дано · vonr дано · трасса дано · ps дано · активация дано · связь дано · рассылка дано · список дано · gps дано · sa дано · есть · процесс · процесс · удержание · уже запущен · отказ процесса · rmnet1"
+            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · smsc дано · vonr дано · трасса дано · ps дано · связь дано · рассылка дано · список дано · gps дано · sa дано · есть · процесс · процесс · удержание · уже запущен · отказ процесса · rmnet1"
         );
         assert_eq!(
             cellular_row_status(
@@ -26003,6 +26000,7 @@ mod tests {
         assert!(super::observation_row_label("cellular.aptime").is_none());
         assert!(super::observation_row_label("cellular.slot").is_none());
         assert!(super::observation_row_label("cellular.sigcrit").is_none());
+        assert!(super::observation_row_label("cellular.smsact").is_none());
         assert!(super::observation_row_label("locality.weather.code").is_none());
         assert_eq!(
             super::observation_row_label("cellular.rat").as_deref(),
@@ -26531,7 +26529,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 41);
+        assert_eq!(rows.len(), 40);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -26601,18 +26599,16 @@ mod tests {
         assert_eq!(rows[33].value, "дано");
         assert_eq!(rows[34].label, "PS");
         assert_eq!(rows[34].value, "дано");
-        assert_eq!(rows[35].label, "Активация");
+        assert_eq!(rows[35].label, "Связь");
         assert_eq!(rows[35].value, "дано");
-        assert_eq!(rows[36].label, "Связь");
+        assert_eq!(rows[36].label, "Рассылка");
         assert_eq!(rows[36].value, "дано");
-        assert_eq!(rows[37].label, "Рассылка");
+        assert_eq!(rows[37].label, "Список");
         assert_eq!(rows[37].value, "дано");
-        assert_eq!(rows[38].label, "Список");
+        assert_eq!(rows[38].label, "GPS");
         assert_eq!(rows[38].value, "дано");
-        assert_eq!(rows[39].label, "GPS");
+        assert_eq!(rows[39].label, "SA");
         assert_eq!(rows[39].value, "дано");
-        assert_eq!(rows[40].label, "SA");
-        assert_eq!(rows[40].value, "дано");
         assert!(super::observation_row_label("cellular.prefmodem").is_none());
         assert!(super::observation_row_label("cellular.gpsnfw").is_none());
         assert!(super::observation_row_label("cellular.sgc").is_none());
@@ -26624,6 +26620,7 @@ mod tests {
         assert!(super::observation_row_label("cellular.aptime").is_none());
         assert!(super::observation_row_label("cellular.slot").is_none());
         assert!(super::observation_row_label("cellular.sigcrit").is_none());
+        assert!(super::observation_row_label("cellular.smsact").is_none());
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }
