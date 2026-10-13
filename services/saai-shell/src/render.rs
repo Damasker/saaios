@@ -2064,6 +2064,72 @@ fn draw_gallery_disclosure(
     }
 }
 
+fn gallery_context_header_paint(
+    header: &ContextHeader,
+    fits: impl FnMut(&str) -> bool,
+) -> (Vec<String>, u32) {
+    let lines = header.context_name_lines(fits);
+    let line_count = u32::try_from(lines.len()).unwrap_or(1).max(1);
+    (
+        lines,
+        scaled_line_height(TextRole::Title).saturating_mul(line_count),
+    )
+}
+
+fn draw_gallery_context_header(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    header: &ContextHeader,
+    left: u32,
+    top: u32,
+    max_width: u32,
+) -> u32 {
+    let (title_font, title_size) = fonts.resolve(TextRole::Title);
+    let (label_font, label_size) = fonts.resolve(TextRole::Label);
+    let gap = physical(SpacingToken::Small.value());
+    let section = header.section_title.as_deref().unwrap_or("");
+    let section_w = if section.is_empty() {
+        0
+    } else {
+        text_width(label_font, section, label_size * text_scale()) as u32
+    };
+    let reserved = if section_w == 0 {
+        0
+    } else {
+        section_w.saturating_add(gap)
+    };
+    let text_max = max_width.saturating_sub(reserved);
+    let (lines, height) = gallery_context_header_paint(header, |text| {
+        text_width(title_font, text, title_size * text_scale()) as u32 <= text_max
+    });
+    let line_height = scaled_line_height(TextRole::Title);
+    let mut cursor_y = top;
+    for line in &lines {
+        draw_text(
+            canvas,
+            title_font,
+            line,
+            title_size,
+            left,
+            cursor_y,
+            theme_color(ColorRole::TextPrimary),
+        );
+        cursor_y = cursor_y.saturating_add(line_height);
+    }
+    if !section.is_empty() {
+        draw_text(
+            canvas,
+            label_font,
+            section,
+            label_size,
+            left + max_width.saturating_sub(section_w),
+            top,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+    height
+}
+
 /// One `cursor_y` per row `draw_gallery` paints, in draw order (0 is the
 /// title). Pulled out of `draw_gallery` itself so it is testable without a
 /// loaded font or a device -- ADR-105's own bug (two rows' text colliding)
@@ -2329,10 +2395,10 @@ pub fn draw_composite_gallery(
         rows[0],
         theme_color(ColorRole::TextPrimary),
     );
-    draw_semantic_text(
+    draw_gallery_context_header(
         canvas,
         fonts,
-        &fixtures.header.heading(),
+        &fixtures.header,
         margin,
         rows[1],
         content_width,
@@ -3223,8 +3289,8 @@ mod tests {
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
         fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint,
-        gallery_disclosure_paint, gallery_field_paint, gallery_metric_paint,
-        gallery_status_paint,
+        gallery_context_header_paint, gallery_disclosure_paint, gallery_field_paint,
+        gallery_metric_paint, gallery_status_paint,
         gallery_row_positions,
         now_empty_pattern, physical,
         physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
@@ -3699,6 +3765,31 @@ mod tests {
             gallery_disclosure_paint(&short, |text| text.chars().count() <= 20);
         assert_eq!(one, vec!["Подробности".to_string()]);
         assert_eq!(short_height, physical(MIN_TOUCH_TARGET));
+    }
+
+    #[test]
+    fn gallery_context_header_space_name_wraps_and_keeps_the_section() {
+        let header =
+            ContextHeader::new("Личные записи этого месяца").with_section_title("Сейчас");
+        let (lines, height) =
+            gallery_context_header_paint(&header, |text| text.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(height, scaled_line_height(TextRole::Title) * 2);
+        assert_eq!(header.section_title.as_deref(), Some("Сейчас"));
+        assert_eq!(
+            header.heading_text(),
+            "Личные записи этого месяца · Сейчас"
+        );
+        assert_eq!(
+            header.accessibility().name.as_deref(),
+            Some("Личные записи этого месяца · Сейчас")
+        );
+        let short = ContextHeader::new("Работа").with_section_title("Сейчас");
+        let (one, short_height) =
+            gallery_context_header_paint(&short, |text| text.chars().count() <= 20);
+        assert_eq!(one, vec!["Работа".to_string()]);
+        assert_eq!(short_height, scaled_line_height(TextRole::Title));
+        assert_eq!(short.heading_text(), "Работа · Сейчас");
     }
 
     #[test]

@@ -170,6 +170,7 @@ The verification ledger stays in
 | gallery Metric wrap paint | ADR-597; host; label/verified wrap; value one line; dest-no-lock stays off |
 | gallery Disclosure wrap paint | ADR-598; host; `label_lines`; chevron stays; dest-no-lock stays off |
 | gallery StatusIndicator wrap paint | ADR-599; host; reason below label; compact hides reason; dest-no-lock stays off |
+| gallery ContextHeader wrap paint | ADR-600; host; Space name wraps; section title one line; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
