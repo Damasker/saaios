@@ -1672,6 +1672,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] RAT label is RAT, not Радио (ADR-581; host).
   dest-no-lock stays off. Radio stays «Радио». Still
   Experimental.
+- [x] unsolff stays off chrome (ADR-582; host). dest-no-lock
+  stays off. unsol / «Отбор» stays. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1855,7 +1857,8 @@ wrap (ADR-569). DataRow long content reflows
 (ADR-578). DecisionOverlay object names wrap
 (ADR-579). DataRow technical values are
 mono and copyable (ADR-580). RAT label is RAT
-(ADR-581). dest-no-lock stays off.
+(ADR-581). unsolff stays off chrome
+(ADR-582). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

@@ -2005,9 +2005,7 @@ fn cellular_row_status(
     if let Some(phrase) = throttle.and_then(config_phrase) {
         parts.push(format!("троттлинг {phrase}"));
     }
-    if let Some(phrase) = unsolff.and_then(config_phrase) {
-        parts.push(format!("фильтр {phrase}"));
-    }
+    let _ = unsolff;
     if let Some(phrase) = unsol.and_then(config_phrase) {
         parts.push(format!("отбор {phrase}"));
     }
@@ -8717,7 +8715,6 @@ fn observation_row_label(key: &str) -> Option<String> {
         "cellular.fastdorm" => "Дремота".into(),
         "cellular.endc" => "ENDC".into(),
         "cellular.throttle" => "Троттлинг".into(),
-        "cellular.unsolff" => "Фильтр".into(),
         "cellular.unsol" => "Отбор".into(),
         "cellular.screen" => "Экран".into(),
         "cellular.cellinfo" => "Соты".into(),
@@ -20446,7 +20443,7 @@ mod tests {
                 None,
                 &[]
             ),
-            "фильтр дано"
+            "Нет модема"
         );
         assert_eq!(
             cellular_row_status(
@@ -21789,7 +21786,7 @@ mod tests {
                 Some("accepted"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · фильтр дано · отбор дано · экран дано · соты дано · smsc дано · vonr дано · время дано · трасса дано · ps дано · слот дано · критерий дано · активация дано · связь дано · рассылка дано · список дано · gps дано · sa дано · есть · процесс · процесс · удержание · уже запущен · отказ процесса · rmnet1"
+            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · отбор дано · экран дано · соты дано · smsc дано · vonr дано · время дано · трасса дано · ps дано · слот дано · критерий дано · активация дано · связь дано · рассылка дано · список дано · gps дано · sa дано · есть · процесс · процесс · удержание · уже запущен · отказ процесса · rmnet1"
         );
         assert_eq!(
             cellular_row_status(
@@ -26017,6 +26014,7 @@ mod tests {
         assert!(super::observation_row_label("cellular.gpsnfw").is_none());
         assert!(super::observation_row_label("cellular.sgc").is_none());
         assert!(super::observation_row_label("cellular.tty").is_none());
+        assert!(super::observation_row_label("cellular.unsolff").is_none());
         assert!(super::observation_row_label("locality.weather.code").is_none());
         assert_eq!(
             super::observation_row_label("cellular.rat").as_deref(),
@@ -26545,7 +26543,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 48);
+        assert_eq!(rows.len(), 47);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -26607,44 +26605,43 @@ mod tests {
         assert_eq!(rows[29].value, "дано");
         assert_eq!(rows[30].label, "Троттлинг");
         assert_eq!(rows[30].value, "дано");
-        assert_eq!(rows[31].label, "Фильтр");
+        assert_eq!(rows[31].label, "Отбор");
         assert_eq!(rows[31].value, "дано");
-        assert_eq!(rows[32].label, "Отбор");
+        assert_eq!(rows[32].label, "Экран");
         assert_eq!(rows[32].value, "дано");
-        assert_eq!(rows[33].label, "Экран");
+        assert_eq!(rows[33].label, "Соты");
         assert_eq!(rows[33].value, "дано");
-        assert_eq!(rows[34].label, "Соты");
+        assert_eq!(rows[34].label, "SMSC");
         assert_eq!(rows[34].value, "дано");
-        assert_eq!(rows[35].label, "SMSC");
+        assert_eq!(rows[35].label, "VoNR");
         assert_eq!(rows[35].value, "дано");
-        assert_eq!(rows[36].label, "VoNR");
+        assert_eq!(rows[36].label, "Время");
         assert_eq!(rows[36].value, "дано");
-        assert_eq!(rows[37].label, "Время");
+        assert_eq!(rows[37].label, "Трасса");
         assert_eq!(rows[37].value, "дано");
-        assert_eq!(rows[38].label, "Трасса");
+        assert_eq!(rows[38].label, "PS");
         assert_eq!(rows[38].value, "дано");
-        assert_eq!(rows[39].label, "PS");
+        assert_eq!(rows[39].label, "Слот");
         assert_eq!(rows[39].value, "дано");
-        assert_eq!(rows[40].label, "Слот");
+        assert_eq!(rows[40].label, "Критерий");
         assert_eq!(rows[40].value, "дано");
-        assert_eq!(rows[41].label, "Критерий");
+        assert_eq!(rows[41].label, "Активация");
         assert_eq!(rows[41].value, "дано");
-        assert_eq!(rows[42].label, "Активация");
+        assert_eq!(rows[42].label, "Связь");
         assert_eq!(rows[42].value, "дано");
-        assert_eq!(rows[43].label, "Связь");
+        assert_eq!(rows[43].label, "Рассылка");
         assert_eq!(rows[43].value, "дано");
-        assert_eq!(rows[44].label, "Рассылка");
+        assert_eq!(rows[44].label, "Список");
         assert_eq!(rows[44].value, "дано");
-        assert_eq!(rows[45].label, "Список");
+        assert_eq!(rows[45].label, "GPS");
         assert_eq!(rows[45].value, "дано");
-        assert_eq!(rows[46].label, "GPS");
+        assert_eq!(rows[46].label, "SA");
         assert_eq!(rows[46].value, "дано");
-        assert_eq!(rows[47].label, "SA");
-        assert_eq!(rows[47].value, "дано");
         assert!(super::observation_row_label("cellular.prefmodem").is_none());
         assert!(super::observation_row_label("cellular.gpsnfw").is_none());
         assert!(super::observation_row_label("cellular.sgc").is_none());
         assert!(super::observation_row_label("cellular.tty").is_none());
+        assert!(super::observation_row_label("cellular.unsolff").is_none());
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }

@@ -352,6 +352,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-05 DecisionOverlay wrap | object names wrap; missing facts stay omitted **host** (ADR-579; dest-no-lock stays off) |
 | VUI-05 DataRow technical | technical values are MonoBody; copy is not navigation **host** (ADR-580; dest-no-lock stays off) |
 | VUI-06 RAT label | `cellular.rat` is RAT, not Радио **host** (ADR-581; dest-no-lock stays off) |
+| VUI-06 unsolff off chrome | `cellular.unsolff` has no row **host** (ADR-582; dest-no-lock stays off) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -501,6 +502,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-05 DecisionOverlay wrap: object names wrap; missing facts stay omitted (ADR-579; host; dest-no-lock stays off)
 - VUI-05 DataRow technical: technical values are MonoBody; copy is not navigation (ADR-580; host; dest-no-lock stays off)
 - VUI-06 RAT label: `cellular.rat` is RAT, not Радио (ADR-581; host; dest-no-lock stays off)
+- VUI-06 unsolff off chrome: `cellular.unsolff` has no row (ADR-582; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
