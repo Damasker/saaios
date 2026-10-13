@@ -1629,6 +1629,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Experimental.
 - [x] Elevation token in logical units (ADR-567; host).
   dest-no-lock stays off. No drop shadow. Still Experimental.
+- [x] Button long labels wrap to two lines (ADR-568; host).
+  dest-no-lock stays off. Field and other primitives stay
+  open. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1800,8 +1803,9 @@ lifted (ADR-564; `dce4a158…`); unlock proven.
 displayd writes connector DPMS On after present
 (ADR-565; `2462a9e9…`). dest-no-lock stays off. Sysfs
 `dpms` still reads Off. Scroll viewport clips `hit_test`
-(ADR-566). Elevation token is 0 / 4 / 8 / 12 (ADR-567). dest-no-lock
-stays off. Keyboard keys, gallery page, and
+(ADR-566). Elevation token is 0 / 4 / 8 / 12 (ADR-567). Button long
+labels wrap to two lines (ADR-568). dest-no-lock stays off.
+Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
 panther evidence. Do not fake weather / voice / Android VM

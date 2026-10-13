@@ -163,6 +163,7 @@ The verification ledger stays in
 | displayd connector DPMS | ADR-565; `2462a9e9…`; PUT+rename; displayd 2694; shell 2696; `connector DPMS On`; `surface=lock`; dest-no-lock off; sysfs `dpms` still Off |
 | scroll viewport hit_test | ADR-566; host; `Node::scroll` clips hits; screens not migrated; dest-no-lock stays off |
 | elevation token | ADR-567; host; Flat/Rest/Raised/Overlay at 0/4/8/12; no drop shadow; dest-no-lock stays off |
+| Button label wrap | ADR-568; host; two lines; full name stays; gallery paint not wired; dest-no-lock stays off |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |

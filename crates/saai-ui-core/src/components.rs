@@ -32,7 +32,7 @@
 
 use crate::{
     ColorRole, IconGlyph, IconSize, LogicalUnit, StatusMark, TextRole, UniversalState,
-    MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
+    CONTROL_VISUAL_HEIGHT, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
 };
 
 /// What assistive technology would announce this primitive as. Not a
@@ -140,6 +140,38 @@ impl SemanticText {
             ..AccessibilityInfo::new(AccessibilityRole::Text)
         }
     }
+}
+
+/// Greedy word wrap. A single word wider than the budget stays on its
+/// own line and is never split. `fits` is the renderer's measure, or a
+/// host char budget. Extra words after `max_lines` stay off the visual
+/// lines; the caller keeps the full string for accessibility.
+pub fn wrap_words(text: &str, max_lines: usize, mut fits: impl FnMut(&str) -> bool) -> Vec<String> {
+    if max_lines == 0 {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if current.is_empty() || fits(&candidate) {
+            current = candidate;
+            continue;
+        }
+        lines.push(std::mem::take(&mut current));
+        if lines.len() == max_lines {
+            return lines;
+        }
+        current = word.to_string();
+    }
+    if !current.is_empty() && lines.len() < max_lines {
+        lines.push(current);
+    }
+    lines
 }
 
 /// Section 6.2. `size` defaults to 24 logical units ("24 is the normal
@@ -488,6 +520,32 @@ impl Button {
 
     pub fn can_activate(&self) -> bool {
         self.enabled && !self.busy
+    }
+
+    /// Section 6.6: one line preferred; long labels wrap to two.
+    pub const MAX_LABEL_LINES: usize = 2;
+
+    pub fn label_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.label, Self::MAX_LABEL_LINES, fits)
+    }
+
+    /// Type size stays `Label`. Two lines grow the visual box; they do
+    /// not shrink the role.
+    pub fn visual_height(&self, line_count: u32) -> LogicalUnit {
+        if line_count > 1 {
+            TWO_LINE_ROW_HEIGHT
+        } else {
+            CONTROL_VISUAL_HEIGHT
+        }
+    }
+
+    pub fn min_hit_height(&self, line_count: u32) -> LogicalUnit {
+        let visual = self.visual_height(line_count);
+        if visual.get() < MIN_TOUCH_TARGET.get() {
+            MIN_TOUCH_TARGET
+        } else {
+            visual
+        }
     }
 
     pub fn accessibility(&self) -> AccessibilityInfo {
@@ -889,6 +947,38 @@ mod tests {
         assert!(button.can_activate());
         assert!(!button.clone().disabled().can_activate());
         assert!(!button.busy().can_activate());
+    }
+
+    #[test]
+    fn wrap_words_keeps_a_single_wide_word() {
+        let lines = wrap_words("Оченьдлинное", 2, |s| s.chars().count() <= 4);
+        assert_eq!(lines, vec!["Оченьдлинное".to_string()]);
+    }
+
+    #[test]
+    fn wrap_words_breaks_at_spaces_and_stops_at_two_lines() {
+        let lines = wrap_words("один два три четыре", 2, |s| s.chars().count() <= 8);
+        assert_eq!(lines, vec!["один два".to_string(), "три".to_string()]);
+    }
+
+    #[test]
+    fn button_long_label_grows_height_and_keeps_the_full_name() {
+        let button = Button::new(
+            "Сохранить изменения и выйти",
+            "save",
+            ButtonVariant::Primary,
+        );
+        let lines = button.label_lines(|s| s.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(button.visual_height(1), CONTROL_VISUAL_HEIGHT);
+        assert_eq!(button.visual_height(2), TWO_LINE_ROW_HEIGHT);
+        assert!(button.visual_height(2) > button.visual_height(1));
+        assert_eq!(button.min_hit_height(1), MIN_TOUCH_TARGET);
+        assert_eq!(button.min_hit_height(2), TWO_LINE_ROW_HEIGHT);
+        assert_eq!(
+            button.accessibility().name.as_deref(),
+            Some("Сохранить изменения и выйти")
+        );
     }
 
     #[test]
