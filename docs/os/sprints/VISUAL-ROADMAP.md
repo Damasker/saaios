@@ -361,8 +361,10 @@ real phone interface consistently.
   Gallery Button paint uses `label_lines` (ADR-594). Gallery
   Field paint wraps label and support (ADR-595).   DataRow paint
   reflows (ADR-596). Metric paint wraps the label (ADR-597).
-  Disclosure paint wraps (ADR-598). StatusIndicator stays
-  unwired, so this criterion is not yet met as a whole.
+  Disclosure paint wraps (ADR-598). StatusIndicator paint
+  wraps the reason below the label (ADR-599). Wrap
+  Acceptance stays unchecked: host only; font compare and
+  panther evidence still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
   requires running `build-native-c-image.sh`, which needs a real
@@ -1716,6 +1718,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Gallery Disclosure paint wraps long labels (ADR-598;
   host). dest-no-lock stays off. Chevron stays. Still
   Experimental.
+- [x] Gallery StatusIndicator paint wraps the reason below
+  the label (ADR-599; host). dest-no-lock stays off.
+  Compact hides the reason. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1916,7 +1921,8 @@ wraps (ADR-594). Gallery Field paint wraps
 (ADR-595). Gallery DataRow paint reflows
 (ADR-596). Gallery Metric paint wraps
 (ADR-597). Gallery Disclosure paint wraps
-(ADR-598). dest-no-lock stays off.
+(ADR-598). Gallery StatusIndicator paint wraps
+(ADR-599). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

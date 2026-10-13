@@ -437,8 +437,7 @@ fn draw_object_summary(
     draw_semantic_text(canvas, fonts, &object.meta_text(), left, y, max_width);
     y += scaled_line_height(TextRole::Caption);
     if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
-        draw_status_indicator(canvas, fonts, status, left, y);
-        y += scaled_line_height(TextRole::Body);
+        y += draw_status_indicator(canvas, fonts, status, left, y, max_width);
     } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
         let (value_font, value_size) = fonts.resolve(TextRole::Body);
         draw_text(
@@ -1063,7 +1062,14 @@ pub fn draw_lock_idle(
     }
     if let Some(indicator) = attention {
         if let Some(fonts) = fonts {
-            draw_status_indicator(canvas, fonts, indicator, left, below_hint);
+            draw_status_indicator(
+                canvas,
+                fonts,
+                indicator,
+                left,
+                below_hint,
+                width.saturating_sub(left.saturating_mul(2)),
+            );
         } else {
             let mark_size = physical(IconSize::Medium.value());
             draw_calibration_mark(
@@ -1595,13 +1601,28 @@ fn draw_divider(canvas: &mut Canvas<'_>, divider: &Divider, rect: Rect) {
     canvas.fill_rect(rect, theme_color(divider.color));
 }
 
+fn gallery_status_paint(
+    indicator: &StatusIndicator,
+    mut fits_label: impl FnMut(&str) -> bool,
+    mut fits_reason: impl FnMut(&str) -> bool,
+) -> (Vec<String>, Vec<String>, u32) {
+    let labels = indicator.label_lines(&mut fits_label);
+    let reason = indicator.reason_lines(&mut fits_reason);
+    let height = scaled_line_height(TextRole::Body)
+        .saturating_mul(labels.len() as u32)
+        .saturating_add(scaled_line_height(TextRole::Caption).saturating_mul(reason.len() as u32))
+        .max(physical(IconSize::Medium.value()));
+    (labels, reason, height)
+}
+
 fn draw_status_indicator(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
     indicator: &StatusIndicator,
     left: u32,
     top: u32,
-) {
+    max_width: u32,
+) -> u32 {
     let style = indicator.state.style();
     let mark_size = physical(IconSize::Medium.value());
     draw_calibration_mark(
@@ -1612,27 +1633,41 @@ fn draw_status_indicator(
     );
     let (font, size) = fonts.resolve(TextRole::Body);
     let text_left = left + mark_size + physical(SpacingToken::Small.value());
-    draw_text(
-        canvas,
-        font,
-        &indicator.label,
-        size,
-        text_left,
-        top,
-        theme_color(style.color),
+    let text_max = max_width.saturating_sub(text_left.saturating_sub(left));
+    let (reason_font, reason_size) = fonts.resolve(TextRole::Caption);
+    let (labels, reason, height) = gallery_status_paint(
+        indicator,
+        |text| text_width(font, text, size * text_scale()) as u32 <= text_max,
+        |text| text_width(reason_font, text, reason_size * text_scale()) as u32 <= text_max,
     );
-    if let Some(reason) = indicator.visible_reason() {
-        let (reason_font, reason_size) = fonts.resolve(TextRole::Caption);
+    let mut cursor_y = top;
+    let label_lh = scaled_line_height(TextRole::Body);
+    for line in &labels {
+        draw_text(
+            canvas,
+            font,
+            line,
+            size,
+            text_left,
+            cursor_y,
+            theme_color(style.color),
+        );
+        cursor_y = cursor_y.saturating_add(label_lh);
+    }
+    let reason_lh = scaled_line_height(TextRole::Caption);
+    for line in &reason {
         draw_text(
             canvas,
             reason_font,
-            reason,
+            line,
             reason_size,
             text_left,
-            top + scaled_line_height(TextRole::Body),
+            cursor_y,
             theme_color(ColorRole::TextSecondary),
         );
+        cursor_y = cursor_y.saturating_add(reason_lh);
     }
+    height
 }
 
 fn draw_progress_track(canvas: &mut Canvas<'_>, progress: &Progress, rect: Rect) {
@@ -2168,10 +2203,10 @@ pub fn draw_gallery(canvas: &mut Canvas<'_>, width: u32, height: u32, fonts: Opt
     let icon = Icon::new(IconGlyph::Wifi, ColorRole::Accent).with_name("Wi-Fi");
     draw_gallery_icon(canvas, fonts, &icon, margin, rows[2]);
 
-    let status = StatusIndicator::new(UniversalState::Blocked, "Заблокировано")
-        .with_reason("Нет сети")
+    let status = StatusIndicator::new(UniversalState::Blocked, "Сеть недоступна сейчас")
+        .with_reason("нет связи с точкой доступа")
         .with_variant(StatusIndicatorVariant::Normal);
-    draw_status_indicator(canvas, fonts, &status, margin, rows[4]);
+    draw_status_indicator(canvas, fonts, &status, margin, rows[4], content_width);
 
     let button = Button::new(
         "Сохранить изменения и выйти",
@@ -2310,7 +2345,14 @@ pub fn draw_composite_gallery(
         rows[2],
         content_width,
     );
-    draw_status_indicator(canvas, fonts, &fixtures.task.status(), margin, rows[3]);
+    draw_status_indicator(
+        canvas,
+        fonts,
+        &fixtures.task.status(),
+        margin,
+        rows[3],
+        content_width,
+    );
     draw_semantic_text(
         canvas,
         fonts,
@@ -2396,7 +2438,7 @@ fn paint_overlay_context_header(
     );
     cursor_y += scaled_line_height(TextRole::Title);
     if let Some(lifecycle) = &header.lifecycle {
-        draw_status_indicator(canvas, fonts, lifecycle, slot.x, cursor_y);
+        draw_status_indicator(canvas, fonts, lifecycle, slot.x, cursor_y, slot.width);
     }
 }
 
@@ -2836,19 +2878,25 @@ pub fn draw_now(
                             cursor_y += row_height;
                         }
                         SystemSectionRow::Status(status) => {
-                            draw_status_indicator(canvas, fonts, status, left, cursor_y);
-                            cursor_y += scaled_line_height(TextRole::Body);
-                            if status.visible_reason().is_some() {
-                                cursor_y += scaled_line_height(TextRole::Caption);
-                            }
+                            cursor_y += draw_status_indicator(
+                                canvas,
+                                fonts,
+                                status,
+                                left,
+                                cursor_y,
+                                content_width,
+                            );
                         }
                         SystemSectionRow::Task(task) => {
                             let status = task.status();
-                            draw_status_indicator(canvas, fonts, &status, left, cursor_y);
-                            cursor_y += scaled_line_height(TextRole::Body);
-                            if status.visible_reason().is_some() {
-                                cursor_y += scaled_line_height(TextRole::Caption);
-                            }
+                            cursor_y += draw_status_indicator(
+                                canvas,
+                                fonts,
+                                &status,
+                                left,
+                                cursor_y,
+                                content_width,
+                            );
                             if let Some(related) = task.related_text() {
                                 draw_semantic_text(
                                     canvas,
@@ -2873,11 +2921,14 @@ pub fn draw_now(
                             cursor_y += scaled_line_height(TextRole::Body);
                             if let Some(task) = &intent.task {
                                 let status = task.status();
-                                draw_status_indicator(canvas, fonts, &status, left, cursor_y);
-                                cursor_y += scaled_line_height(TextRole::Body);
-                                if status.visible_reason().is_some() {
-                                    cursor_y += scaled_line_height(TextRole::Caption);
-                                }
+                                cursor_y += draw_status_indicator(
+                                    canvas,
+                                    fonts,
+                                    &status,
+                                    left,
+                                    cursor_y,
+                                    content_width,
+                                );
                             } else if let Some(missing) = intent.missing_task_text() {
                                 draw_semantic_text(
                                     canvas,
@@ -3173,6 +3224,7 @@ mod tests {
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
         fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint,
         gallery_disclosure_paint, gallery_field_paint, gallery_metric_paint,
+        gallery_status_paint,
         gallery_row_positions,
         now_empty_pattern, physical,
         physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
@@ -3182,7 +3234,8 @@ mod tests {
         composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
         DataRow, DataRowVariant, DecisionOverlay, Disclosure, Field, FieldKind, IconSize,
         LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary,
-        Progress, Rect, SpacingToken, StatusIndicator, StatusMark, SurfacePattern, SystemStatus,
+        Progress, Rect, SpacingToken, StatusIndicator, StatusIndicatorVariant, StatusMark,
+        SurfacePattern, SystemStatus,
         TextRole, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
     };
 
@@ -3646,6 +3699,49 @@ mod tests {
             gallery_disclosure_paint(&short, |text| text.chars().count() <= 20);
         assert_eq!(one, vec!["Подробности".to_string()]);
         assert_eq!(short_height, physical(MIN_TOUCH_TARGET));
+    }
+
+    #[test]
+    fn gallery_status_reason_wraps_below_the_label() {
+        let indicator = StatusIndicator::new(UniversalState::Blocked, "Сеть недоступна сейчас")
+            .with_reason("нет связи с точкой доступа")
+            .with_variant(StatusIndicatorVariant::Normal);
+        let (labels, reason, height) = gallery_status_paint(
+            &indicator,
+            |text| text.chars().count() <= 10,
+            |text| text.chars().count() <= 12,
+        );
+        assert_eq!(labels.len(), 2);
+        assert_eq!(reason.len(), 2);
+        assert_eq!(
+            height,
+            scaled_line_height(TextRole::Body) * 2 + scaled_line_height(TextRole::Caption) * 2
+        );
+        assert_eq!(
+            indicator.accessibility().name.as_deref(),
+            Some("Сеть недоступна сейчас")
+        );
+        let compact = indicator.with_variant(StatusIndicatorVariant::Compact);
+        let (_, compact_reason, compact_height) = gallery_status_paint(
+            &compact,
+            |text| text.chars().count() <= 10,
+            |text| text.chars().count() <= 12,
+        );
+        assert!(compact_reason.is_empty());
+        assert_eq!(compact_height, scaled_line_height(TextRole::Body) * 2);
+        let short = StatusIndicator::new(UniversalState::Blocked, "Заблокировано")
+            .with_variant(StatusIndicatorVariant::Normal);
+        let (one, none, short_height) = gallery_status_paint(
+            &short,
+            |text| text.chars().count() <= 20,
+            |text| text.chars().count() <= 20,
+        );
+        assert_eq!(one, vec!["Заблокировано".to_string()]);
+        assert!(none.is_empty());
+        assert_eq!(
+            short_height,
+            scaled_line_height(TextRole::Body).max(physical(IconSize::Medium.value()))
+        );
     }
 
     #[test]

@@ -276,6 +276,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   gallery Disclosure paint wraps (ADR-598).
   dest-no-lock stays off.
+  gallery StatusIndicator paint wraps (ADR-599).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
