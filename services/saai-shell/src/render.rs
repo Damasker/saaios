@@ -1707,6 +1707,21 @@ fn draw_gallery_button(canvas: &mut Canvas<'_>, fonts: &Fonts, button: &Button, 
     }
 }
 
+fn gallery_field_paint(
+    field: &Field,
+    fits: impl FnMut(&str) -> bool,
+) -> (Vec<String>, Vec<String>, u32) {
+    let mut fits = fits;
+    let labels = field.label_lines(&mut fits);
+    let support = field.support_lines(fits);
+    let caption = physical_line_height(TextRole::Caption);
+    let height = caption
+        .saturating_mul(labels.len() as u32)
+        .saturating_add(physical(field.min_hit_height()))
+        .saturating_add(caption.saturating_mul(support.len() as u32));
+    (labels, support, height)
+}
+
 fn draw_gallery_field(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -1715,21 +1730,28 @@ fn draw_gallery_field(
     focused: bool,
 ) {
     let (label_font, label_size) = fonts.resolve(TextRole::Caption);
-    draw_text(
-        canvas,
-        label_font,
-        &field.label,
-        label_size,
-        rect.x,
-        rect.y,
-        theme_color(ColorRole::TextSecondary),
-    );
-    let box_top = rect.y + physical_line_height(TextRole::Caption);
+    let (labels, support, _) = gallery_field_paint(field, |text| {
+        text_width(label_font, text, label_size * text_scale()) as u32 <= rect.width
+    });
+    let caption = physical_line_height(TextRole::Caption);
+    let mut cursor_y = rect.y;
+    for line in &labels {
+        draw_text(
+            canvas,
+            label_font,
+            line,
+            label_size,
+            rect.x,
+            cursor_y,
+            theme_color(ColorRole::TextSecondary),
+        );
+        cursor_y = cursor_y.saturating_add(caption);
+    }
     let box_rect = Rect::new(
         rect.x,
-        box_top,
+        cursor_y,
         rect.width,
-        rect.height.saturating_sub(box_top - rect.y),
+        physical(field.min_hit_height()),
     );
     let box_fill = if field.error.is_some() {
         ColorRole::Critical
@@ -1764,6 +1786,24 @@ fn draw_gallery_field(
         box_rect.y + inset / 2,
         theme_color(color),
     );
+    cursor_y = cursor_y.saturating_add(box_rect.height);
+    let support_color = if field.error.is_some() {
+        ColorRole::Critical
+    } else {
+        ColorRole::TextSecondary
+    };
+    for line in &support {
+        draw_text(
+            canvas,
+            label_font,
+            line,
+            label_size,
+            rect.x,
+            cursor_y,
+            theme_color(support_color),
+        );
+        cursor_y = cursor_y.saturating_add(caption);
+    }
 }
 
 pub(crate) fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) {
@@ -3036,8 +3076,8 @@ mod tests {
         draw_consent, draw_context_row_list, draw_gallery, draw_intent_input, draw_lock_idle,
         draw_lock_pin_entry, draw_lock_sleep, draw_object_view, draw_orb, draw_pin_setup,
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
-        fingerprint_wrap_box, gallery_button_paint, gallery_row_positions, now_empty_pattern,
-        physical,
+        fingerprint_wrap_box, gallery_button_paint, gallery_field_paint, gallery_row_positions,
+        now_empty_pattern, physical,
         physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
         text_scale, theme_color, ActionCardView, Canvas,
     };
@@ -3404,6 +3444,31 @@ mod tests {
         let (one, short_height) = gallery_button_paint(&short, |text| text.chars().count() <= 20);
         assert_eq!(one, vec!["Сохранить".to_string()]);
         assert_eq!(short_height, physical(MIN_TOUCH_TARGET));
+    }
+
+    #[test]
+    fn gallery_field_long_label_wraps_and_keeps_the_editor_one_line() {
+        let field = Field::new("Имя сети для подключения", FieldKind::Text);
+        let (labels, support, height) =
+            gallery_field_paint(&field, |text| text.chars().count() <= 10);
+        assert_eq!(labels.len(), 2);
+        assert!(support.is_empty());
+        assert_eq!(
+            height,
+            physical_line_height(TextRole::Caption) * 2 + physical(MIN_TOUCH_TARGET)
+        );
+        assert_eq!(
+            field.accessibility().name.as_deref(),
+            Some("Имя сети для подключения")
+        );
+        let pin = Field::new("PIN", FieldKind::Password).with_value("4269");
+        let (one, _, pin_height) = gallery_field_paint(&pin, |text| text.chars().count() <= 20);
+        assert_eq!(one, vec!["PIN".to_string()]);
+        assert_eq!(
+            pin_height,
+            physical_line_height(TextRole::Caption) + physical(MIN_TOUCH_TARGET)
+        );
+        assert_eq!(pin.accessible_value(), "\u{2022}\u{2022}\u{2022}\u{2022}");
     }
 
     #[test]
