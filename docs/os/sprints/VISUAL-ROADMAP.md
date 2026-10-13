@@ -1572,6 +1572,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   no shell flash). Still Experimental.
 - [x] Sistema drops `gpsnfw` / `NFW` (ADR-547; host;
   no shell flash). GPS lock stays. Still Experimental.
+- [x] Host 546–547 chrome on panther under dest-no-lock
+  (ADR-548; `425fbafc…`). Unlock is not proven. Still
+  Experimental. Not Visual v1 sign-off.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.
@@ -1721,7 +1724,9 @@ ObjectSummary meta uses Search kind labels (ADR-539). Host
 «модем ушёл» (ADR-544). Host 541–544 chrome is on
 panther under dest-no-lock (ADR-545; `abd38350…`).
 `pref` / `Pref` stay off chrome (ADR-546).
-`gpsnfw` / `NFW` stay off chrome (ADR-547). Unlock
+`gpsnfw` / `NFW` stay off chrome (ADR-547). Host
+546–547 chrome is on panther under dest-no-lock
+(ADR-548; `425fbafc…`). Unlock
 is not proven on panther. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
