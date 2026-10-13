@@ -1589,6 +1589,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Host 552–553 locality copy on panther under dest-no-lock
   (ADR-554; `181cffbf…`). Unlock is not proven. Still
   Experimental. Not Visual v1 sign-off.
+- [x] Locality Observation source is Open-Meteo, not the
+  helper id (ADR-555; host; no shell flash). Still
+  Experimental.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.

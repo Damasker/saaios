@@ -129,7 +129,9 @@ chrome (ADR-550). Host 549–550 chrome is on
 panther (ADR-551; `e1205a3e…`). Empty forecast is
 «нет данных», not `current` (ADR-552). Transport
 fail is «сеть» (ADR-553). Host 552–553 locality
-copy is on panther (ADR-554; `181cffbf…`). dest-no-lock stays;
+copy is on panther (ADR-554; `181cffbf…`). Locality
+source is Open-Meteo, not `open-meteo.forecast`
+(ADR-555). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,

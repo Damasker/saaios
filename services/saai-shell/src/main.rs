@@ -8603,12 +8603,22 @@ struct LiveObservationFact {
     source: String,
 }
 
+/// ADR-247 keeps the source on the line. Locality already names
+/// Open-Meteo on the widget; the dotted helper stays on the wire.
+fn observation_source_copy(source: &str) -> &str {
+    if source == saai_observation::SOURCE_OPEN_METEO {
+        "Open-Meteo"
+    } else {
+        source
+    }
+}
+
 impl LiveObservationFact {
     fn value_line(&self) -> String {
         if self.source.is_empty() {
             self.value.clone()
         } else {
-            format!("{} · {}", self.value, self.source)
+            format!("{} · {}", self.value, observation_source_copy(&self.source))
         }
     }
 }
@@ -25934,7 +25944,14 @@ mod tests {
         assert_eq!(locality.len(), 3);
         assert_eq!(locality[0].label, "Температура");
         assert_eq!(locality[0].value, "10.2 °C");
-        assert_eq!(locality[0].source, "open-meteo.forecast");
+        assert_eq!(locality[0].source, saai_observation::SOURCE_OPEN_METEO);
+        assert_eq!(locality[0].value_line(), "10.2 °C · Open-Meteo");
+        assert!(!locality[0].value_line().contains("open-meteo.forecast"));
+        assert_eq!(
+            super::observation_source_copy("camp.owner.radio"),
+            "camp.owner.radio"
+        );
+        assert_eq!(super::observation_source_copy("procfs.cpu"), "procfs.cpu");
         assert_eq!(locality[1].label, "Широта");
         assert_eq!(locality[1].value, "52.52000");
         assert_eq!(locality[2].label, "Долгота");
