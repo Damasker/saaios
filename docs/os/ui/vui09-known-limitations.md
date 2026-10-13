@@ -123,7 +123,8 @@ owner is «процесс» (ADR-543). Duty `cp-left` is
 panther (ADR-545; `abd38350…`). `pref` / `Pref` stay
 off chrome (ADR-546). `gpsnfw` / `NFW` stay off
 chrome (ADR-547). Host 546–547 chrome is on
-panther (ADR-548; `425fbafc…`). dest-no-lock stays;
+panther (ADR-548; `425fbafc…`). `sgc` / `SGC` stay
+off chrome (ADR-549). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,

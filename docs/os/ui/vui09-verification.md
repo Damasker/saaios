@@ -178,7 +178,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   (ADR-546). `gpsnfw` / `NFW` stay off chrome (ADR-547).
   Host 546–547 chrome is on panther
   (ADR-548; `425fbafc…`); dest-no-lock stays; unlock is
-  not proven on panther.
+  not proven on panther. `sgc` / `SGC` stay off chrome
+  (ADR-549).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
