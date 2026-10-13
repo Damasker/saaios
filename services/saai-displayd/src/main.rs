@@ -22,6 +22,8 @@ mod data_device;
 mod hardware;
 #[allow(dead_code)]
 mod leftover_lock;
+#[allow(dead_code)]
+mod dpms;
 mod hid;
 mod layer_geom;
 mod text_ime;

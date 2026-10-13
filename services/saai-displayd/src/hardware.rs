@@ -361,8 +361,29 @@ struct Slot {
     _dumb: smithay::backend::allocator::dumb::DumbBuffer,
 }
 
+fn force_connector_dpms_on(
+    fd: &impl ControlDevice,
+    connector: connector::Handle,
+) -> Result<(), String> {
+    let props = fd
+        .get_properties(connector)
+        .map_err(|e| format!("connector properties failed: {e}"))?;
+    for (&handle, &_value) in props.iter() {
+        let info = fd
+            .get_property(handle)
+            .map_err(|e| format!("get_property failed: {e}"))?;
+        if crate::dpms::is_dpms_property(&info.name().to_string_lossy()) {
+            fd.set_property(connector, handle, crate::dpms::DRM_MODE_DPMS_ON)
+                .map_err(|e| format!("DPMS On failed: {e}"))?;
+            return Ok(());
+        }
+    }
+    Err("connector has no DPMS property".into())
+}
+
 pub struct HardwareOutput {
     drm_fd: DrmDeviceFd,
+    connector: connector::Handle,
     surface: DrmSurface,
     plane: smithay::reexports::drm::control::plane::Handle,
     slots: [Slot; 2],
@@ -516,6 +537,7 @@ pub fn init() -> Result<(HardwareOutput, DrmDeviceNotifier), String> {
 
     let mut output = HardwareOutput {
         drm_fd,
+        connector: connector_handle,
         surface,
         plane,
         slots: [slot0, slot1],
@@ -716,6 +738,11 @@ impl HardwareOutput {
     /// rather than at confirmed completion, safe: see the module doc
     /// comment.
     pub fn present(&mut self, modeset: bool) -> Result<(), String> {
+        if let Err(err) = force_connector_dpms_on(&self.drm_fd, self.connector) {
+            eprintln!("saai-displayd: connector DPMS On skipped: {err}");
+        } else if modeset {
+            println!("saai-displayd: connector DPMS On");
+        }
         // ADR-024 continued: `end()` no longer blocks this thread until
         // the GPU finishes -- it returns almost immediately with a
         // fence fd instead. Passing it as this plane's IN_FENCE_FD

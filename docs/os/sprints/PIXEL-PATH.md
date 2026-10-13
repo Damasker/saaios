@@ -335,6 +335,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 dest-no-lock 561 | host 561 chrome on `/data` **на panther** (ADR-562; `035db4fa…`; dest-no-lock; unlock not proven; leave Сейчас) |
 | VUI-09 lock PIN field | no-PIN lock skips compose `ContextHeader` **host** (ADR-563; lift aborted; dest-no-lock restored) |
 | VUI-09 dest-no-lock lift | host 563 lock field on `/data` **на panther** (ADR-564; `dce4a158…`; dest-no-lock lifted; unlock proven; leave Сейчас) |
+| VUI-09 displayd DPMS On | connector `DPMS=On` on present **host** (ADR-565; dest-no-lock stays off) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -467,6 +468,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 dest-no-lock 561: shell `035db4fa…` on `/data` (ADR-562; panther; dest-no-lock; unlock not proven)
 - VUI-09 lock PIN field: no-PIN lock skips compose `ContextHeader` (ADR-563; host; lift aborted; dest-no-lock restored)
 - VUI-09 dest-no-lock lift: shell `dce4a158…` on `/data` (ADR-564; panther; dest-no-lock lifted; unlock proven)
+- VUI-09 displayd DPMS On: connector `DPMS=On` on present (ADR-565; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
