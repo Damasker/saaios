@@ -4,6 +4,7 @@ use saai_ui_core::{
     DataRow, DataRowVariant, DecisionOverlay, Disclosure, Divider, Field, FieldKind, FontFamily,
     FontWeight, Icon, IconGlyph, IconSize, LogicalUnit, Metric, MetricValue, NavigationItem,
     ObjectSummary, ObjectSummaryTrailing, Progress, Rect, Rgb, SemanticText, SpacingToken,
+    TaskSummary,
     StatusIndicator, StatusIndicatorVariant, StatusMark, StrokeToken, SurfacePattern, SurfaceScale,
     SystemSection, SystemSectionRow, SystemStatus, TextOverflow, TextRole, Theme, UniversalState,
     MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
@@ -2130,6 +2131,87 @@ fn draw_gallery_context_header(
     height
 }
 
+fn gallery_task_paint(
+    task: &TaskSummary,
+    fits: impl FnMut(&str) -> bool,
+) -> (Vec<String>, u32) {
+    let lines = task.title_lines(fits);
+    let line_count = u32::try_from(lines.len()).unwrap_or(1).max(1);
+    let mut height = scaled_line_height(TextRole::Body).saturating_mul(line_count);
+    if task.status().visible_reason().is_some() {
+        height = height.saturating_add(scaled_line_height(TextRole::Caption));
+    }
+    if task.related_text().is_some() {
+        height = height.saturating_add(scaled_line_height(TextRole::Caption));
+    }
+    (lines, height.max(physical(IconSize::Medium.value())))
+}
+
+fn draw_gallery_task(
+    canvas: &mut Canvas<'_>,
+    fonts: &Fonts,
+    task: &TaskSummary,
+    left: u32,
+    top: u32,
+    max_width: u32,
+) -> u32 {
+    let status = task.status();
+    let style = status.state.style();
+    let mark_size = physical(IconSize::Medium.value());
+    draw_calibration_mark(
+        canvas,
+        Rect::new(left, top, mark_size, mark_size),
+        status.mark(),
+        theme_color(style.color),
+    );
+    let (font, size) = fonts.resolve(TextRole::Body);
+    let text_left = left + mark_size + physical(SpacingToken::Small.value());
+    let text_max = max_width.saturating_sub(text_left.saturating_sub(left));
+    let (lines, height) = gallery_task_paint(task, |text| {
+        text_width(font, text, size * text_scale()) as u32 <= text_max
+    });
+    let mut cursor_y = top;
+    let title_lh = scaled_line_height(TextRole::Body);
+    for line in &lines {
+        draw_text(
+            canvas,
+            font,
+            line,
+            size,
+            text_left,
+            cursor_y,
+            theme_color(ColorRole::TextPrimary),
+        );
+        cursor_y = cursor_y.saturating_add(title_lh);
+    }
+    let (caption_font, caption_size) = fonts.resolve(TextRole::Caption);
+    let caption_lh = scaled_line_height(TextRole::Caption);
+    if let Some(reason) = status.visible_reason() {
+        draw_text(
+            canvas,
+            caption_font,
+            reason,
+            caption_size,
+            text_left,
+            cursor_y,
+            theme_color(ColorRole::TextSecondary),
+        );
+        cursor_y = cursor_y.saturating_add(caption_lh);
+    }
+    if let Some(related) = task.related_text() {
+        draw_text(
+            canvas,
+            caption_font,
+            &related.content,
+            caption_size,
+            text_left,
+            cursor_y,
+            theme_color(ColorRole::TextSecondary),
+        );
+    }
+    height
+}
+
 /// One `cursor_y` per row `draw_gallery` paints, in draw order (0 is the
 /// title). Pulled out of `draw_gallery` itself so it is testable without a
 /// loaded font or a device -- ADR-105's own bug (two rows' text colliding)
@@ -2411,10 +2493,10 @@ pub fn draw_composite_gallery(
         rows[2],
         content_width,
     );
-    draw_status_indicator(
+    draw_gallery_task(
         canvas,
         fonts,
-        &fixtures.task.status(),
+        &fixtures.task,
         margin,
         rows[3],
         content_width,
@@ -3290,6 +3372,7 @@ mod tests {
         draw_remote_pair, draw_status_bar, draw_surface_pattern, draw_tab_bar,
         fingerprint_wrap_box, gallery_button_paint, gallery_data_row_paint,
         gallery_context_header_paint, gallery_disclosure_paint, gallery_field_paint,
+        gallery_task_paint,
         gallery_metric_paint, gallery_status_paint,
         gallery_row_positions,
         now_empty_pattern, physical,
@@ -3299,7 +3382,7 @@ mod tests {
     use saai_ui_core::{
         composite_gallery_fixtures, Button, ButtonVariant, ColorRole, ContextColor, ContextHeader,
         DataRow, DataRowVariant, DecisionOverlay, Disclosure, Field, FieldKind, IconSize,
-        LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary,
+        LogicalUnit, Metric, MetricValue, NavigationItem, ObjectSummary, TaskSummary,
         Progress, Rect, SpacingToken, StatusIndicator, StatusIndicatorVariant, StatusMark,
         SurfacePattern, SystemStatus,
         TextRole, UniversalState, MIN_TOUCH_TARGET, TWO_LINE_ROW_HEIGHT,
@@ -3790,6 +3873,37 @@ mod tests {
         assert_eq!(one, vec!["Работа".to_string()]);
         assert_eq!(short_height, scaled_line_height(TextRole::Title));
         assert_eq!(short.heading_text(), "Работа · Сейчас");
+    }
+
+    #[test]
+    fn gallery_task_long_title_wraps_and_keeps_related_separate() {
+        let task = TaskSummary::new(
+            "Копирует файлы на этот телефон",
+            UniversalState::Running,
+        )
+        .with_related("Подготовить демо");
+        let (lines, height) = gallery_task_paint(&task, |text| text.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            height,
+            scaled_line_height(TextRole::Body) * 2 + scaled_line_height(TextRole::Caption)
+        );
+        assert_eq!(
+            task.related_text().map(|text| text.content),
+            Some("Подготовить демо".into())
+        );
+        assert_eq!(
+            task.accessibility().name.as_deref(),
+            Some("Копирует файлы на этот телефон")
+        );
+        let short = TaskSummary::new("Экспорт PDF", UniversalState::Running);
+        let (one, short_height) = gallery_task_paint(&short, |text| text.chars().count() <= 20);
+        assert_eq!(one, vec!["Экспорт PDF".to_string()]);
+        assert_eq!(
+            short_height,
+            scaled_line_height(TextRole::Body).max(physical(IconSize::Medium.value()))
+        );
+        assert!(short.related_text().is_none());
     }
 
     #[test]
