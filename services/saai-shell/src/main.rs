@@ -2053,9 +2053,7 @@ fn cellular_row_status(
     if let Some(phrase) = gpslock.and_then(config_phrase) {
         parts.push(format!("gps {phrase}"));
     }
-    if let Some(phrase) = gpsnfw.and_then(config_phrase) {
-        parts.push(format!("gpsnfw {phrase}"));
-    }
+    let _ = gpsnfw;
     if let Some(phrase) = samode.and_then(config_phrase) {
         parts.push(format!("sa {phrase}"));
     }
@@ -8714,7 +8712,6 @@ fn observation_row_label(key: &str) -> Option<String> {
         "cellular.smscb" => "Рассылка".into(),
         "cellular.calllist" => "Список".into(),
         "cellular.gpslock" => "GPS".into(),
-        "cellular.gpsnfw" => "NFW".into(),
         "cellular.samode" => "SA".into(),
         "cellular.sim_app" => "SIM".into(),
         "locality.name" => "Место".into(),
@@ -21434,7 +21431,7 @@ mod tests {
                 None,
                 &[]
             ),
-            "gpsnfw дано"
+            "Нет модема"
         );
         assert_eq!(
             cellular_row_status(
@@ -21769,7 +21766,7 @@ mod tests {
                 Some("accepted"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · sgc дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · фильтр дано · отбор дано · экран дано · соты дано · smsc дано · vonr дано · время дано · трасса дано · tty дано · ps дано · слот дано · критерий дано · активация дано · связь дано · рассылка дано · список дано · gps дано · gpsnfw дано · sa дано · есть · процесс · процесс · удержание · уже запущен · отказ процесса · rmnet1"
+            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · sgc дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · фильтр дано · отбор дано · экран дано · соты дано · smsc дано · vonr дано · время дано · трасса дано · tty дано · ps дано · слот дано · критерий дано · активация дано · связь дано · рассылка дано · список дано · gps дано · sa дано · есть · процесс · процесс · удержание · уже запущен · отказ процесса · rmnet1"
         );
         assert_eq!(
             cellular_row_status(
@@ -25951,6 +25948,7 @@ mod tests {
         assert!(super::observation_row_label("weather.temp").is_none());
         assert!(super::observation_row_label("evil.metric").is_none());
         assert!(super::observation_row_label("cellular.prefmodem").is_none());
+        assert!(super::observation_row_label("cellular.gpsnfw").is_none());
         assert_eq!(
             super::observation_row_label("system.cpu.usage").as_deref(),
             Some("Процессор")
@@ -26470,7 +26468,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 51);
+        assert_eq!(rows.len(), 50);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -26568,11 +26566,10 @@ mod tests {
         assert_eq!(rows[47].value, "дано");
         assert_eq!(rows[48].label, "GPS");
         assert_eq!(rows[48].value, "дано");
-        assert_eq!(rows[49].label, "NFW");
+        assert_eq!(rows[49].label, "SA");
         assert_eq!(rows[49].value, "дано");
-        assert_eq!(rows[50].label, "SA");
-        assert_eq!(rows[50].value, "дано");
         assert!(super::observation_row_label("cellular.prefmodem").is_none());
+        assert!(super::observation_row_label("cellular.gpsnfw").is_none());
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }
