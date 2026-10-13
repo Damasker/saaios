@@ -485,6 +485,20 @@ impl AgentSummary {
         }
     }
 
+    /// Execution titles wrap. Unassigned / unavailable stay one caption.
+    pub const MAX_TITLE_LINES: usize = 2;
+
+    pub fn title_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        match &self.assignment {
+            AgentAssignment::Execution { title, .. } => {
+                wrap_words(title, Self::MAX_TITLE_LINES, fits)
+            }
+            AgentAssignment::Unassigned | AgentAssignment::Unavailable => {
+                vec![self.detail_line()]
+            }
+        }
+    }
+
     pub fn caption(&self) -> SemanticText {
         match &self.assignment {
             AgentAssignment::Unassigned => SemanticText::new(
@@ -1392,6 +1406,25 @@ mod tests {
         );
         assert!(!running.detail_line().contains("Воркеры"));
         assert!(!running.caption().content.contains("ResearchAgent"));
+    }
+
+    #[test]
+    fn agent_summary_long_title_wraps_and_keeps_unassigned() {
+        let running = AgentSummary::from_execution(
+            "Экспорт отчёта на этот телефон",
+            UniversalState::Running,
+        );
+        let lines = running.title_lines(|s| s.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            running.accessibility().name.as_deref(),
+            Some("Экспорт отчёта на этот телефон")
+        );
+        let empty = AgentSummary::unassigned();
+        assert_eq!(
+            empty.title_lines(|s| s.chars().count() <= 4),
+            vec!["Нет исполнения".to_string()]
+        );
     }
 
     #[test]
