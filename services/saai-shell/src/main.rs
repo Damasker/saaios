@@ -7711,6 +7711,8 @@ fn search_kind_label(entity: &Entity) -> &'static str {
         "saaios.task" => "Задача",
         ACTION_ENTITY_TYPE => "Действие",
         RESULT_ENTITY_TYPE => "Результат",
+        NOTIFICATION_ENTITY_TYPE => "Уведомление",
+        SCHEDULE_ENTITY_TYPE => "Расписание",
         _ => "Объект",
     }
 }
@@ -27035,6 +27037,16 @@ mod tests {
             format!("Объект · версия {}", unknown.revision)
         );
         assert!(!object_summary_meta(&unknown).contains("some.unknown.type"));
+        let notice = test_entity(NOTIFICATION_ENTITY_TYPE, serde_json::Map::new());
+        assert_eq!(
+            object_summary_meta(&notice),
+            format!("Уведомление · версия {}", notice.revision)
+        );
+        let schedule = test_entity(SCHEDULE_ENTITY_TYPE, serde_json::Map::new());
+        assert_eq!(
+            object_summary_meta(&schedule),
+            format!("Расписание · версия {}", schedule.revision)
+        );
         let Some(ObjectSummaryTrailing::Status(status)) = summary.trailing else {
             panic!("workflow status belongs on trailing, not meta");
         };
