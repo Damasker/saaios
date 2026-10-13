@@ -11,9 +11,10 @@
 //! (ADR-222) as the Field-bound IME object; it lives in `keyboard.rs`.
 
 use crate::{
-    AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole, ContextColor, DataRow,
-    DataRowVariant, Divider, IconGlyph, Metric, MotionCue, Progress, SemanticText, StatusIndicator,
-    StatusIndicatorVariant, StatusMark, SurfacePattern, TextRole, UniversalState,
+    wrap_words, AccessibilityInfo, AccessibilityRole, Button, ButtonVariant, ColorRole,
+    ContextColor, DataRow, DataRowVariant, Divider, IconGlyph, Metric, MotionCue, Progress,
+    SemanticText, StatusIndicator, StatusIndicatorVariant, StatusMark, SurfacePattern, TextRole,
+    UniversalState,
 };
 
 /// Section 7.1. Anatomy: an active-context label, an optional current-
@@ -60,6 +61,14 @@ impl ContextHeader {
 
     pub fn heading(&self) -> SemanticText {
         SemanticText::new(self.heading_text(), TextRole::Title, ColorRole::TextPrimary)
+    }
+
+    /// Section 7.1: a long Space name wraps to a second line rather than
+    /// truncating silently. The section title is not the Space name.
+    pub const MAX_NAME_LINES: usize = 2;
+
+    pub fn context_name_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.context_name, Self::MAX_NAME_LINES, fits)
     }
 
     /// Section 7.1: "name is the Space name plus section title; a
@@ -1070,6 +1079,18 @@ mod tests {
         assert!(ContextHeader::new("Personal")
             .lifecycle_accessibility()
             .is_none());
+    }
+
+    #[test]
+    fn context_header_long_space_name_wraps_and_keeps_the_heading() {
+        let header = ContextHeader::new("Личные записи этого месяца").with_section_title("Сейчас");
+        let lines = header.context_name_lines(|s| s.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(header.heading_text(), "Личные записи этого месяца · Сейчас");
+        assert_eq!(
+            header.accessibility().name.as_deref(),
+            Some("Личные записи этого месяца · Сейчас")
+        );
     }
 
     #[test]
