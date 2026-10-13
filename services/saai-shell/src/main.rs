@@ -8611,6 +8611,7 @@ struct LiveObservationFact {
 
 /// ADR-247 keeps the source on the line. Locality already names
 /// Open-Meteo on the widget; the dotted helper stays on the wire.
+/// ADR-559: do not append the same chrome source twice.
 fn observation_source_copy(source: &str) -> &str {
     if source == saai_observation::SOURCE_OPEN_METEO {
         "Open-Meteo"
@@ -8622,9 +8623,13 @@ fn observation_source_copy(source: &str) -> &str {
 impl LiveObservationFact {
     fn value_line(&self) -> String {
         if self.source.is_empty() {
+            return self.value.clone();
+        }
+        let source = observation_source_copy(&self.source);
+        if self.value.contains(source) {
             self.value.clone()
         } else {
-            format!("{} · {}", self.value, observation_source_copy(&self.source))
+            format!("{} · {}", self.value, source)
         }
     }
 }
@@ -25954,16 +25959,24 @@ mod tests {
                         "value": 13.41,
                         "unit": "degree",
                         "source": "open-meteo.forecast"
+                    },
+                    {
+                        "key": "locality.attribution",
+                        "value": "Open-Meteo (CC BY 4.0)",
+                        "source": "open-meteo.forecast"
                     }
                 ]
             }
         }));
-        assert_eq!(locality.len(), 3);
+        assert_eq!(locality.len(), 4);
         assert_eq!(locality[0].label, "Температура");
         assert_eq!(locality[0].value, "10.2 °C");
         assert_eq!(locality[0].source, saai_observation::SOURCE_OPEN_METEO);
         assert_eq!(locality[0].value_line(), "10.2 °C · Open-Meteo");
         assert!(!locality[0].value_line().contains("open-meteo.forecast"));
+        assert_eq!(locality[3].label, "Источник");
+        assert_eq!(locality[3].value_line(), "Open-Meteo (CC BY 4.0)");
+        assert!(!locality[3].value_line().contains(" · "));
         assert_eq!(
             super::observation_source_copy("camp.owner.radio"),
             "camp.owner.radio"

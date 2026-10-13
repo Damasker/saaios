@@ -193,7 +193,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   (ADR-557; `126b72c8…`); dest-no-lock stays;
   unlock is not proven on panther.
   Диагностика space is the name, not `home`
-  (ADR-558).
+  (ADR-558). Observation source is named
+  once (ADR-559).
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
