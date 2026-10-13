@@ -2029,9 +2029,7 @@ fn cellular_row_status(
     let _ = smsact;
     let _ = linkcrit;
     let _ = smscb;
-    if let Some(phrase) = calllist.and_then(config_phrase) {
-        parts.push(format!("список {phrase}"));
-    }
+    let _ = calllist;
     if let Some(phrase) = gpslock.and_then(config_phrase) {
         parts.push(format!("gps {phrase}"));
     }
@@ -8701,7 +8699,6 @@ fn observation_row_label(key: &str) -> Option<String> {
         "cellular.vonrget" => "VoNR".into(),
         "cellular.dbgtrace" => "Трасса".into(),
         "cellular.pssvc" => "PS".into(),
-        "cellular.calllist" => "Список".into(),
         "cellular.gpslock" => "GPS".into(),
         "cellular.samode" => "SA".into(),
         "cellular.sim_app" => "SIM".into(),
@@ -21312,7 +21309,7 @@ mod tests {
                 None,
                 &[]
             ),
-            "список дано"
+            "Нет модема"
         );
         assert_eq!(
             cellular_row_status(
@@ -21759,7 +21756,7 @@ mod tests {
                 Some("accepted"),
                 &["rmnet1".into()]
             ),
-            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · smsc дано · vonr дано · трасса дано · ps дано · список дано · gps дано · sa дано · есть · процесс · процесс · удержание · уже запущен · отказ процесса · rmnet1"
+            "ONLINE · домашняя · голос домашняя · включено · авто · стек · служба голосовая · операция включена · разрешение дано · присоединение дано · dns есть · dns6 есть · конфиг дано · питание дано · задание дано · ipv4 есть · ipv6 есть · сессия дано · профиль дано · активность дано · дремота дано · endc дано · троттлинг дано · smsc дано · vonr дано · трасса дано · ps дано · gps дано · sa дано · есть · процесс · процесс · удержание · уже запущен · отказ процесса · rmnet1"
         );
         assert_eq!(
             cellular_row_status(
@@ -25997,6 +25994,7 @@ mod tests {
         assert!(super::observation_row_label("cellular.smsact").is_none());
         assert!(super::observation_row_label("cellular.linkcrit").is_none());
         assert!(super::observation_row_label("cellular.smscb").is_none());
+        assert!(super::observation_row_label("cellular.calllist").is_none());
         assert!(super::observation_row_label("locality.weather.code").is_none());
         assert_eq!(
             super::observation_row_label("cellular.rat").as_deref(),
@@ -26525,7 +26523,7 @@ mod tests {
                 ]
             }
         }));
-        assert_eq!(rows.len(), 38);
+        assert_eq!(rows.len(), 37);
         assert_eq!(rows[0].label, "Модем");
         assert_eq!(rows[0].value, "ONLINE");
         assert_eq!(rows[1].label, "Регистрация");
@@ -26595,12 +26593,10 @@ mod tests {
         assert_eq!(rows[33].value, "дано");
         assert_eq!(rows[34].label, "PS");
         assert_eq!(rows[34].value, "дано");
-        assert_eq!(rows[35].label, "Список");
+        assert_eq!(rows[35].label, "GPS");
         assert_eq!(rows[35].value, "дано");
-        assert_eq!(rows[36].label, "GPS");
+        assert_eq!(rows[36].label, "SA");
         assert_eq!(rows[36].value, "дано");
-        assert_eq!(rows[37].label, "SA");
-        assert_eq!(rows[37].value, "дано");
         assert!(super::observation_row_label("cellular.prefmodem").is_none());
         assert!(super::observation_row_label("cellular.gpsnfw").is_none());
         assert!(super::observation_row_label("cellular.sgc").is_none());
@@ -26615,6 +26611,7 @@ mod tests {
         assert!(super::observation_row_label("cellular.smsact").is_none());
         assert!(super::observation_row_label("cellular.linkcrit").is_none());
         assert!(super::observation_row_label("cellular.smscb").is_none());
+        assert!(super::observation_row_label("cellular.calllist").is_none());
         assert!(!rows.iter().any(|row| row.value.contains('.')));
         assert!(!rows.iter().any(|row| row.value.contains("pin")));
     }

@@ -187,6 +187,7 @@ The verification ledger stays in
 | smsact off chrome | ADR-589; host; no row; fact still read; dest-no-lock stays off |
 | linkcrit off chrome | ADR-590; host; no cellular.linkcrit row; device «Связь» stays; dest-no-lock stays off |
 | smscb off chrome | ADR-591; host; no row; fact still read; dest-no-lock stays off |
+| calllist off chrome | ADR-592; host; no row; fact still read; dest-no-lock stays off |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |
