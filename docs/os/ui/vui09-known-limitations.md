@@ -159,6 +159,7 @@ The verification ledger stays in
 | dest-no-lock 558–559 shell | ADR-560; `72cba91c…`; PUT+rename; displayd 26159 stayed; shell 14170; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | dest-no-lock 561 shell | ADR-562; `035db4fa…`; PUT+rename; displayd 26159 stayed; shell 15129; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | lock lift ContextHeader abort | ADR-563; host; session lock requested; no SIGTRAP; `missing ContextHeader`; dest-no-lock restored; displayd 24060; shell 24062; `surface=now`; unlock not proven |
+| dest-no-lock lift unlock | ADR-564; `dce4a158…`; PUT+rename; displayd 24060 stayed; shell 26048; dest-no-lock removed; `surface=lock`; tap unlock; idle re-lock |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |

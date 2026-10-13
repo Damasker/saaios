@@ -204,6 +204,9 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   No-PIN lock skips compose `ContextHeader`
   (ADR-563). Lift aborted; dest-no-lock
   restored; unlock is not proven on panther.
+  Host 563 lock field is on panther
+  (ADR-564; `dce4a158…`); dest-no-lock lifted;
+  tap unlock and idle re-lock proven.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

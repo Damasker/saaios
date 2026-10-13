@@ -1615,9 +1615,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   (ADR-563; host). Lift requested session lock without
   SIGTRAP; leftover header aborted the shell. dest-no-lock
   restored. Unlock is not proven. Still Experimental.
-- [ ] Lock re-enable remainder (ADR-512): prove unlock on
-  panther after the marker can be lifted. Do not lift
-  dest-no-lock before that. Not Visual v1 sign-off.
+- [x] Lock re-enable remainder (ADR-512): dest-no-lock lifted
+  on panther (ADR-564; `dce4a158…`). Tap unlock and idle
+  re-lock proven. PIN null. Still Experimental. Not Visual
+  v1 sign-off.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
