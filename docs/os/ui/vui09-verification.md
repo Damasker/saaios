@@ -166,7 +166,9 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Bluetooth transport is BLE or omitted (ADR-537).
   DevSurface ContextFrame source is «вручную» / «Wi-Fi»
   (ADR-538). ObjectSummary meta uses Search kind labels
-  (ADR-539).
+  (ADR-539). Host 537–539 chrome is on panther
+  (ADR-540; `39453be9…`); dest-no-lock stays; unlock is
+  not proven on panther.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

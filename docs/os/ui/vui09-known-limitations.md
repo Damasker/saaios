@@ -114,7 +114,8 @@ slots (ADR-535). Host 534–535 SHM is on panther
 (ADR-536; `0bc48f1a…`). Bluetooth transport is BLE
 or omitted (ADR-537). DevSurface ContextFrame
 source is «вручную» / «Wi-Fi» (ADR-538). ObjectSummary
-meta uses Search kind labels (ADR-539). dest-no-lock stays;
+meta uses Search kind labels (ADR-539). Host 537–539 chrome
+is on panther (ADR-540; `39453be9…`). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
@@ -132,6 +133,7 @@ The verification ledger stays in
 | dest-no-lock leftover lock | ADR-510; host; dead lock client kept `locked=true` after ADR-503 swap; live recovery was displayd restart; no displayd flash |
 | dest-no-lock 515–532 shell | ADR-533; `efca9bd3…`; PUT+rename; displayd 26159 stayed; shell 2320; `surface=now`; marker stayed; unlock not proven |
 | dest-no-lock 534–535 shell | ADR-536; `0bc48f1a…`; PUT+rename; displayd 26159 stayed; shell 28902; `surface=now` `backend=shm`; marker stayed; unlock not proven |
+| dest-no-lock 537–539 shell | ADR-540; `39453be9…`; PUT+rename; displayd 26159 stayed; shell 1169; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |

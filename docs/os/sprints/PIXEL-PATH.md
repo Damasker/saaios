@@ -310,6 +310,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-07 BT transport | BLE stays; CLASSIC and unknown stay off the row **host** (ADR-537; no shell flash) |
 | VUI-07 ContextFrame source | DevSurface Manual/Wifi are «вручную» / «Wi-Fi» **host** (ADR-538; no shell flash) |
 | VUI-07 object kind copy | ObjectSummary meta uses Search kind, not `saaios.*` **host** (ADR-539; no shell flash) |
+| VUI-09 dest-no-lock 537–539 | host 537–539 chrome on `/data` **на panther** (ADR-540; `39453be9…`; dest-no-lock; unlock not proven; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -417,6 +418,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-07 BT transport: BLE stays; CLASSIC and unknown stay off the row (ADR-537; host; no shell flash)
 - VUI-07 ContextFrame source: DevSurface Manual/Wifi are «вручную» / «Wi-Fi» (ADR-538; host; no shell flash)
 - VUI-07 object kind copy: ObjectSummary meta uses Search kind, not `saaios.*` (ADR-539; host; no shell flash)
+- VUI-09 dest-no-lock 537–539: shell `39453be9…` on `/data` (ADR-540; panther; dest-no-lock; unlock not proven)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

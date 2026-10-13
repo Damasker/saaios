@@ -1552,6 +1552,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] ObjectSummary meta uses Search kind labels (ADR-539;
   host; no shell flash). Dotted `saaios.*` stays off NOW
   and Object View. Still Experimental.
+- [x] Host 537–539 chrome on panther under dest-no-lock
+  (ADR-540; `39453be9…`). Unlock is not proven. Still
+  Experimental. Not Visual v1 sign-off.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.
@@ -1692,7 +1695,9 @@ uses two slots (ADR-535). Host 534–535 SHM is on
 panther under dest-no-lock (ADR-536; `0bc48f1a…`). Bluetooth
 transport is BLE or omitted (ADR-537). DevSurface
 ContextFrame source is «вручную» / «Wi-Fi» (ADR-538).
-ObjectSummary meta uses Search kind labels (ADR-539). Unlock
+ObjectSummary meta uses Search kind labels (ADR-539). Host
+537–539 chrome is on panther under dest-no-lock
+(ADR-540; `39453be9…`). Unlock
 is not proven on panther. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
