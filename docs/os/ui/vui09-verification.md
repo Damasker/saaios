@@ -160,7 +160,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Lock SIGTRAP class is one-slot lock SHM (ADR-532).
   Host 515–532 chrome is on panther (ADR-533; `efca9bd3…`).
   OSK and status-bar SHM use two slots (ADR-534).
-  Main window SHM uses two slots (ADR-535);
+  Main window SHM uses two slots (ADR-535).
+  Host 534–535 SHM is on panther (ADR-536; `0bc48f1a…`);
   dest-no-lock stays; unlock is not proven on panther.
   Gallery page taps stay a
   whole-surface formula.
