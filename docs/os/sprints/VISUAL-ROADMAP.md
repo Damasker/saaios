@@ -1579,6 +1579,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   no shell flash). Still Experimental.
 - [x] Sistema drops `tty` / `TTY` (ADR-550; host;
   no shell flash). Trace stays. Still Experimental.
+- [x] Host 549–550 chrome on panther under dest-no-lock
+  (ADR-551; `e1205a3e…`). Unlock is not proven. Still
+  Experimental. Not Visual v1 sign-off.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.
@@ -1732,7 +1735,8 @@ panther under dest-no-lock (ADR-545; `abd38350…`).
 546–547 chrome is on panther under dest-no-lock
 (ADR-548; `425fbafc…`). `sgc` / `SGC` stay off
 chrome (ADR-549). `tty` / `TTY` stay off
-chrome (ADR-550). Unlock
+chrome (ADR-550). Host 549–550 chrome is on
+panther under dest-no-lock (ADR-551; `e1205a3e…`). Unlock
 is not proven on panther. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

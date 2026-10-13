@@ -125,7 +125,8 @@ off chrome (ADR-546). `gpsnfw` / `NFW` stay off
 chrome (ADR-547). Host 546–547 chrome is on
 panther (ADR-548; `425fbafc…`). `sgc` / `SGC` stay
 off chrome (ADR-549). `tty` / `TTY` stay off
-chrome (ADR-550). dest-no-lock stays;
+chrome (ADR-550). Host 549–550 chrome is on
+panther (ADR-551; `e1205a3e…`). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,
@@ -146,6 +147,7 @@ The verification ledger stays in
 | dest-no-lock 537–539 shell | ADR-540; `39453be9…`; PUT+rename; displayd 26159 stayed; shell 1169; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | dest-no-lock 541–544 shell | ADR-545; `abd38350…`; PUT+rename; displayd 26159 stayed; shell 5233; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | dest-no-lock 546–547 shell | ADR-548; `425fbafc…`; PUT+rename; displayd 26159 stayed; shell 7651; `surface=now` `backend=shm`; marker stayed; unlock not proven |
+| dest-no-lock 549–550 shell | ADR-551; `e1205a3e…`; PUT+rename; displayd 26159 stayed; shell 8910; `surface=now` `backend=shm`; marker stayed; unlock not proven |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |
