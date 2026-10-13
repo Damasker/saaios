@@ -844,6 +844,20 @@ impl Metric {
         self
     }
 
+    /// Section 6.9: the label wraps; the numeric value stays one line.
+    pub const MAX_LABEL_LINES: usize = 2;
+
+    pub fn label_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.label, Self::MAX_LABEL_LINES, fits)
+    }
+
+    pub fn verified_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        match &self.verified_at {
+            Some(text) => wrap_words(text, Self::MAX_LABEL_LINES, fits),
+            None => Vec::new(),
+        }
+    }
+
     /// `value` is the known text (plus unit, when set) for
     /// `MetricValue::Known`, or the same translation key
     /// `MetricValue::label_key()` already returns for `Unknown`/
@@ -1135,6 +1149,28 @@ mod tests {
 
         let unavailable = Metric::new("Батарея", MetricValue::Unavailable);
         assert_eq!(unavailable.value.label_key(), Some("metric.unavailable"));
+    }
+
+    #[test]
+    fn metric_long_label_wraps_and_keeps_the_value() {
+        let metric = Metric::new(
+            "Заряд батареи сейчас",
+            MetricValue::Known("87".to_string()),
+        )
+        .with_unit("%")
+        .with_verified_at("проверено сегодня утром");
+        let label = metric.label_lines(|s| s.chars().count() <= 8);
+        let verified = metric.verified_lines(|s| s.chars().count() <= 12);
+        assert_eq!(label.len(), 2);
+        assert_eq!(verified.len(), 2);
+        assert_eq!(
+            metric.accessibility().value.as_deref(),
+            Some("87 %")
+        );
+        assert_eq!(
+            metric.accessibility().name.as_deref(),
+            Some("Заряд батареи сейчас")
+        );
     }
 
     #[test]
