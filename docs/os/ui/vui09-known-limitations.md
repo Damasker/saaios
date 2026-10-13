@@ -126,7 +126,8 @@ chrome (ADR-547). Host 546–547 chrome is on
 panther (ADR-548; `425fbafc…`). `sgc` / `SGC` stay
 off chrome (ADR-549). `tty` / `TTY` stay off
 chrome (ADR-550). Host 549–550 chrome is on
-panther (ADR-551; `e1205a3e…`). dest-no-lock stays;
+panther (ADR-551; `e1205a3e…`). Empty forecast is
+«нет данных», not `current` (ADR-552). dest-no-lock stays;
 unlock is not proven on panther. Public
 `object-public.sui`, `consent-public.sui`,
 `remote-pair-public.sui`, `intent-public.sui`, `apps-public.sui`,

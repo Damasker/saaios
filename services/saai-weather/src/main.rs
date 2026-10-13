@@ -3,7 +3,8 @@
 use chrono::Utc;
 use saai_observation::observations_from_open_meteo_current;
 use saai_weather::{
-    cache_path, fetch_with_retries, locality_from_env, report_lines, write_cache, FETCH_ATTEMPTS,
+    cache_path, fetch_with_retries, locality_from_env, report_lines, write_cache, EMPTY_FORECAST,
+    FETCH_ATTEMPTS,
 };
 use std::env;
 use std::process::ExitCode;
@@ -66,7 +67,7 @@ fn run() -> Result<(), String> {
     let observed_at = Utc::now();
     let rows = observations_from_open_meteo_current(&forecast, &locality, observed_at, 1);
     if rows.is_empty() {
-        return Err("Open-Meteo не вернул current".into());
+        return Err(EMPTY_FORECAST.into());
     }
     let path = cache_path();
     write_cache(&path, &locality, &forecast, observed_at)?;

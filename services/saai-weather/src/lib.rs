@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub const FETCH_ATTEMPTS: u32 = 5;
+pub const EMPTY_FORECAST: &str = "Open-Meteo · нет данных";
 const FORECAST_URL: &str = "https://api.open-meteo.com/v1/forecast";
 const USER_AGENT: &str = "SaaiOS-weather/0.1 (personal locality telemetry; Open-Meteo CC BY 4.0)";
 const FETCH_TIMEOUT_SECS: u64 = 4;
@@ -235,7 +236,7 @@ pub fn refresh_locality() -> String {
             if rows.is_empty() {
                 let _ = write_state(&FetchState {
                     attempts: FETCH_ATTEMPTS,
-                    last_error: Some("Open-Meteo не вернул current".into()),
+                    last_error: Some(EMPTY_FORECAST.into()),
                 });
             } else {
                 let _ = write_cache(&cache_path(), &locality, &forecast, observed_at);
@@ -333,6 +334,12 @@ mod tests {
         };
         assert_eq!(done.attempts, 5);
         assert_eq!(done.last_error.as_deref(), Some("сеть: timeout"));
+    }
+
+    #[test]
+    fn empty_forecast_reason_hides_the_helper_field() {
+        assert_eq!(EMPTY_FORECAST, "Open-Meteo · нет данных");
+        assert!(!EMPTY_FORECAST.contains("current"));
     }
 
     #[test]
