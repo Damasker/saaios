@@ -1695,6 +1695,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   stays off. SMSC stays. Still Experimental.
 - [x] calllist stays off chrome (ADR-592; host). dest-no-lock
   stays off. GPS stays. Still Experimental.
+- [x] Host 566–592 chrome on panther (ADR-593; `74a69097…`).
+  dest-no-lock stays off. Lock surface up. Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1889,7 +1892,8 @@ chrome (ADR-584). cellinfo stays off chrome
 (ADR-589). linkcrit stays off chrome
 (ADR-590). smscb stays off chrome
 (ADR-591). calllist stays off chrome
-(ADR-592). dest-no-lock stays off.
+(ADR-592). Host 566–592 chrome on
+panther (ADR-593; `74a69097…`). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
