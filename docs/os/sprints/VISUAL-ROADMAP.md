@@ -1663,6 +1663,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] AgentSummary execution titles wrap (ADR-578; host).
   dest-no-lock stays off. Unassigned stays «Нет исполнения».
   Still Experimental.
+- [x] DecisionOverlay object names wrap (ADR-579; host).
+  dest-no-lock stays off. Missing facts stay omitted. Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1843,7 +1846,8 @@ wrap (ADR-569). DataRow long content reflows
 (ADR-575). IntentSummary long titles wrap
 (ADR-576). ObjectSummary long titles wrap
 (ADR-577). AgentSummary execution titles wrap
-(ADR-578). dest-no-lock stays off.
+(ADR-578). DecisionOverlay object names wrap
+(ADR-579). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

@@ -174,6 +174,7 @@ The verification ledger stays in
 | IntentSummary wrap | ADR-576; host; title two lines; «Нет задачи» stays; dest-no-lock stays off |
 | ObjectSummary wrap | ADR-577; host; title two lines; meta one line; dest-no-lock stays off |
 | AgentSummary wrap | ADR-578; host; execution two lines; unassigned one caption; dest-no-lock stays off |
+| DecisionOverlay wrap | ADR-579; host; object two lines; facts stay separate; dest-no-lock stays off |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |

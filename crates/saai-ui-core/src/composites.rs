@@ -435,6 +435,14 @@ impl DecisionOverlay {
         SemanticText::new(self.object.clone(), TextRole::Title, ColorRole::TextPrimary)
     }
 
+    /// The object name wraps. Fact lines stay separate; missing facts
+    /// stay omitted.
+    pub const MAX_TITLE_LINES: usize = 2;
+
+    pub fn title_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.object, Self::MAX_TITLE_LINES, fits)
+    }
+
     pub fn accessibility(&self) -> AccessibilityInfo {
         AccessibilityInfo {
             name: Some(self.object.clone()),
@@ -1366,6 +1374,18 @@ mod tests {
         assert_eq!(sparse.fact_lines(), vec!["Объект: Задача".to_string()]);
         assert!(sparse.action.is_none());
         assert!(sparse.consequence.is_none());
+    }
+
+    #[test]
+    fn decision_overlay_long_object_wraps_and_omits_missing_facts() {
+        let overlay = DecisionOverlay::new("Подтвердите удаление этой задачи");
+        let lines = overlay.title_lines(|s| s.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(overlay.fact_lines(), vec!["Объект: Подтвердите удаление этой задачи".to_string()]);
+        assert_eq!(
+            overlay.accessibility().name.as_deref(),
+            Some("Подтвердите удаление этой задачи")
+        );
     }
 
     #[test]
