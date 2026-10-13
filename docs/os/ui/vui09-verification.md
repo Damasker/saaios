@@ -238,6 +238,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   DecisionOverlay object names wrap (ADR-579).
   dest-no-lock stays off.
+  DataRow technical values are mono and copyable (ADR-580).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

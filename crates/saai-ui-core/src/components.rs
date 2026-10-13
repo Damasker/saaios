@@ -718,6 +718,10 @@ pub struct DataRow {
     pub value: Option<String>,
     pub variant: DataRowVariant,
     pub action: Option<String>,
+    /// Section 6.8: technical identifiers may use mono body.
+    pub value_mono: bool,
+    /// Copy when useful. Distinct from navigation `action`.
+    pub copy_action: Option<String>,
 }
 
 impl DataRow {
@@ -729,6 +733,8 @@ impl DataRow {
             value: None,
             variant,
             action: None,
+            value_mono: false,
+            copy_action: None,
         }
     }
 
@@ -745,6 +751,30 @@ impl DataRow {
     pub fn with_action(mut self, action: impl Into<String>) -> Self {
         self.action = Some(action.into());
         self
+    }
+
+    pub fn with_technical_value(mut self, value: impl Into<String>) -> Self {
+        self.value = Some(value.into());
+        self.value_mono = true;
+        self
+    }
+
+    pub fn with_copy(mut self, action: impl Into<String>) -> Self {
+        self.copy_action = Some(action.into());
+        self
+    }
+
+    pub fn value_role(&self) -> TextRole {
+        if self.value_mono {
+            TextRole::MonoBody
+        } else {
+            TextRole::Body
+        }
+    }
+
+    /// Copy is inspect, not navigation. Static rows stay non-actionable.
+    pub fn is_copyable(&self) -> bool {
+        self.copy_action.is_some() && self.value.is_some()
     }
 
     /// "Static data is not styled as clickable" -- true only for a
@@ -1185,6 +1215,24 @@ mod tests {
         assert_eq!(
             row.accessibility().name.as_deref(),
             Some("Яркость экрана ночью")
+        );
+    }
+
+    #[test]
+    fn data_row_technical_value_is_mono_and_copy_is_not_navigation() {
+        let row = DataRow::new("Отпечаток", DataRowVariant::Static)
+            .with_technical_value("SHA256:abcd")
+            .with_copy("copy_fingerprint");
+        assert_eq!(row.value_role(), TextRole::MonoBody);
+        assert!(row.is_copyable());
+        assert!(!row.is_actionable());
+        assert_eq!(row.copy_action.as_deref(), Some("copy_fingerprint"));
+        assert_eq!(row.accessibility().value.as_deref(), Some("SHA256:abcd"));
+        assert_eq!(
+            DataRow::new("Яркость", DataRowVariant::Static)
+                .with_value("50%")
+                .value_role(),
+            TextRole::Body
         );
     }
 
