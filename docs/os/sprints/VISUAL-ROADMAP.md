@@ -1608,6 +1608,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Experimental. Not Visual v1 sign-off.
 - [x] Sistema drops the numeric weather code (ADR-561; host;
   no shell flash). Погода stays. Still Experimental.
+- [x] Host 561 chrome on panther under dest-no-lock
+  (ADR-562; `035db4fa…`). Unlock is not proven. Still
+  Experimental. Not Visual v1 sign-off.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.
@@ -1775,7 +1778,9 @@ the name (ADR-558). Observation source is
 named once (ADR-559). Host 558–559 chrome is
 on panther under dest-no-lock
 (ADR-560; `72cba91c…`). Weather code stays
-off chrome (ADR-561). Unlock
+off chrome (ADR-561). Host 561 chrome is
+on panther under dest-no-lock
+(ADR-562; `035db4fa…`). Unlock
 is not proven on panther. Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

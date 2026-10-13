@@ -332,6 +332,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | WORLD-09 source once | Sistema does not repeat Open-Meteo on attribution **host** (ADR-559; no shell flash) |
 | VUI-09 dest-no-lock 558–559 | host 558–559 chrome on `/data` **на panther** (ADR-560; `72cba91c…`; dest-no-lock; unlock not proven; leave Сейчас) |
 | WORLD-09 weather code off chrome | Sistema drops `locality.weather.code` **host** (ADR-561; no shell flash) |
+| VUI-09 dest-no-lock 561 | host 561 chrome on `/data` **на panther** (ADR-562; `035db4fa…`; dest-no-lock; unlock not proven; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -461,6 +462,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - WORLD-09 source once: Sistema does not repeat Open-Meteo on attribution (ADR-559; host; no shell flash)
 - VUI-09 dest-no-lock 558–559: shell `72cba91c…` on `/data` (ADR-560; panther; dest-no-lock; unlock not proven)
 - WORLD-09 weather code off chrome: Sistema drops `locality.weather.code` (ADR-561; host; no shell flash)
+- VUI-09 dest-no-lock 561: shell `035db4fa…` on `/data` (ADR-562; panther; dest-no-lock; unlock not proven)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

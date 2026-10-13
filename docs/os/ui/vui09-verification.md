@@ -198,7 +198,9 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   panther (ADR-560; `72cba91c…`); dest-no-lock
   stays; unlock is not proven on panther.
   Sistema drops the numeric weather code
-  (ADR-561).
+  (ADR-561). Host 561 chrome is on panther
+  (ADR-562; `035db4fa…`); dest-no-lock stays;
+  unlock is not proven on panther.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
