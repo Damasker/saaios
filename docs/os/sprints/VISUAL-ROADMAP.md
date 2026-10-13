@@ -1611,6 +1611,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Host 561 chrome on panther under dest-no-lock
   (ADR-562; `035db4fa…`). Unlock is not proven. Still
   Experimental. Not Visual v1 sign-off.
+- [x] No-PIN lock does not require a compose ContextHeader
+  (ADR-563; host). Lift requested session lock without
+  SIGTRAP; leftover header aborted the shell. dest-no-lock
+  restored. Unlock is not proven. Still Experimental.
 - [ ] Lock re-enable remainder (ADR-512): prove unlock on
   panther after the marker can be lifted. Do not lift
   dest-no-lock before that. Not Visual v1 sign-off.

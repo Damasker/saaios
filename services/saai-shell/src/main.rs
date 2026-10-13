@@ -9919,16 +9919,19 @@ fn overlay_field_paint(
     };
     let why = if screen_id == "wifi-password" {
         "ADR-439 wifi-password overlay"
+    } else if screen_id == "lock" {
+        "ADR-563 lock pin field"
     } else {
         "ADR-434 compose overlay"
     };
     let tree = layout_live_v2(&source, why, width, height);
-    (
-        v2_named_rect(&tree, "ContextHeader", why),
-        saai_ui_compiler::layout_v1_find(&tree, field_id)
-            .map(|node| node.rect)
-            .unwrap_or_else(|| stacked_row_rect(0, width, height)),
-    )
+    let field = saai_ui_compiler::layout_v1_find(&tree, field_id)
+        .map(|node| node.rect)
+        .unwrap_or_else(|| stacked_row_rect(0, width, height));
+    if screen_id == "lock" {
+        return (Rect::new(0, 0, 0, 0), field);
+    }
+    (v2_named_rect(&tree, "ContextHeader", why), field)
 }
 
 fn me_dispatch_at(
@@ -16060,8 +16063,12 @@ impl Shell {
         };
         let pressed_key = self.pressed_key.clone();
         let pin_field = lock_pin_entry_field(self.pin_entry_buffer.len());
-        let pin_field_rect = lock_pin_field_rect(width);
         let has_pin = !sleeping && pin_code.is_some();
+        let pin_field_rect = if has_pin {
+            lock_pin_field_rect(width)
+        } else {
+            Rect::new(0, 0, 0, 0)
+        };
         let idle_time = if sleeping { sleep.time } else { idle.time };
         let idle_hint = idle.hint;
         let idle_device = device_label;
@@ -23095,6 +23102,18 @@ mod tests {
         }
         let field = super::lock_pin_field_rect(width);
         assert!(field.y + field.height <= super::INTENT_HEADER_HEIGHT);
+        assert!(field.width > 0);
+        assert!(field.height > 0);
+    }
+
+    #[test]
+    fn lock_pin_field_skips_compose_context_header() {
+        let field = super::lock_pin_field_rect(1080);
+        assert!(field.width > 0);
+        assert!(field.height > 0);
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"));
+        assert!(src.contains("ADR-563 lock pin field"));
+        assert!(src.contains("if has_pin"));
     }
 
     #[test]
