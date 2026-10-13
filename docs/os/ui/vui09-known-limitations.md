@@ -165,6 +165,7 @@ The verification ledger stays in
 | elevation token | ADR-567; host; Flat/Rest/Raised/Overlay at 0/4/8/12; no drop shadow; dest-no-lock stays off |
 | Button label wrap | ADR-568; host; two lines; full name stays; gallery paint not wired; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
+| DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | display restart | ADR-210; `saai-displayd` 8323→28184; shell 28125→28190; marker survived |
 | cold boot | ADR-211; `reboot -f`; marker dropped; displayd 401; shell 418; tap-unlock; marker restored |
 | 7-tap gallery | ADR-212; 7-tap `SaaiOS · сборка`; Диагностика; Назад; leave Сейчас |

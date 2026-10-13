@@ -748,6 +748,29 @@ impl DataRow {
         }
     }
 
+    /// Section 6.8: long content reflows vertically. Value stays one
+    /// trailing line.
+    pub const MAX_TEXT_LINES: usize = 2;
+
+    pub fn primary_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        wrap_words(&self.primary, Self::MAX_TEXT_LINES, fits)
+    }
+
+    pub fn secondary_lines(&self, fits: impl FnMut(&str) -> bool) -> Vec<String> {
+        match &self.secondary {
+            Some(text) => wrap_words(text, Self::MAX_TEXT_LINES, fits),
+            None => Vec::new(),
+        }
+    }
+
+    pub fn visual_height(&self, primary_line_count: u32, secondary_line_count: u32) -> LogicalUnit {
+        if primary_line_count > 1 || secondary_line_count > 0 {
+            TWO_LINE_ROW_HEIGHT
+        } else {
+            MIN_TOUCH_TARGET
+        }
+    }
+
     /// `Static` reads as `ListItem` (informational); every other variant
     /// reads as `Button`, matching `is_actionable()`'s own distinction --
     /// a row this crate marks non-clickable must not also announce itself
@@ -1081,6 +1104,25 @@ mod tests {
 
         let two_line = DataRow::new("Яркость", DataRowVariant::Navigation).with_secondary("50%");
         assert_eq!(two_line.min_hit_height(), TWO_LINE_ROW_HEIGHT);
+    }
+
+    #[test]
+    fn data_row_long_primary_reflows_and_keeps_the_full_name() {
+        let row = DataRow::new("Яркость экрана ночью", DataRowVariant::Navigation)
+            .with_secondary("автоматически по датчику")
+            .with_value("50%");
+        let primary = row.primary_lines(|s| s.chars().count() <= 10);
+        let secondary = row.secondary_lines(|s| s.chars().count() <= 14);
+        assert_eq!(primary.len(), 2);
+        assert_eq!(secondary.len(), 2);
+        assert_eq!(row.visual_height(1, 0), MIN_TOUCH_TARGET);
+        assert_eq!(row.visual_height(2, 0), TWO_LINE_ROW_HEIGHT);
+        assert_eq!(row.visual_height(1, 2), TWO_LINE_ROW_HEIGHT);
+        assert_eq!(row.value.as_deref(), Some("50%"));
+        assert_eq!(
+            row.accessibility().name.as_deref(),
+            Some("Яркость экрана ночью")
+        );
     }
 
     #[test]
