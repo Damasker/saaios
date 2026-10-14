@@ -434,6 +434,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Do not type PSK.
   Timeout on `/data` (ADR-679; `60fe8f16…`). dest-no-lock stays off.
   One `/proc` camp walk (ADR-680; host). dest-no-lock stays off.
+  One `/proc` walk on `/data` (ADR-681; `ce4c374b…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
