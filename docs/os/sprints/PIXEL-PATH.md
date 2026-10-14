@@ -377,6 +377,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-05 gallery AgentSummary wrap | gallery AgentSummary paint wraps the execution title **host** (ADR-604; dest-no-lock stays off) |
 | VUI-05 gallery DecisionOverlay wrap | gallery DecisionOverlay paint wraps the object name **host** (ADR-605; dest-no-lock stays off) |
 | VUI-03 live ObjectSummary wrap | live ObjectSummary paint uses `title_lines` **host** (ADR-606; dest-no-lock stays off; leave Сейчас) |
+| VUI-03 live ContextHeader wrap | live ContextHeader paint wraps the Space name **host** (ADR-607; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -551,6 +552,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-05 gallery AgentSummary wrap: gallery AgentSummary paint wraps the execution title (ADR-604; host; dest-no-lock stays off)
 - VUI-05 gallery DecisionOverlay wrap: gallery DecisionOverlay paint wraps the object name (ADR-605; host; dest-no-lock stays off)
 - VUI-03 live ObjectSummary wrap: live ObjectSummary paint uses `title_lines` (ADR-606; host; dest-no-lock stays off)
+- VUI-03 live ContextHeader wrap: live ContextHeader paint wraps the Space name (ADR-607; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

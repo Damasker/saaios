@@ -2780,15 +2780,14 @@ fn paint_overlay_context_header(
 ) {
     let top_inset = ((150_u64 * u64::from(panel_height.max(1))) / 2400) as u32;
     let mut cursor_y = slot.y + top_inset;
-    draw_semantic_text(
+    cursor_y += draw_gallery_context_header(
         canvas,
         fonts,
-        &header.heading(),
+        header,
         slot.x,
         cursor_y,
         slot.width,
     );
-    cursor_y += scaled_line_height(TextRole::Title);
     if let Some(lifecycle) = &header.lifecycle {
         draw_status_indicator(canvas, fonts, lifecycle, slot.x, cursor_y, slot.width);
     }
@@ -4079,6 +4078,24 @@ mod tests {
         assert_eq!(one, vec!["Работа".to_string()]);
         assert_eq!(short_height, scaled_line_height(TextRole::Title));
         assert_eq!(short.heading_text(), "Работа · Сейчас");
+    }
+
+    #[test]
+    fn context_header_live_paint_uses_context_name_lines() {
+        let src = include_str!("render.rs");
+        assert!(src.contains("cursor_y += draw_gallery_context_header("));
+        assert!(!src.contains(concat!("&header.", "heading()")));
+        let header =
+            ContextHeader::new("Личные записи этого месяца").with_section_title("Сейчас");
+        let (lines, height) =
+            gallery_context_header_paint(&header, |text| text.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(height, scaled_line_height(TextRole::Title) * 2);
+        assert_eq!(header.section_title.as_deref(), Some("Сейчас"));
+        assert_eq!(
+            header.heading_text(),
+            "Личные записи этого месяца · Сейчас"
+        );
     }
 
     #[test]

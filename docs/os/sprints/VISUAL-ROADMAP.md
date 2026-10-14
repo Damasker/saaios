@@ -369,7 +369,8 @@ real phone interface consistently.
   ObjectSummary paint wraps the title (ADR-603). Gallery
   AgentSummary paint wraps the execution title (ADR-604). Gallery
   DecisionOverlay paint wraps the object name (ADR-605). Live
-  ObjectSummary paint uses `title_lines` (ADR-606). Wrap
+  ObjectSummary paint uses `title_lines` (ADR-606). Live
+  ContextHeader paint wraps the Space name (ADR-607). Wrap
   Acceptance stays unchecked: host only; font compare and
   panther evidence still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
@@ -1752,6 +1753,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Live ObjectSummary paint wraps the title (ADR-606;
   host). dest-no-lock stays off. Meta stays one line.
   Leave Сейчас. Still Experimental.
+- [x] Live ContextHeader paint wraps the Space name
+  (ADR-607; host). dest-no-lock stays off. Section title
+  stays one line. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1960,7 +1964,8 @@ wraps (ADR-594). Gallery Field paint wraps
 (ADR-603). Gallery AgentSummary paint wraps
 (ADR-604). Gallery DecisionOverlay paint wraps
 (ADR-605). Live ObjectSummary paint wraps
-(ADR-606). dest-no-lock stays off.
+(ADR-606). Live ContextHeader paint wraps
+(ADR-607). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
