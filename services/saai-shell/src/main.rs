@@ -3022,16 +3022,6 @@ fn bluetooth_list_scroll_max(
     )
 }
 
-fn bluetooth_list_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    device_count: usize,
-    status_rows: usize,
-) -> Option<BluetoothListTap> {
-    bluetooth_list_action_at_scrolled(pos, width, height, device_count, status_rows, 0)
-}
-
 fn bluetooth_list_action_at_scrolled(
     pos: (f64, f64),
     width: u32,
@@ -16095,7 +16085,7 @@ mod tests {
     use super::{
         activity_clock_for, apply_volume, apps_grid_empty_pattern, apps_grid_header,
         bearer_is_live, bluetooth_card_from_row, bluetooth_hci_present_in_listing,
-        bluetooth_header, bluetooth_list_action_at, bluetooth_list_pattern,
+        bluetooth_header, bluetooth_list_action_at_scrolled, bluetooth_list_pattern,
         bluetooth_list_row_count, bluetooth_list_rows, bluetooth_pair_error_from,
         bluetooth_transport_copy,
         bluetooth_scan_pattern, calibration_requested, capability_label,
@@ -18274,43 +18264,46 @@ mod tests {
             )
         };
         assert!(matches!(
-            bluetooth_list_action_at(center(device_0), width, height, device_count, 0),
+            bluetooth_list_action_at_scrolled(center(device_0), width, height, device_count, 0, 0),
             Some(BluetoothListTap::Device(0))
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(scan), width, height, device_count, 0),
+            bluetooth_list_action_at_scrolled(center(scan), width, height, device_count, 0, 0),
             Some(BluetoothListTap::Scan)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(refresh), width, height, device_count, 0),
+            bluetooth_list_action_at_scrolled(center(refresh), width, height, device_count, 0, 0),
             Some(BluetoothListTap::Refresh)
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(back), width, height, device_count, 0),
+            bluetooth_list_action_at_scrolled(center(back), width, height, device_count, 0, 0),
             Some(BluetoothListTap::Back)
         ));
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn bluetooth_list_action_at", "(")));
+        assert!(src.contains("fn bluetooth_list_action_at_scrolled("));
         let empty = stacked_row_rect(0, width, height);
         let scan_empty = stacked_row_rect(1, width, height);
-        assert!(bluetooth_list_action_at(center(empty), width, height, 0, 1).is_none());
+        assert!(bluetooth_list_action_at_scrolled(center(empty), width, height, 0, 1, 0).is_none());
         assert!(matches!(
-            bluetooth_list_action_at(center(scan_empty), width, height, 0, 1),
+            bluetooth_list_action_at_scrolled(center(scan_empty), width, height, 0, 1, 0),
             Some(BluetoothListTap::Scan)
         ));
-        assert!(bluetooth_list_action_at(center(empty), width, height, 0, 1).is_none());
+        assert!(bluetooth_list_action_at_scrolled(center(empty), width, height, 0, 1, 0).is_none());
         assert!(matches!(
-            bluetooth_list_action_at(center(scan_empty), width, height, 0, 1),
+            bluetooth_list_action_at_scrolled(center(scan_empty), width, height, 0, 1, 0),
             Some(BluetoothListTap::Scan)
         ));
         let failed = stacked_row_rect(0, width, height);
         let device_after_failed = stacked_row_rect(1, width, height);
         let scan_after_failed = stacked_row_rect(2, width, height);
-        assert!(bluetooth_list_action_at(center(failed), width, height, 1, 1).is_none());
+        assert!(bluetooth_list_action_at_scrolled(center(failed), width, height, 1, 1, 0).is_none());
         assert!(matches!(
-            bluetooth_list_action_at(center(device_after_failed), width, height, 1, 1),
+            bluetooth_list_action_at_scrolled(center(device_after_failed), width, height, 1, 1, 0),
             Some(BluetoothListTap::Device(0))
         ));
         assert!(matches!(
-            bluetooth_list_action_at(center(scan_after_failed), width, height, 1, 1),
+            bluetooth_list_action_at_scrolled(center(scan_after_failed), width, height, 1, 1, 0),
             Some(BluetoothListTap::Scan)
         ));
     }
@@ -18336,7 +18329,7 @@ mod tests {
             (back.y + back.height / 2) as f64,
         );
         assert!(matches!(
-            bluetooth_list_action_at(center, width, height, device_count, 0),
+            bluetooth_list_action_at_scrolled(center, width, height, device_count, 0, 0),
             Some(BluetoothListTap::Back)
         ));
     }
@@ -18365,7 +18358,15 @@ mod tests {
             (last_slot.x + last_slot.width / 2) as f64,
             (last_slot.y + last_slot.height / 2) as f64,
         );
-        assert!(bluetooth_list_action_at(last_point, width, height, device_count, status_rows).is_none());
+        assert!(bluetooth_list_action_at_scrolled(
+            last_point,
+            width,
+            height,
+            device_count,
+            status_rows,
+            0
+        )
+        .is_none());
         let scrolled = super::layout_live_v2_scrolled(
             &super::bluetooth_v2_source(device_count, status_rows),
             "ADR-496 bluetooth overflow",
