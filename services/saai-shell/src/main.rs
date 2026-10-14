@@ -3847,16 +3847,6 @@ fn related_object_line(
     }
 }
 
-fn related_object_first_peer(
-    entity: &Entity,
-    selected_entities: &[Entity],
-    relationships: &[Relationship],
-) -> Option<Uuid> {
-    related_object_peer_ids(entity, selected_entities, relationships)
-        .into_iter()
-        .next()
-}
-
 fn related_object_peer_ids(
     entity: &Entity,
     selected_entities: &[Entity],
@@ -15918,7 +15908,7 @@ mod tests {
         orb_attention, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state_with, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
-        related_object_first_peer, remote_pair_content_cards, remote_pair_header,
+        related_object_peer_ids, remote_pair_content_cards, remote_pair_header,
         remove_context_source, retain_pressed_while_clock, search_header, search_paint_rows_scrolled,
         search_row_at_scrolled,
         search_rows, space_color, space_color_entity, space_detail_action_at_scrolled,
@@ -24379,9 +24369,14 @@ mod tests {
         assert_eq!(content.related, Some("Связано: Сервер".to_string()));
         assert!(content.actions.is_empty());
         assert_eq!(
-            related_object_first_peer(&entity, &[other], &[relationship]),
+            related_object_peer_ids(&entity, &[other], &[relationship])
+                .into_iter()
+                .next(),
             Some(peer)
         );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn related_object_first_peer", "(")));
+        assert!(src.contains("fn related_object_peer_ids("));
     }
 
     #[test]
