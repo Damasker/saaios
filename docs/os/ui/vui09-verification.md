@@ -408,6 +408,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Me facts on the next event-loop turn (ADR-664; host). dest-no-lock
   stays off.
   Empty Me header dock (ADR-665; host). dest-no-lock stays off.
+  Sistema hang fix on `/data` (ADR-666; `ed2bc0d1…`). dest-no-lock
+  stays off. `surface=me` `idle_ok=1`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

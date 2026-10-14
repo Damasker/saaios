@@ -236,6 +236,7 @@ The verification ledger stays in
 | Me motion skip | ADR-663; host; cached Sistema is not full-painted on motion ticks; dest-no-lock stays off |
 | Me facts next turn | ADR-664; host; first Sistema paint is chrome; `me_facts` waits one loop; dest-no-lock stays off |
 | empty Me header | ADR-665; host; empty `me_v2_source` keeps `ContextHeader` via `me.pending`; dest-no-lock stays off |
+| Sistema hang fix | ADR-666; `ed2bc0d1…` on `/data`; first Me paint chrome then facts; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

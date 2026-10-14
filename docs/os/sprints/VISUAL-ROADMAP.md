@@ -427,7 +427,8 @@ real phone interface consistently.
   (ADR-661; `4a03a41b…`). Me paint cache across motion
   (ADR-662; host). Me motion skip (ADR-663; host). Me facts
   next turn (ADR-664; host). Empty Me header dock
-  (ADR-665; host).
+  (ADR-665; host). Hang fix on `/data`
+  (ADR-666; `ed2bc0d1…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1986,6 +1987,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Empty Me header dock (ADR-665; host). dest-no-lock stays off.
   Empty `me_v2_source` keeps `ContextHeader`. Leave Сейчас.
   Still Experimental.
+- [x] Sistema hang fix on panther (ADR-666; `ed2bc0d1…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` `idle_ok=1`.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2251,7 +2255,8 @@ motion ticks (ADR-660; host). Cache on `/data`
 (ADR-661; `4a03a41b…`). Me paint cache across motion
 (ADR-662; host). Me motion skip (ADR-663; host). Me facts
 next turn (ADR-664; host). Empty Me header dock
-(ADR-665; host).
+(ADR-665; host). Hang fix on `/data`
+(ADR-666; `ed2bc0d1…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
