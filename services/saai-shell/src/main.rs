@@ -6360,7 +6360,7 @@ enum InboxRowKind {
 /// recency. ATTN-03: order and membership come from
 /// `inbox_source_ids()`, the same projection NOW and Orb already use.
 /// Shared by rendering (`inbox_content_cards`) and hit-testing
-/// (`inbox_row_at`) so the two can never disagree about row order.
+/// (`inbox_row_at_scrolled`) so the two can never disagree about row order.
 fn inbox_rows(entities: &[Entity]) -> Vec<(InboxRowKind, &Entity)> {
     let by_id: BTreeMap<_, _> = entities.iter().map(|entity| (entity.id, entity)).collect();
     inbox_source_ids(entities)
@@ -7711,16 +7711,6 @@ fn inbox_scroll_max(
         height,
         search_scroll_content(width, height),
     )
-}
-
-fn inbox_row_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    entities: &[Entity],
-    store_connected: bool,
-) -> Option<(InboxRowKind, Uuid)> {
-    inbox_row_at_scrolled(pos, width, height, entities, store_connected, 0)
 }
 
 fn inbox_row_at_scrolled(
@@ -25352,7 +25342,8 @@ mod tests {
         let stale = super::inbox_event_rows(std::slice::from_ref(&waiting), false);
         assert_eq!(stale[0].row.primary, "Нет связи");
         assert!(
-            super::inbox_row_at((540.0, 500.0), 1080, 2400, &[waiting.clone()], false).is_none()
+            super::inbox_row_at_scrolled((540.0, 500.0), 1080, 2400, &[waiting.clone()], false, 0)
+                .is_none()
         );
 
         let live = super::inbox_event_rows(&[waiting.clone(), note], true);
@@ -25368,9 +25359,13 @@ mod tests {
             (first.y + first.height / 2) as f64,
         );
         assert_eq!(
-            super::inbox_row_at(point, 1080, 2400, &[waiting], true).map(|(kind, _)| kind),
+            super::inbox_row_at_scrolled(point, 1080, 2400, &[waiting], true, 0)
+                .map(|(kind, _)| kind),
             Some(super::InboxRowKind::Task)
         );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn inbox_row_at", "(")));
+        assert!(src.contains("fn inbox_row_at_scrolled("));
     }
 
     #[test]
@@ -25397,7 +25392,7 @@ mod tests {
             (last_slot.x + last_slot.width / 2) as f64,
             (last_slot.y + last_slot.height / 2) as f64,
         );
-        assert!(super::inbox_row_at(last_point, 1080, 2400, &entities, true).is_none());
+        assert!(super::inbox_row_at_scrolled(last_point, 1080, 2400, &entities, true, 0).is_none());
         let scrolled = super::layout_live_v2_scrolled(
             &super::inbox_v2_source(&entities, true),
             "ADR-492 inbox overflow",
