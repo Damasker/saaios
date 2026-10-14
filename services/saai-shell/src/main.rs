@@ -3536,14 +3536,6 @@ struct ObjectViewContent {
     actions: Vec<&'static str>,
 }
 
-fn object_view_content(
-    entity: &Entity,
-    selected_entities: &[Entity],
-    relationships: &[Relationship],
-) -> ObjectViewContent {
-    object_view_content_with(entity, selected_entities, relationships, true)
-}
-
 fn object_view_content_with(
     entity: &Entity,
     selected_entities: &[Entity],
@@ -11164,7 +11156,7 @@ impl TouchHandler for Shell {
                 // or the NOW `ObjectSummary` (ADR-137) -- no auto-popup.
                 // Button count varies by entity_type, so it has to be
                 // recomputed here, same "read fresh" reasoning
-                // `object_view_content` itself already documents.
+                // `object_view_content_with` itself already documents.
                 // A drag that ends over a fact or footer is still a
                 // scroll, not a tap (ADR-486).
                 if was_me_drag {
@@ -15985,7 +15977,7 @@ mod tests {
         now_attention_hit_scrolled, now_next_hit_scrolled, now_next_paint_rows_scrolled, now_object_tapped, now_task_hit_scrolled,
         now_task_paint_rows_scrolled, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
         now_workflow_sections,
-        object_view_content, object_view_content_with, object_view_details,
+        object_view_content_with, object_view_details,
         object_view_history_lines, object_view_hit_scrolled,
         object_view_permission_pattern,
         object_summary_meta, object_view_related_peer_lines, object_view_step_lines,
@@ -22159,7 +22151,7 @@ mod tests {
     #[test]
     fn waiting_confirmation_stays_manually_decidable_without_a_model() {
         let task = task_entity("Подтвердите: удалить объект", None);
-        let content = object_view_content(&task, &[], &[]);
+        let content = object_view_content_with(&task, &[], &[], true);
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
         assert!(content.decision.is_some());
     }
@@ -23568,7 +23560,7 @@ mod tests {
         let empty = intent_entity("Пустое намерение");
         assert!(object_view_step_lines(&empty, &[empty.clone()], &[]).is_empty());
         assert_eq!(
-            object_view_content(&empty, &[empty.clone()], &[]).status,
+            object_view_content_with(&empty, &[empty.clone()], &[], true).status,
             "Нет задачи"
         );
     }
@@ -23578,7 +23570,7 @@ mod tests {
         let intent = intent_entity("Подготовить демо");
         let task = task_entity("Собрать слайды", Some(intent.id));
         let entities = vec![intent.clone(), task];
-        let live = object_view_content(&intent, &entities, &[]);
+        let live = object_view_content_with(&intent, &entities, &[], true);
         assert_ne!(live.status, "План недоступен");
         assert!(!object_view_step_lines(&intent, &entities, &[]).is_empty());
         let down = object_view_content_with(&intent, &entities, &[], false);
@@ -23590,7 +23582,7 @@ mod tests {
         assert_ne!(down.status, "Нет задачи");
         let empty = intent_entity("Пустое намерение");
         assert_eq!(
-            object_view_content(&empty, &[empty.clone()], &[]).status,
+            object_view_content_with(&empty, &[empty.clone()], &[], true).status,
             "Нет задачи"
         );
     }
@@ -23654,7 +23646,7 @@ mod tests {
     #[test]
     fn object_view_content_for_a_task_has_no_related_line_without_a_matching_intent() {
         let task = task_entity("Подтвердите: удалить объект", None);
-        let content = object_view_content(&task, &[], &[]);
+        let content = object_view_content_with(&task, &[], &[], true);
         assert_eq!(content.title, "Подтвердите: удалить объект");
         assert_eq!(content.state, UniversalState::Attention);
         assert_eq!(content.status, "Ждёт подтверждения");
@@ -23666,6 +23658,9 @@ mod tests {
         assert_eq!(content.permission, None);
         assert!(content.agent.is_none());
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn object_view_content", "(")));
+        assert!(src.contains("fn object_view_content_with("));
     }
 
     #[test]
@@ -23673,7 +23668,7 @@ mod tests {
         let mut task = task_entity("Копирует файлы", None);
         task.properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let content = object_view_content(&task, &[task.clone()], &[]);
+        let content = object_view_content_with(&task, &[task.clone()], &[], true);
         assert_eq!(content.state, UniversalState::Running);
         assert_eq!(content.status, "Выполняется");
         assert_eq!(content.activity, None);
@@ -23690,18 +23685,18 @@ mod tests {
         running
             .properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let running_view = object_view_content(&running, &[running.clone()], &[]);
+        let running_view = object_view_content_with(&running, &[running.clone()], &[], true);
         assert_eq!(running_view.progress, Some(super::Progress::Indeterminate));
 
         running
             .properties
             .insert("progress".into(), serde_json::json!(40));
-        let determined = object_view_content(&running, &[running.clone()], &[]);
+        let determined = object_view_content_with(&running, &[running.clone()], &[], true);
         assert_eq!(determined.progress, Some(super::Progress::determinate(40)));
 
         let waiting = task_entity("Подтвердите: удалить объект", None);
         assert_eq!(
-            object_view_content(&waiting, &[waiting.clone()], &[]).progress,
+            object_view_content_with(&waiting, &[waiting.clone()], &[], true).progress,
             None
         );
 
@@ -23711,11 +23706,11 @@ mod tests {
             serde_json::Value::String(intent.id.to_string()),
         );
         assert_eq!(
-            object_view_content(&intent, &[intent.clone(), running.clone()], &[]).progress,
+            object_view_content_with(&intent, &[intent.clone(), running.clone()], &[], true).progress,
             Some(super::Progress::determinate(40))
         );
         assert_eq!(
-            object_view_content(&intent, &[intent.clone()], &[]).progress,
+            object_view_content_with(&intent, &[intent.clone()], &[], true).progress,
             None
         );
 
@@ -23726,7 +23721,7 @@ mod tests {
         let mut send = task_entity("Отправить", Some(intent.id));
         send.properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let plan = object_view_content(&intent, &[intent.clone(), draft, send], &[]);
+        let plan = object_view_content_with(&intent, &[intent.clone(), draft, send], &[], true);
         assert_eq!(plan.progress, Some(super::Progress::Indeterminate));
         assert_ne!(plan.progress, Some(super::Progress::determinate(50)));
 
@@ -23771,13 +23766,13 @@ mod tests {
         let mut object = test_entity("note.doc", serde_json::Map::new());
         object.title = LONG_RU.to_string();
         assert_eq!(
-            object_view_content(&object, &[object.clone()], &[]).title,
+            object_view_content_with(&object, &[object.clone()], &[], true).title,
             LONG_RU
         );
 
         let intent = intent_entity(LONG_RU);
         assert_eq!(
-            object_view_content(&intent, &[intent.clone()], &[]).title,
+            object_view_content_with(&intent, &[intent.clone()], &[], true).title,
             LONG_RU
         );
 
@@ -23817,7 +23812,7 @@ mod tests {
     fn object_view_content_for_an_intent_shows_related_task() {
         let intent = intent_entity("Подготовить демо");
         let task = task_entity("Подтвердите: демо", Some(intent.id));
-        let content = object_view_content(&intent, &[intent.clone(), task.clone()], &[]);
+        let content = object_view_content_with(&intent, &[intent.clone(), task.clone()], &[], true);
         assert_eq!(content.status, "Ждёт подтверждения");
         assert_eq!(
             content.related,
@@ -23833,7 +23828,7 @@ mod tests {
     fn object_view_intent_confirm_only_when_ask_user() {
         let intent = intent_entity("Подготовить демо");
         let waiting = task_entity("Подтвердите: демо", Some(intent.id));
-        let waiting_view = object_view_content(&intent, &[intent.clone(), waiting.clone()], &[]);
+        let waiting_view = object_view_content_with(&intent, &[intent.clone(), waiting.clone()], &[], true);
         assert!(waiting_view.decision.is_some());
         assert_eq!(waiting_view.actions, vec!["Подтвердить", "Отклонить"]);
 
@@ -23841,12 +23836,12 @@ mod tests {
         running
             .properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let running_view = object_view_content(&intent, &[intent.clone(), running.clone()], &[]);
+        let running_view = object_view_content_with(&intent, &[intent.clone(), running.clone()], &[], true);
         assert!(running_view.decision.is_none());
         assert_eq!(running_view.actions, vec!["Открыть задачу"]);
         assert!(!running_view.actions.contains(&"Подтвердить"));
 
-        let empty = object_view_content(&intent, &[intent.clone()], &[]);
+        let empty = object_view_content_with(&intent, &[intent.clone()], &[], true);
         assert!(empty.decision.is_none());
         assert!(empty.actions.is_empty());
 
@@ -23859,7 +23854,7 @@ mod tests {
     #[test]
     fn object_view_content_for_an_intent_without_a_task_stays_truthful() {
         let intent = intent_entity("Пустое намерение");
-        let content = object_view_content(&intent, &[intent.clone()], &[]);
+        let content = object_view_content_with(&intent, &[intent.clone()], &[], true);
         assert_eq!(content.state, UniversalState::Idle);
         assert_eq!(content.status, "Нет задачи");
         assert_eq!(content.related, None);
@@ -23895,21 +23890,21 @@ mod tests {
         let entities = vec![intent.clone(), task.clone(), action.clone(), result.clone()];
         let relationships = vec![executes, produces];
 
-        let intent_view = object_view_content(&intent, &entities, &relationships);
+        let intent_view = object_view_content_with(&intent, &entities, &relationships, true);
         assert_eq!(
             intent_view.related.as_deref(),
             Some("Задача: Собрать слайды → Действие: Экспорт PDF")
         );
         assert_eq!(intent_view.actions, vec!["Открыть задачу"]);
 
-        let task_view = object_view_content(&task, &entities, &relationships);
+        let task_view = object_view_content_with(&task, &entities, &relationships, true);
         assert_eq!(
             task_view.related.as_deref(),
             Some("Намерение: Подготовить демо → Действие: Экспорт PDF")
         );
         assert_eq!(task_view.actions, vec!["Открыть действие"]);
 
-        let action_view = object_view_content(&action, &entities, &relationships);
+        let action_view = object_view_content_with(&action, &entities, &relationships, true);
         assert_eq!(
             action_view.related.as_deref(),
             Some("Намерение: Подготовить демо → Задача: Собрать слайды")
@@ -23917,7 +23912,7 @@ mod tests {
         assert_eq!(action_view.actions, vec!["Открыть результат"]);
         assert_eq!(action_view.status, "Ожидает запуска");
 
-        let result_view = object_view_content(&result, &entities, &relationships);
+        let result_view = object_view_content_with(&result, &entities, &relationships, true);
         assert_eq!(result_view.state, UniversalState::Running);
         assert_eq!(result_view.status, "Выполняется");
         assert_eq!(result_view.observation.as_deref(), Some("файл на диске"));
@@ -23950,14 +23945,14 @@ mod tests {
         );
         let entities = vec![intent.clone(), task.clone(), action.clone(), result.clone()];
         let relationships = vec![executes, produces];
-        let intent_view = object_view_content(&intent, &entities, &relationships);
+        let intent_view = object_view_content_with(&intent, &entities, &relationships, true);
         assert_eq!(intent_view.status, "Проверяется");
         assert_eq!(
             intent_view.related.as_deref(),
             Some("Задача: Собрать слайды → Действие: Экспорт PDF")
         );
         assert_eq!(intent_view.observation, None);
-        let result_view = object_view_content(&result, &entities, &relationships);
+        let result_view = object_view_content_with(&result, &entities, &relationships, true);
         assert_eq!(result_view.state, UniversalState::Running);
         assert_eq!(result_view.status, "Проверяется");
         assert_ne!(result_view.status, "Готово");
@@ -23987,13 +23982,13 @@ mod tests {
         );
         let entities = vec![intent.clone(), task.clone(), action.clone(), result.clone()];
         let relationships = vec![executes, produces];
-        let intent_view = object_view_content(&intent, &entities, &relationships);
+        let intent_view = object_view_content_with(&intent, &entities, &relationships, true);
         assert_eq!(
             intent_view.related.as_deref(),
             Some("Задача: Собрать слайды → Действие: Экспорт PDF → Результат: PDF готов")
         );
         assert_eq!(intent_view.observation.as_deref(), Some("файл на диске"));
-        let result_view = object_view_content(&result, &entities, &relationships);
+        let result_view = object_view_content_with(&result, &entities, &relationships, true);
         assert_eq!(result_view.state, UniversalState::Complete);
         assert_eq!(result_view.status, "Готово");
     }
@@ -24026,11 +24021,11 @@ mod tests {
         );
         let entities = vec![intent.clone(), task.clone(), action.clone(), result.clone()];
         let relationships = vec![executes, produces];
-        let result_view = object_view_content(&result, &entities, &relationships);
+        let result_view = object_view_content_with(&result, &entities, &relationships, true);
         assert_eq!(result_view.state, UniversalState::Failed);
         assert_eq!(result_view.status, "Таймаут");
         assert_ne!(result_view.status, "Готово");
-        let intent_view = object_view_content(&intent, &entities, &relationships);
+        let intent_view = object_view_content_with(&intent, &entities, &relationships, true);
         assert_eq!(intent_view.status, "Таймаут");
     }
 
@@ -24047,7 +24042,7 @@ mod tests {
             serde_json::json!([draft.id.to_string()]),
         );
         let content =
-            object_view_content(&intent, &[intent.clone(), draft.clone(), send.clone()], &[]);
+            object_view_content_with(&intent, &[intent.clone(), draft.clone(), send.clone()], &[], true);
         assert_eq!(
             content.related.as_deref(),
             Some("План: Черновик → Отправить")
@@ -24076,13 +24071,13 @@ mod tests {
             serde_json::json!([draft.id.to_string()]),
         );
         let content =
-            object_view_content(&intent, &[intent.clone(), draft.clone(), send.clone()], &[]);
+            object_view_content_with(&intent, &[intent.clone(), draft.clone(), send.clone()], &[], true);
         assert_eq!(
             content.related.as_deref(),
             Some("План: Черновик → Отправить · Перепланировано")
         );
         let plain = intent_entity("Без переплана");
-        let plain_view = object_view_content(&plain, &[plain.clone()], &[]);
+        let plain_view = object_view_content_with(&plain, &[plain.clone()], &[], true);
         assert_eq!(plain_view.related, None);
         assert_eq!(plain_view.status, "Нет задачи");
     }
@@ -24093,7 +24088,7 @@ mod tests {
         let mut task = task_entity("Бежит", Some(intent.id));
         task.properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let content = object_view_content(&intent, &[intent.clone(), task.clone()], &[]);
+        let content = object_view_content_with(&intent, &[intent.clone(), task.clone()], &[], true);
         assert_eq!(content.related.as_deref(), Some("Задача: Бежит"));
         assert!(!content.related.as_deref().unwrap().contains("Действие"));
         assert_eq!(content.activity, None);
@@ -24104,8 +24099,8 @@ mod tests {
     fn object_view_hides_workers_without_an_action() {
         let waiting = task_entity("Подтвердите удаление", None);
         let intent = intent_entity("Пустое намерение");
-        let waiting_content = object_view_content(&waiting, &[waiting.clone()], &[]);
-        let intent_content = object_view_content(&intent, &[intent.clone()], &[]);
+        let waiting_content = object_view_content_with(&waiting, &[waiting.clone()], &[], true);
+        let intent_content = object_view_content_with(&intent, &[intent.clone()], &[], true);
         assert!(waiting_content.agent.is_none());
         assert!(intent_content.agent.is_none());
         assert!(!object_view_details(&waiting_content)
@@ -24125,7 +24120,7 @@ mod tests {
             .insert("status".into(), serde_json::Value::String("running".into()));
         let action = action_entity("Экспорт PDF", task.id, "running");
         let entities = vec![task.clone(), action.clone()];
-        let content = object_view_content(&task, &entities, &[]);
+        let content = object_view_content_with(&task, &entities, &[], true);
         assert_eq!(
             object_view_history_lines(&content),
             vec!["Исполнение: Экспорт PDF".to_string()]
@@ -24179,7 +24174,7 @@ mod tests {
             .insert("status".into(), serde_json::Value::String("running".into()));
         let action = action_entity("Экспорт PDF", task.id, "running");
         let entities = vec![task.clone(), action.clone()];
-        let content = object_view_content(&task, &entities, &[]);
+        let content = object_view_content_with(&task, &entities, &[], true);
         assert_eq!(content.state, UniversalState::Running);
         assert_eq!(content.activity, None);
         assert_eq!(
@@ -24207,7 +24202,7 @@ mod tests {
         let action = action_entity("Экспорт PDF", task.id, "done");
         let result = result_entity("PDF готов", task.id, action.id, "файл на диске");
         let entities = vec![task.clone(), action.clone(), result.clone()];
-        let content = object_view_content(&task, &entities, &[]);
+        let content = object_view_content_with(&task, &entities, &[], true);
         assert_eq!(content.state, UniversalState::Complete);
         assert_eq!(content.activity, None);
         assert_eq!(content.observation.as_deref(), Some("файл на диске"));
@@ -24228,7 +24223,7 @@ mod tests {
         );
         let mut child = test_entity("saaios.task", child_properties);
         child.title = "Потомок".into();
-        let content = object_view_content(&child, &[parent.clone(), child.clone()], &[]);
+        let content = object_view_content_with(&child, &[parent.clone(), child.clone()], &[], true);
         assert_eq!(content.state, UniversalState::Blocked);
         assert_eq!(content.status, "Ждёт зависимости");
         assert_eq!(content.blocker.as_deref(), Some("Ждёт: Родитель"));
@@ -24254,7 +24249,7 @@ mod tests {
                 "summary": "Завершить процесс 999"
             }),
         );
-        let content = object_view_content(&task, &[task.clone(), action.clone()], &[]);
+        let content = object_view_content_with(&task, &[task.clone(), action.clone()], &[], true);
         assert_eq!(content.state, UniversalState::Attention);
         assert_eq!(content.consequence, None);
         let decision = content
@@ -24293,7 +24288,7 @@ mod tests {
     fn object_view_explains_unavailable_oam_without_inventing_a_button() {
         let mut display = test_entity("saaios.display", serde_json::Map::new());
         display.title = "Экран".to_string();
-        let content = object_view_content(&display, &[display.clone()], &[]);
+        let content = object_view_content_with(&display, &[display.clone()], &[], true);
         assert_eq!(content.permission, None);
         assert!(content.actions.is_empty());
         let details = object_view_details(&content);
@@ -24304,7 +24299,7 @@ mod tests {
     #[test]
     fn object_view_omits_oam_permission_when_no_spec_applies() {
         let task = task_entity("Обычная задача", None);
-        let content = object_view_content(&task, &[task.clone()], &[]);
+        let content = object_view_content_with(&task, &[task.clone()], &[], true);
         assert_eq!(content.permission, None);
         assert_eq!(content.actions, vec!["Подтвердить", "Отклонить"]);
     }
@@ -24314,7 +24309,7 @@ mod tests {
         let intent = intent_entity("Напомни поливать цветы");
         let task = task_entity("Подтвердите: полить цветы", Some(intent.id));
         let selected_entities = vec![intent.clone(), task.clone()];
-        let content = object_view_content(&task, &selected_entities, &[]);
+        let content = object_view_content_with(&task, &selected_entities, &[], true);
         assert_eq!(
             content.related,
             Some("Намерение: Напомни поливать цветы".to_string())
@@ -24324,7 +24319,7 @@ mod tests {
     #[test]
     fn object_view_content_for_a_notification_shows_its_body_and_a_dismiss_action() {
         let notification = notification_entity("Маджонг: победа!", "Хорошая игра");
-        let content = object_view_content(&notification, &[], &[]);
+        let content = object_view_content_with(&notification, &[], &[], true);
         assert_eq!(content.title, "Маджонг: победа!");
         assert_eq!(content.state, UniversalState::Attention);
         assert_eq!(content.status, "Хорошая игра");
@@ -24349,7 +24344,7 @@ mod tests {
         );
         let mut entity = test_entity("some.unknown.type", properties);
         entity.title = "Загадочный объект".to_string();
-        let content = object_view_content(&entity, &[], &[]);
+        let content = object_view_content_with(&entity, &[], &[], true);
         assert_eq!(content.title, "Загадочный объект");
         assert!(!content.status.is_empty());
         assert!(content.status.contains("some_number"));
@@ -24367,7 +24362,7 @@ mod tests {
     fn object_view_content_for_an_unknown_entity_type_with_no_properties_still_has_a_status_line() {
         let mut entity = test_entity("some.other.unknown", serde_json::Map::new());
         entity.title = "Пустой объект".to_string();
-        let content = object_view_content(&entity, &[], &[]);
+        let content = object_view_content_with(&entity, &[], &[], true);
         assert_eq!(content.status, "Нет дополнительных данных");
         assert_eq!(content.related, None);
     }
@@ -24408,7 +24403,7 @@ mod tests {
             Provenance::System,
             None,
         );
-        let content = object_view_content(&task, &[intent.clone(), task.clone()], &[relationship]);
+        let content = object_view_content_with(&task, &[intent.clone(), task.clone()], &[relationship], true);
         assert_eq!(
             content.related,
             Some("Намерение: Подготовить демо".to_string())
@@ -24428,7 +24423,7 @@ mod tests {
             None,
         );
         let peer = other.id;
-        let content = object_view_content(&entity, &[other.clone()], &[relationship.clone()]);
+        let content = object_view_content_with(&entity, &[other.clone()], &[relationship.clone()], true);
         assert_eq!(content.related, Some("Связано: Сервер".to_string()));
         assert!(content.actions.is_empty());
         assert_eq!(
@@ -24452,7 +24447,7 @@ mod tests {
             },
             Some(0.68),
         );
-        let content = object_view_content(&entity, &[other], &[relationship]);
+        let content = object_view_content_with(&entity, &[other], &[relationship], true);
         assert_eq!(
             content.related,
             Some("Возможно связано · 68% · dev-eks".to_string())
@@ -24479,7 +24474,7 @@ mod tests {
             Provenance::User,
             None,
         );
-        let content = object_view_content(&entity, &[server, note], &[outgoing, incoming]);
+        let content = object_view_content_with(&entity, &[server, note], &[outgoing, incoming], true);
         let related = content.related.expect("existing links");
         assert!(related.contains("Связано: Сервер"));
         assert!(related.contains("Связано: Заметка"));
@@ -24504,10 +24499,11 @@ mod tests {
             Provenance::User,
             None,
         );
-        let content = object_view_content(
+        let content = object_view_content_with(
             &entity,
             std::slice::from_ref(&entity),
             &[dangling, membership],
+            true,
         );
         assert_eq!(content.related, None);
         assert_eq!(content.status, "Нет дополнительных данных");
@@ -24525,7 +24521,7 @@ mod tests {
         properties.insert("note".into(), serde_json::Value::String("hello".into()));
         let mut entity = test_entity("device.note", properties);
         entity.title = "Заметка".to_string();
-        let content = object_view_content(&entity, &[], &[]);
+        let content = object_view_content_with(&entity, &[], &[], true);
         assert!(content.status.contains("hello"));
         assert!(!content.status.contains("intent_id"));
         assert!(!content.status.contains(&intent_id));
@@ -27038,7 +27034,7 @@ mod tests {
     #[test]
     fn object_view_summary_keeps_identity_apart_from_status() {
         let intent = intent_entity("Пустое намерение");
-        let content = object_view_content(&intent, &[intent.clone()], &[]);
+        let content = object_view_content_with(&intent, &[intent.clone()], &[], true);
         let summary = object_view_summary(&intent, &content);
         assert_eq!(summary.title, "Пустое намерение");
         assert_eq!(
