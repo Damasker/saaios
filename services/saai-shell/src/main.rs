@@ -1392,39 +1392,58 @@ struct ProcCampRow<'a> {
     holds_endpoint: bool,
 }
 
-fn proc_camp_presence_from_rows(rows: &[ProcCampRow<'_>]) -> ProcCampPresence {
-    let mut owner = false;
-    let mut status_query = false;
-    let mut owner_has = false;
-    let mut modemd_has = false;
-    for row in rows {
-        if saai_observation::cmdline_is_camp_owner(row.cmdline) {
-            owner = true;
-        }
-        let argv0 = row.cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
-        let argv0 = String::from_utf8_lossy(argv0);
-        if argv0.ends_with("/sit-sim-status") {
-            status_query = true;
-        }
-        let kind = if argv0.ends_with("/modem-rfs-camp-combined-owner") {
-            Some("owner")
-        } else if argv0.ends_with("/saai-modemd") {
-            Some("modemd")
-        } else {
-            None
-        };
-        if let (Some(kind), true) = (kind, row.holds_endpoint) {
-            match kind {
-                "owner" => owner_has = true,
-                _ => modemd_has = true,
-            }
+#[derive(Default)]
+struct ProcCampScan {
+    owner: bool,
+    status_query: bool,
+    owner_has: bool,
+    modemd_has: bool,
+}
+
+fn proc_camp_presence_apply(scan: &mut ProcCampScan, row: ProcCampRow<'_>) {
+    if saai_observation::cmdline_is_camp_owner(row.cmdline) {
+        scan.owner = true;
+    }
+    let argv0 = row.cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+    let argv0 = String::from_utf8_lossy(argv0);
+    if argv0.ends_with("/sit-sim-status") {
+        scan.status_query = true;
+    }
+    let kind = if argv0.ends_with("/modem-rfs-camp-combined-owner") {
+        Some("owner")
+    } else if argv0.ends_with("/saai-modemd") {
+        Some("modemd")
+    } else {
+        None
+    };
+    if let (Some(kind), true) = (kind, row.holds_endpoint) {
+        match kind {
+            "owner" => scan.owner_has = true,
+            _ => scan.modemd_has = true,
         }
     }
+}
+
+fn proc_camp_presence_finish(scan: ProcCampScan) -> ProcCampPresence {
     ProcCampPresence {
-        owner,
-        status_query,
-        endpoint: saai_observation::endpoint_holder(owner_has, modemd_has),
+        owner: scan.owner,
+        status_query: scan.status_query,
+        endpoint: saai_observation::endpoint_holder(scan.owner_has, scan.modemd_has),
     }
+}
+
+fn proc_camp_presence_from_rows(rows: &[ProcCampRow<'_>]) -> ProcCampPresence {
+    let mut scan = ProcCampScan::default();
+    for row in rows {
+        proc_camp_presence_apply(
+            &mut scan,
+            ProcCampRow {
+                cmdline: row.cmdline,
+                holds_endpoint: row.holds_endpoint,
+            },
+        );
+    }
+    proc_camp_presence_finish(scan)
 }
 
 fn proc_pid_holds_modem_endpoint(proc_dir: &Path) -> bool {
@@ -1447,7 +1466,7 @@ fn proc_camp_presence() -> ProcCampPresence {
             endpoint: None,
         };
     };
-    let mut collected = Vec::new();
+    let mut scan = ProcCampScan::default();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
@@ -1462,16 +1481,15 @@ fn proc_camp_presence() -> ProcCampPresence {
         let check_fd = argv0.ends_with("/modem-rfs-camp-combined-owner")
             || argv0.ends_with("/saai-modemd");
         let holds_endpoint = check_fd && proc_pid_holds_modem_endpoint(&entry.path());
-        collected.push((cmdline, holds_endpoint));
+        proc_camp_presence_apply(
+            &mut scan,
+            ProcCampRow {
+                cmdline: &cmdline,
+                holds_endpoint,
+            },
+        );
     }
-    let rows: Vec<ProcCampRow<'_>> = collected
-        .iter()
-        .map(|(cmdline, holds_endpoint)| ProcCampRow {
-            cmdline,
-            holds_endpoint: *holds_endpoint,
-        })
-        .collect();
-    proc_camp_presence_from_rows(&rows)
+    proc_camp_presence_finish(scan)
 }
 
 #[allow(dead_code)]
@@ -27736,6 +27754,31 @@ mod tests {
         assert!(!empty.owner);
         assert!(!empty.status_query);
         assert!(empty.endpoint.is_none());
+    }
+
+    #[test]
+    fn proc_camp_presence_apply_classifies_without_a_row_list() {
+        let mut scan = super::ProcCampScan::default();
+        super::proc_camp_presence_apply(
+            &mut scan,
+            super::ProcCampRow {
+                cmdline: b"/data/saaios/bin/modem-rfs-camp-combined-owner\0",
+                holds_endpoint: true,
+            },
+        );
+        super::proc_camp_presence_apply(
+            &mut scan,
+            super::ProcCampRow {
+                cmdline: b"/data/saaios/bin/sit-sim-status\0",
+                holds_endpoint: false,
+            },
+        );
+        let got = super::proc_camp_presence_finish(scan);
+        assert!(got.owner);
+        assert!(got.status_query);
+        assert_eq!(got.endpoint, Some("owner"));
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("let mut collected = ", "Vec::new();")));
     }
 
     #[test]
