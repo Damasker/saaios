@@ -459,6 +459,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 Me net next turn | camp facts skip `wpa_cli`/`df`; Wi-Fi and storage next loop **host** (ADR-686; dest-no-lock stays off; do not type PSK; leave Сейчас) |
 | VUI-09 Me net flash | ADR-686 deferred Wi-Fi/`df` on `/data` **на panther** (ADR-687; `04308074…`; dest-no-lock stays off; `surface=me`; do not type PSK; leave Сейчас) |
 | VUI-09 proc camp inline | classify `/proc` camp presence without a cmdline `Vec` **host** (ADR-688; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 proc camp inline flash | ADR-688 inline classify on `/data` **на panther** (ADR-689; `0e6ea3d9…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -715,6 +716,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 Me net next turn: camp facts skip `wpa_cli`/`df`; Wi-Fi and storage next loop (ADR-686; host; dest-no-lock stays off; do not type PSK)
 - VUI-09 Me net flash: ADR-686 deferred Wi-Fi/`df` on `/data` (ADR-687; `04308074…`; dest-no-lock stays off; `surface=me`; do not type PSK)
 - VUI-09 proc camp inline: classify `/proc` camp presence without a cmdline `Vec` (ADR-688; host; dest-no-lock stays off)
+- VUI-09 proc camp inline flash: ADR-688 inline classify on `/data` (ADR-689; `0e6ea3d9…`; dest-no-lock stays off; `surface=me`)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

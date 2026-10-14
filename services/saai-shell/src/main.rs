@@ -1432,6 +1432,7 @@ fn proc_camp_presence_finish(scan: ProcCampScan) -> ProcCampPresence {
     }
 }
 
+#[allow(dead_code)]
 fn proc_camp_presence_from_rows(rows: &[ProcCampRow<'_>]) -> ProcCampPresence {
     let mut scan = ProcCampScan::default();
     for row in rows {

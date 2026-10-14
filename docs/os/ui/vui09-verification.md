@@ -448,6 +448,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   stays off. `surface=me` then process `S`. Do not type PSK.
   Inline `/proc` camp classify (ADR-688; host). dest-no-lock stays
   off.
+  Inline classify on `/data` (ADR-689; `0e6ea3d9…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
