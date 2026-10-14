@@ -3239,26 +3239,14 @@ pub fn draw_now(
                             );
                         }
                         SystemSectionRow::Task(task) => {
-                            let status = task.status();
-                            cursor_y += draw_status_indicator(
+                            cursor_y += draw_gallery_task(
                                 canvas,
                                 fonts,
-                                &status,
+                                task,
                                 left,
                                 cursor_y,
                                 content_width,
                             );
-                            if let Some(related) = task.related_text() {
-                                draw_semantic_text(
-                                    canvas,
-                                    fonts,
-                                    &related,
-                                    left,
-                                    cursor_y,
-                                    content_width,
-                                );
-                                cursor_y += scaled_line_height(TextRole::Caption);
-                            }
                         }
                         SystemSectionRow::Intent(intent) => {
                             draw_semantic_text(
@@ -4127,6 +4115,35 @@ mod tests {
             scaled_line_height(TextRole::Body).max(physical(IconSize::Medium.value()))
         );
         assert!(short.related_text().is_none());
+    }
+
+    #[test]
+    fn sistema_task_live_paint_uses_title_lines() {
+        let src = include_str!("render.rs");
+        let task_arm = src
+            .split("SystemSectionRow::Task(task) => {")
+            .nth(1)
+            .expect("task arm")
+            .split("SystemSectionRow::Intent")
+            .next()
+            .expect("intent arm");
+        assert!(task_arm.contains("draw_gallery_task"));
+        assert!(!task_arm.contains("draw_status_indicator"));
+        let task = TaskSummary::new(
+            "Копирует файлы на этот телефон",
+            UniversalState::Running,
+        )
+        .with_related("Подготовить демо");
+        let (lines, height) = gallery_task_paint(&task, |text| text.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            height,
+            scaled_line_height(TextRole::Body) * 2 + scaled_line_height(TextRole::Caption)
+        );
+        assert_eq!(
+            task.related_text().map(|text| text.content),
+            Some("Подготовить демо".into())
+        );
     }
 
     #[test]
