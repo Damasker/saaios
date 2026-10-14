@@ -2873,7 +2873,7 @@ fn open_pin_setup_state() -> PinSetupState {
 }
 
 /// One row of `wifi_scan_results()`'s output, or a fixed trailing
-/// "Обновить"/"Назад" control row -- returned by `wifi_list_action_at`
+/// "Обновить"/"Назад" control row -- returned by `wifi_list_action_at_scrolled`
 /// the same way `InboxRowKind` disambiguates "Входящие"'s rows.
 /// Empty scan occupies one non-tappable `WifiRow`, so Refresh/Back
 /// sit after `wifi_list_row_count`, not after a zero-length list.
@@ -2928,15 +2928,6 @@ fn wifi_list_scroll_max(network_count: usize, width: u32, height: u32) -> i32 {
         height,
         wifi_list_scroll_content(width, height, network_count),
     )
-}
-
-fn wifi_list_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    network_count: usize,
-) -> Option<WifiListTap> {
-    wifi_list_action_at_scrolled(pos, width, height, network_count, 0)
 }
 
 fn wifi_list_action_at_scrolled(
@@ -12437,7 +12428,7 @@ impl Shell {
             }
         } else if let Some(networks) = &self.wifi_list {
             // S19 / ADR-129: runtime-sized WifiRow list plus trailing
-            // refresh/back cards -- see `wifi_list_action_at`.
+            // refresh/back cards -- see `wifi_list_action_at_scrolled`.
             // ADR-146: header is a real `ContextHeader`, not a Surface
             // strip. ADR-226: paint rects from the same tree as hits.
             let connected = wifi_connected_ssid();
@@ -16145,7 +16136,7 @@ mod tests {
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at, trusted_client_card_from_row, trusted_client_is_protected,
         trusted_client_list_rows, trusted_client_revoke_decision, trusted_header,
-        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at,
+        upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at_scrolled,
         wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
         AgentSummary, AppSummary, BluetoothDevice, BluetoothListTap, ContextFrameEntry,
         ContextSource, DataRowVariant, Entity, FieldKind, HealthReport, HealthState, Keyboard,
@@ -16764,28 +16755,31 @@ mod tests {
             )
         };
         assert!(matches!(
-            wifi_list_action_at(center(network_0), width, height, network_count),
+            wifi_list_action_at_scrolled(center(network_0), width, height, network_count, 0),
             Some(WifiListTap::Network(0))
         ));
         assert!(matches!(
-            wifi_list_action_at(center(network_1), width, height, network_count),
+            wifi_list_action_at_scrolled(center(network_1), width, height, network_count, 0),
             Some(WifiListTap::Network(1))
         ));
         assert!(matches!(
-            wifi_list_action_at(center(refresh), width, height, network_count),
+            wifi_list_action_at_scrolled(center(refresh), width, height, network_count, 0),
             Some(WifiListTap::Refresh)
         ));
         assert!(matches!(
-            wifi_list_action_at(center(back), width, height, network_count),
+            wifi_list_action_at_scrolled(center(back), width, height, network_count, 0),
             Some(WifiListTap::Back)
         ));
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn wifi_list_action_at", "(")));
+        assert!(src.contains("fn wifi_list_action_at_scrolled("));
     }
 
     #[test]
     fn wifi_list_action_at_misses_above_the_first_row() {
         let width = 1080;
         let height = 2400;
-        assert!(wifi_list_action_at((10.0, 10.0), width, height, 0).is_none());
+        assert!(wifi_list_action_at_scrolled((10.0, 10.0), width, height, 0, 0).is_none());
         let empty = stacked_row_rect(0, width, height);
         let refresh = stacked_row_rect(1, width, height);
         let back = stacked_row_rect(2, width, height);
@@ -16795,13 +16789,13 @@ mod tests {
                 (rect.y + rect.height / 2) as f64,
             )
         };
-        assert!(wifi_list_action_at(center(empty), width, height, 0).is_none());
+        assert!(wifi_list_action_at_scrolled(center(empty), width, height, 0, 0).is_none());
         assert!(matches!(
-            wifi_list_action_at(center(refresh), width, height, 0),
+            wifi_list_action_at_scrolled(center(refresh), width, height, 0, 0),
             Some(WifiListTap::Refresh)
         ));
         assert!(matches!(
-            wifi_list_action_at(center(back), width, height, 0),
+            wifi_list_action_at_scrolled(center(back), width, height, 0, 0),
             Some(WifiListTap::Back)
         ));
     }
@@ -16827,7 +16821,7 @@ mod tests {
             (back.y + back.height / 2) as f64,
         );
         assert!(matches!(
-            wifi_list_action_at(center, width, height, network_count),
+            wifi_list_action_at_scrolled(center, width, height, network_count, 0),
             Some(WifiListTap::Back)
         ));
     }
@@ -16861,7 +16855,7 @@ mod tests {
             (last_slot.x + last_slot.width / 2) as f64,
             (last_slot.y + last_slot.height / 2) as f64,
         );
-        assert!(wifi_list_action_at(last_point, width, height, network_count).is_none());
+        assert!(wifi_list_action_at_scrolled(last_point, width, height, network_count, 0).is_none());
         let scrolled = super::layout_live_v2_scrolled(
             &super::wifi_v2_source(network_count),
             "ADR-495 wifi overflow",
