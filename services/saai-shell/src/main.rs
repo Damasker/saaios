@@ -9082,8 +9082,68 @@ fn me_facts_for_first_paint(mut facts: MeFacts, obs_ready: bool) -> (MeFacts, bo
     (facts, pending)
 }
 
-fn me_fill_blocks_idle(facts_pending: bool, obs_pending: bool) -> bool {
-    facts_pending || obs_pending
+fn me_fill_blocks_idle(facts_pending: bool, full_pending: bool, obs_pending: bool) -> bool {
+    facts_pending || full_pending || obs_pending
+}
+
+fn me_facts_without_live_probes(mut facts: MeFacts) -> MeFacts {
+    facts.storage = "неизвестно".into();
+    facts.wifi_status.clear();
+    facts.wifi_status_readable = false;
+    facts.observations.clear();
+    facts.memory_records.clear();
+    facts.cellular_ifaces.clear();
+    facts.cellular_cp = None;
+    facts.cellular_registration_raw = None;
+    facts.cellular_voice_raw = None;
+    facts.cellular_radio = None;
+    facts.cellular_selection = None;
+    facts.cellular_stack = None;
+    facts.cellular_device_service = None;
+    facts.cellular_voice_operation = None;
+    facts.cellular_allow_data = None;
+    facts.cellular_initial_attach = None;
+    facts.cellular_dns = None;
+    facts.cellular_dns6 = None;
+    facts.cellular_config = None;
+    facts.cellular_sgc = None;
+    facts.cellular_power = None;
+    facts.cellular_voice_set = None;
+    facts.cellular_ipv4 = None;
+    facts.cellular_ipv6 = None;
+    facts.cellular_setup = None;
+    facts.cellular_profile = None;
+    facts.cellular_activity = None;
+    facts.cellular_fastdorm = None;
+    facts.cellular_endc = None;
+    facts.cellular_throttle = None;
+    facts.cellular_unsolff = None;
+    facts.cellular_unsol = None;
+    facts.cellular_screen = None;
+    facts.cellular_cellinfo = None;
+    facts.cellular_smsc = None;
+    facts.cellular_vonrget = None;
+    facts.cellular_aptime = None;
+    facts.cellular_dbgtrace = None;
+    facts.cellular_tty = None;
+    facts.cellular_pssvc = None;
+    facts.cellular_prefmodem = None;
+    facts.cellular_slot = None;
+    facts.cellular_sigcrit = None;
+    facts.cellular_smsact = None;
+    facts.cellular_linkcrit = None;
+    facts.cellular_smscb = None;
+    facts.cellular_calllist = None;
+    facts.cellular_gpslock = None;
+    facts.cellular_gpsnfw = None;
+    facts.cellular_samode = None;
+    facts.cellular_sim = None;
+    facts.cellular_owner = None;
+    facts.cellular_endpoint = None;
+    facts.cellular_supervisor = None;
+    facts.cellular_action = None;
+    facts.cellular_open = None;
+    facts
 }
 
 fn ensure_me_row_cache(
@@ -10081,6 +10141,8 @@ fn main() {
         me_facts_pending: false,
         me_obs_ready: false,
         me_obs_pending: false,
+        me_full_ready: false,
+        me_full_pending: false,
         me_facts_held: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
@@ -10156,6 +10218,14 @@ fn main() {
     while !shell.exit {
         if shell.me_facts_pending {
             shell.me_facts_pending = false;
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_full_pending {
+            shell.me_full_pending = false;
+            shell.me_full_ready = true;
+            shell.invalidate_me_rows();
             shell.capture_me_rows();
             if !shell.locked && shell.current_page == RootPage::Me {
                 shell.draw(&conn, &qh);
@@ -10452,6 +10522,10 @@ struct Shell {
     /// live observation rows so the first Sistema list can commit.
     me_obs_ready: bool,
     me_obs_pending: bool,
+    /// First flatten is settings + sysfs. The next turn runs the live
+    /// `me_facts()` probes (`wpa_cli` / `df` / `/proc` / runtime).
+    me_full_ready: bool,
+    me_full_pending: bool,
     /// First `me_facts()` kept for the observation turn so the second
     /// flatten does not shell out again.
     me_facts_held: Option<MeFacts>,
@@ -13630,7 +13704,16 @@ impl Shell {
 
     fn capture_me_rows(&mut self) -> usize {
         if self.me_row_cache.is_none() {
-            let raw = self.me_facts_held.take().unwrap_or_else(|| self.me_facts());
+            let raw = self.me_facts_held.take().unwrap_or_else(|| {
+                if self.me_full_ready {
+                    self.me_facts()
+                } else {
+                    self.me_facts_chrome()
+                }
+            });
+            if !self.me_full_ready {
+                self.me_full_pending = true;
+            }
             let hold = if !self.me_obs_ready && !raw.observations.is_empty() {
                 Some(raw.clone())
             } else {
@@ -14465,6 +14548,133 @@ impl Shell {
             vec![render::ActionCardView::new("Назад", "", "Назад")],
             &[String::from("back")],
         )
+    }
+
+    fn me_facts_chrome(&self) -> MeFacts {
+        let total_entities: usize = self.entity_counts.values().sum();
+        let apps = self
+            .installed_apps
+            .values()
+            .map(|app| {
+                let grants = self
+                    .apps_grants
+                    .get(&app.id)
+                    .map(|granted| {
+                        if granted.is_empty() {
+                            "без разрешений".to_string()
+                        } else {
+                            granted
+                                .iter()
+                                .map(|name| capability_label(name))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    })
+                    .unwrap_or_else(|| "без разрешений".to_string());
+                MeAppFact {
+                    name: app.name.clone(),
+                    state: app_state_label(&app.state).to_string(),
+                    grants,
+                }
+            })
+            .collect();
+        let (node_class, node_target, node_arch) =
+            node_identity_resolved(None, phone_gate_surface());
+        me_facts_without_live_probes(MeFacts {
+            space_count: self.spaces.len(),
+            entity_count: total_entities,
+            build_id: env!("SAAIOS_BUILD_ID").to_string(),
+            model: node_model_resolved(None, hardware_model()),
+            node_class: node_class.to_string(),
+            node_target: node_target.to_string(),
+            node_arch: node_arch.to_string(),
+            kernel: kernel_release(),
+            uptime: uptime_string(),
+            storage: String::new(),
+            brightness_pct: self.settings.brightness_pct,
+            idle_timeout_secs: self.settings.idle_timeout_secs,
+            deep_idle_timeout_secs: self.settings.deep_idle_timeout_secs,
+            utc_offset_minutes: self.settings.utc_offset_minutes,
+            boot_slot: boot_slot(),
+            boot_attempts: boot_attempts(),
+            volume_pct: self.settings.volume_pct,
+            playback_ready: playback_ready(),
+            wifi_status: String::new(),
+            wifi_present: wifi_adapter_present(),
+            wifi_status_readable: false,
+            bluetooth_paired: 0,
+            bluetooth_present: bluetooth_adapter_present(),
+            cellular_ifaces: Vec::new(),
+            cellular_cp: None,
+            cellular_registration_raw: None,
+            cellular_voice_raw: None,
+            cellular_radio: None,
+            cellular_selection: None,
+            cellular_stack: None,
+            cellular_device_service: None,
+            cellular_voice_operation: None,
+            cellular_allow_data: None,
+            cellular_initial_attach: None,
+            cellular_dns: None,
+            cellular_dns6: None,
+            cellular_config: None,
+            cellular_sgc: None,
+            cellular_power: None,
+            cellular_voice_set: None,
+            cellular_ipv4: None,
+            cellular_ipv6: None,
+            cellular_setup: None,
+            cellular_profile: None,
+            cellular_activity: None,
+            cellular_fastdorm: None,
+            cellular_endc: None,
+            cellular_throttle: None,
+            cellular_unsolff: None,
+            cellular_unsol: None,
+            cellular_screen: None,
+            cellular_cellinfo: None,
+            cellular_smsc: None,
+            cellular_vonrget: None,
+            cellular_aptime: None,
+            cellular_dbgtrace: None,
+            cellular_tty: None,
+            cellular_pssvc: None,
+            cellular_prefmodem: None,
+            cellular_slot: None,
+            cellular_sigcrit: None,
+            cellular_smsact: None,
+            cellular_linkcrit: None,
+            cellular_smscb: None,
+            cellular_calllist: None,
+            cellular_gpslock: None,
+            cellular_gpsnfw: None,
+            cellular_samode: None,
+            cellular_sim: None,
+            cellular_owner: None,
+            cellular_endpoint: None,
+            cellular_supervisor: None,
+            cellular_action: None,
+            cellular_open: None,
+            camera_nodes: Vec::new(),
+            pin_set: self.settings.pin_code.is_some(),
+            lock_widgets_label: self.settings.lock_widgets.label().to_string(),
+            text_scale_pct: self.settings.text_scale_pct,
+            contrast_pct: self.settings.contrast_pct,
+            remote_access: self.settings.remote_access_enabled,
+            trusted_client_count: 0,
+            space_color_label: space_color(&self.system_space_entities, &self.selected_space_id)
+                .label()
+                .to_string(),
+            space_name: space_display_name(&self.spaces, &self.selected_space_id),
+            orb_enabled: self.settings.orb_enabled,
+            reduced_motion: self.settings.reduced_motion,
+            haptics_enabled: self.settings.haptics_enabled,
+            entityd_connected: self.entityd.is_connected(),
+            appd_connected: self.appd.is_connected(),
+            apps,
+            observations: Vec::new(),
+            memory_records: Vec::new(),
+        })
     }
 
     fn me_facts(&self) -> MeFacts {
@@ -15401,7 +15611,11 @@ impl Shell {
     /// separate timer source.
     fn check_idle_timeout(&mut self, qh: &QueueHandle<Self>) {
         if self.dev_no_lock
-            || me_fill_blocks_idle(self.me_facts_pending, self.me_obs_pending)
+            || me_fill_blocks_idle(
+                self.me_facts_pending,
+                self.me_full_pending,
+                self.me_obs_pending,
+            )
         {
             return;
         }
@@ -27213,9 +27427,29 @@ mod tests {
 
     #[test]
     fn me_fill_blocks_idle_while_pending() {
-        assert!(super::me_fill_blocks_idle(true, false));
-        assert!(super::me_fill_blocks_idle(false, true));
-        assert!(!super::me_fill_blocks_idle(false, false));
+        assert!(super::me_fill_blocks_idle(true, false, false));
+        assert!(super::me_fill_blocks_idle(false, true, false));
+        assert!(super::me_fill_blocks_idle(false, false, true));
+        assert!(!super::me_fill_blocks_idle(false, false, false));
+    }
+
+    #[test]
+    fn me_chrome_facts_omit_live_probes() {
+        let mut src = me_fixture_facts();
+        src.observations = vec![super::LiveObservationFact {
+            key: "cpu.percent".into(),
+            label: "CPU".into(),
+            value: "1".into(),
+            source: "procfs".into(),
+        }];
+        let chrome = super::me_facts_without_live_probes(src);
+        assert_eq!(chrome.storage, "неизвестно");
+        assert!(!chrome.wifi_status_readable);
+        assert!(chrome.observations.is_empty());
+        assert!(chrome.cellular_cp.is_none());
+        assert!(me_system_sections(&chrome)
+            .iter()
+            .all(|section| section.title != "Наблюдения"));
     }
 
     #[test]
