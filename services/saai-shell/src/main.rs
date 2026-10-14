@@ -7281,26 +7281,6 @@ fn now_attention_hit_scrolled(
     })
 }
 
-fn now_attention_paint_rows(
-    entities: &[Entity],
-    health: Option<&HealthReport>,
-    store_connected: bool,
-    has_other_now_content: bool,
-    width: u32,
-    height: u32,
-) -> Vec<(Rect, DataRow)> {
-    now_attention_paint_rows_scrolled(
-        entities,
-        health,
-        store_connected,
-        has_other_now_content,
-        width,
-        height,
-        0,
-        None,
-    )
-}
-
 fn now_attention_paint_rows_scrolled(
     entities: &[Entity],
     health: Option<&HealthReport>,
@@ -25230,14 +25210,19 @@ mod tests {
             None
         );
         let waiting = task_entity("Подтвердите удаление", None);
-        let rows = super::now_attention_paint_rows(
+        let rows = super::now_attention_paint_rows_scrolled(
             std::slice::from_ref(&waiting),
             None,
             true,
             false,
             1080,
             2400,
+            0,
+            None,
         );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_attention_paint_rows", "(")));
+        assert!(src.contains("fn now_attention_paint_rows_scrolled("));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.primary, "Подтвердите удаление");
         assert_eq!(rows[0].1.action.as_deref(), Some("now.attention.0"));
@@ -26713,7 +26698,16 @@ mod tests {
         assert_eq!(super::health_attention_reason(Some("critical")), "");
         assert_eq!(super::health_attention_reason(Some("degraded")), "");
         assert_eq!(super::health_attention_reason(Some("unhealthy")), "Ошибка");
-        let rows = super::now_attention_paint_rows(&[], Some(&degraded), true, false, 1080, 2400);
+        let rows = super::now_attention_paint_rows_scrolled(
+            &[],
+            Some(&degraded),
+            true,
+            false,
+            1080,
+            2400,
+            0,
+            None,
+        );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.primary, "Процессор");
         assert_eq!(rows[0].1.secondary, None);
