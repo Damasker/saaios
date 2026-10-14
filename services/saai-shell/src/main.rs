@@ -8599,6 +8599,26 @@ fn observation_source_copy(source: &str) -> &str {
 }
 
 impl LiveObservationFact {
+    fn is_technical(&self) -> bool {
+        matches!(
+            self.key.as_str(),
+            "cellular.ipv4"
+                | "cellular.ipv6"
+                | "cellular.dns"
+                | "cellular.dns6"
+                | "cellular.dcall_cid"
+        )
+    }
+
+    fn as_row(&self) -> DataRow {
+        let row = DataRow::new(self.label.clone(), DataRowVariant::Static);
+        if self.is_technical() {
+            row.with_technical_value(self.value_line())
+        } else {
+            row.with_value(self.value_line())
+        }
+    }
+
     fn value_line(&self) -> String {
         if self.source.is_empty() {
             return self.value.clone();
@@ -9443,7 +9463,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         let rows = facts
             .observations
             .iter()
-            .map(|obs| SettingRow::readout(obs.label.clone(), obs.value_line()).row)
+            .map(LiveObservationFact::as_row)
             .collect();
         sections.insert(1, me_section_data("Наблюдения", rows));
     }
@@ -26757,6 +26777,44 @@ mod tests {
             .expect("android vm");
         assert_eq!(android.card.status, "Недоступно · нет среды");
         assert!(android.dispatch.is_none());
+    }
+
+    #[test]
+    fn live_observation_technical_ids_use_mono_body() {
+        let ipv4 = super::LiveObservationFact {
+            key: "cellular.ipv4".into(),
+            label: "IPv4".into(),
+            value: "есть".into(),
+            source: "camp.owner.ipv4".into(),
+        };
+        let cpu = super::LiveObservationFact {
+            key: "system.cpu.usage".into(),
+            label: "Процессор".into(),
+            value: "12%".into(),
+            source: "procfs.cpu".into(),
+        };
+        assert_eq!(ipv4.as_row().value_role(), saai_ui_core::TextRole::MonoBody);
+        assert_eq!(cpu.as_row().value_role(), saai_ui_core::TextRole::Body);
+        assert!(!ipv4.as_row().is_copyable());
+        let mut facts = me_fixture_facts();
+        facts.observations = vec![ipv4, cpu];
+        let sections = me_system_sections(&facts);
+        assert_eq!(sections[1].title, "Наблюдения");
+        let roles: Vec<_> = sections[1]
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                SystemSectionRow::Data(data) => Some((data.primary.as_str(), data.value_role())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            roles,
+            vec![
+                ("IPv4", saai_ui_core::TextRole::MonoBody),
+                ("Процессор", saai_ui_core::TextRole::Body),
+            ]
+        );
     }
 
     #[test]
