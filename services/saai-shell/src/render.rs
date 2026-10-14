@@ -1866,7 +1866,7 @@ fn gallery_data_row_paint(
     (primary, secondary, height)
 }
 
-pub(crate) fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) {
+pub(crate) fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRow, rect: Rect) -> u32 {
     let inset = physical(SpacingToken::Small.value());
     let top_inset = physical(SpacingToken::XSmall.value());
     let icon_size = physical(IconSize::Large.value());
@@ -1946,6 +1946,7 @@ pub(crate) fn draw_data_row(canvas: &mut Canvas<'_>, fonts: &Fonts, row: &DataRo
             theme_color(ColorRole::TextSecondary),
         );
     }
+    paint.height
 }
 
 fn gallery_metric_paint(
@@ -3233,14 +3234,17 @@ pub fn draw_now(
                 for row in &section.rows {
                     match row {
                         SystemSectionRow::Data(data_row) => {
-                            let row_height = physical(data_row.min_hit_height());
-                            draw_data_row(
+                            cursor_y += draw_data_row(
                                 canvas,
                                 fonts,
                                 data_row,
-                                Rect::new(left, cursor_y, content_width, row_height),
+                                Rect::new(
+                                    left,
+                                    cursor_y,
+                                    content_width,
+                                    physical(data_row.min_hit_height()),
+                                ),
                             );
-                            cursor_y += row_height;
                         }
                         SystemSectionRow::Status(status) => {
                             cursor_y += draw_status_indicator(
@@ -4075,6 +4079,30 @@ mod tests {
             physical_line_height(TextRole::Caption) * 2 + physical_line_height(TextRole::Title)
         );
         assert_eq!(metric.accessibility().value.as_deref(), Some("87 %"));
+    }
+
+    #[test]
+    fn sistema_data_row_live_paint_uses_wrap_height() {
+        let src = include_str!("render.rs");
+        let data_arm = src
+            .split("SystemSectionRow::Data(data_row) => {")
+            .nth(1)
+            .expect("data arm")
+            .split("SystemSectionRow::Status")
+            .next()
+            .expect("status");
+        assert!(data_arm.contains("cursor_y += draw_data_row("));
+        assert!(!data_arm.contains("cursor_y += row_height"));
+        let row = DataRow::new(
+            "Яркость экрана ночью в тёмной комнате",
+            DataRowVariant::Static,
+        );
+        let (primary, secondary, height) =
+            gallery_data_row_paint(&row, |text| text.chars().count() <= 12, |_| true);
+        assert_eq!(primary.len(), 2);
+        assert!(secondary.is_empty());
+        assert_eq!(height, physical(TWO_LINE_ROW_HEIGHT));
+        assert!(height > physical(row.min_hit_height()));
     }
 
     #[test]

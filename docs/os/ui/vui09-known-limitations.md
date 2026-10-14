@@ -183,6 +183,7 @@ The verification ledger stays in
 | live Metric wrap paint | ADR-610; host; label wraps; value one line; dest-no-lock stays off |
 | live DecisionOverlay button wrap paint | ADR-611; host; accept/decline wrap; heading unpainted; dest-no-lock stays off |
 | live DecisionOverlay facts Body | ADR-612; host; overlay facts Body; other facts Caption; dest-no-lock stays off |
+| live Sistema DataRow wrap height | ADR-613; host; cursor uses wrap paint height; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
