@@ -6877,13 +6877,6 @@ fn now_attention_section_with(
 
 /// ADR-241: NOW body order matches the boards — attention, current
 /// work, next. Enabled schedules stay last when they exist.
-fn now_workflow_sections(
-    entities: &[Entity],
-    relationships: &[Relationship],
-) -> Vec<SystemSection> {
-    now_workflow_sections_with(entities, relationships, None, true, None)
-}
-
 fn now_workflow_sections_with(
     entities: &[Entity],
     relationships: &[Relationship],
@@ -15960,7 +15953,7 @@ mod tests {
         now_action_at_scrolled,
         now_attention_hit_scrolled, now_next_hit_scrolled, now_next_paint_rows_scrolled, now_object_tapped, now_task_hit_scrolled,
         now_task_paint_rows_scrolled, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
-        now_workflow_sections,
+        now_workflow_sections_with,
         object_view_content_with, object_view_details,
         object_view_history_lines, object_view_hit_scrolled,
         object_view_permission_pattern,
@@ -24974,7 +24967,7 @@ mod tests {
         let mut schedule = test_entity(SCHEDULE_ENTITY_TYPE, enabled);
         schedule.title = "Встреча".into();
         let entities = vec![waiting, running, action, schedule];
-        let sections = now_workflow_sections(&entities, &[]);
+        let sections = now_workflow_sections_with(&entities, &[], None, true, None);
         let titles: Vec<&str> = sections
             .iter()
             .map(|section| section.title.as_str())
@@ -24983,6 +24976,9 @@ mod tests {
             titles,
             ["Требует внимания", "Продолжается", "Далее", "Сегодня"]
         );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_workflow_sections", "(")));
+        assert!(src.contains("fn now_workflow_sections_with("));
     }
 
     #[test]
@@ -24991,7 +24987,7 @@ mod tests {
         running
             .properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let sections = now_workflow_sections(std::slice::from_ref(&running), &[]);
+        let sections = now_workflow_sections_with(std::slice::from_ref(&running), &[], None, true, None);
         let titles: Vec<&str> = sections
             .iter()
             .map(|section| section.title.as_str())
@@ -25016,7 +25012,7 @@ mod tests {
     #[test]
     fn now_sections_name_empty_current_tasks_among_other_work() {
         let waiting = task_entity("Подтвердите удаление", None);
-        let sections = now_workflow_sections(std::slice::from_ref(&waiting), &[]);
+        let sections = now_workflow_sections_with(std::slice::from_ref(&waiting), &[], None, true, None);
         let titles: Vec<&str> = sections
             .iter()
             .map(|section| section.title.as_str())
