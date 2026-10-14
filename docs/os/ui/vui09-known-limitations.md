@@ -245,6 +245,7 @@ The verification ledger stays in
 | Me obs next turn | ADR-672; host; first flatten omits «Наблюдения»; full list next loop; dest-no-lock stays off |
 | Me obs flash | ADR-673; `828b6ff9…` on `/data`; `surface=me` idle_ok; first facts still long; dest-no-lock stays off |
 | Me facts hold | ADR-674; host; hold first `me_facts`; skip idle mid-fill; dest-no-lock stays off |
+| Me facts hold flash | ADR-675; `4e18d857…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
