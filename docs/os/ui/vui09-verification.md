@@ -390,6 +390,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   leftover `related_object_first_peer` is gone (ADR-655).
   dest-no-lock stays off.
+  host 615–655 leftover helpers on `/data` (ADR-656; `eb3197c9…`).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

@@ -419,6 +419,7 @@ real phone interface consistently.
   Leftover `diagnostic_space_copy` is gone (ADR-653).
   Leftover `scroll_surface_damage` is gone (ADR-654).
   Leftover `related_object_first_peer` is gone (ADR-655).
+  Host 615–655 leftover helpers are on `/data` (ADR-656; `eb3197c9…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1948,6 +1949,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Leftover `related_object_first_peer` is gone (ADR-655; host).
   dest-no-lock stays off. Peers stay on `related_object_peer_ids`.
   Leave Сейчас. Still Experimental.
+- [x] Host 615–655 leftover helpers on panther (ADR-656;
+  `eb3197c9…`). dest-no-lock stays off. Lock surface up.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2205,7 +2209,8 @@ build/kernel paint MonoBody (ADR-617). Live Sistema
 `space_member_rows` is gone (ADR-652). Leftover
 `diagnostic_space_copy` is gone (ADR-653). Leftover
 `scroll_surface_damage` is gone (ADR-654). Leftover
-`related_object_first_peer` is gone (ADR-655). dest-no-lock stays off.
+`related_object_first_peer` is gone (ADR-655). Host 615–655 leftover
+helpers on `/data` (ADR-656; `eb3197c9…`). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
