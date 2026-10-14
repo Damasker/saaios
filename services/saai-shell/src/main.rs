@@ -1142,13 +1142,6 @@ fn root_navigation_rect(width: u32, height: u32) -> Rect {
     root_view(width, height).children[1].rect
 }
 
-/// Damage region for a "Я" scroll frame: content only, never the
-/// navigation strip. Status is a different Wayland surface and is
-/// not committed from `draw()` at all.
-fn scroll_surface_damage(width: u32, height: u32) -> Rect {
-    root_content_rect(width, height)
-}
-
 fn page_from_id(id: &str) -> Option<RootPage> {
     match id {
         "now" => Some(RootPage::Now),
@@ -11990,8 +11983,11 @@ impl Shell {
         let height = self.height;
         let stride = width as i32 * 4;
         let content_only = std::mem::take(&mut self.scroll_content_only);
+        // Content-only damage: never the navigation strip. Status is
+        // a different Wayland surface and is not committed from
+        // `draw()` at all.
         let surface_damage = if content_only {
-            scroll_surface_damage(width, height)
+            root_content_rect(width, height)
         } else {
             Rect::new(0, 0, width, height)
         };
@@ -16896,11 +16892,14 @@ mod tests {
             assert_eq!(nav.width, width);
             assert_eq!(content.y + content.height, nav.y);
             assert_eq!(nav.y + nav.height, height);
-            assert_eq!(super::scroll_surface_damage(width, height), content);
-            assert!(super::scroll_surface_damage(width, height)
+            assert_eq!(super::root_content_rect(width, height), content);
+            assert!(super::root_content_rect(width, height)
                 .intersection(nav)
                 .is_none());
         }
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn scroll_surface_damage", "(")));
+        assert!(src.contains("fn root_content_rect("));
     }
 
     #[test]
