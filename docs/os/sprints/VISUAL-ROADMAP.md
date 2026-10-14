@@ -423,7 +423,8 @@ real phone interface consistently.
   Panther frames after that flash: unlock + Now/Spaces/Search
   (ADR-657). Four root tabs after respawn (ADR-658).
   Me motion hang respawned (ADR-659). Me row cache across
-  motion ticks (ADR-660; host).
+  motion ticks (ADR-660; host). Cache on `/data`
+  (ADR-661; `4a03a41b…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1968,6 +1969,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Me row cache across motion ticks (ADR-660; host). dest-no-lock
   stays off. `me_all_rows` reuses `me_row_cache`. Leave Сейчас.
   Still Experimental.
+- [x] Me row cache on panther (ADR-661; `4a03a41b…`). dest-no-lock
+  stays off. Lock surface up. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2229,7 +2232,8 @@ build/kernel paint MonoBody (ADR-617). Live Sistema
 helpers on `/data` (ADR-656; `eb3197c9…`). Panther frames after
 that flash (ADR-657). Four root tabs after respawn (ADR-658).
 Me motion hang respawned (ADR-659). Me row cache across
-motion ticks (ADR-660; host).
+motion ticks (ADR-660; host). Cache on `/data`
+(ADR-661; `4a03a41b…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

@@ -231,6 +231,7 @@ The verification ledger stays in
 | shell 656 four tabs | ADR-658; Now/Spaces/Search/Me; Object View ate tabs until respawn; dest-no-lock stays off |
 | Me motion hang | ADR-659; pid 12671 `R` motion/me idle_ok=0; kill+respawn 3916 lock; dest-no-lock stays off |
 | Me row cache | ADR-660; host; `me_all_rows` reuses cache across Selection/`tick_motion`; dest-no-lock stays off |
+| Me cache flash | ADR-661; `4a03a41b…` on `/data`; dest-no-lock stays off; lock surface |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

@@ -399,6 +399,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Me motion hang respawned (ADR-659). dest-no-lock stays off.
   Me row cache across motion ticks (ADR-660; host). dest-no-lock
   stays off.
+  Me row cache on `/data` (ADR-661; `4a03a41b…`). dest-no-lock
+  stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
