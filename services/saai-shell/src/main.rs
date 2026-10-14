@@ -7384,27 +7384,6 @@ fn now_task_hit_scrolled(
     })
 }
 
-fn now_task_paint_rows(
-    entities: &[Entity],
-    store_connected: bool,
-    has_other_now_content: bool,
-    follow: &[bool],
-    empty_attention: bool,
-    width: u32,
-    height: u32,
-) -> Vec<(Rect, DataRow)> {
-    now_task_paint_rows_scrolled(
-        entities,
-        store_connected,
-        has_other_now_content,
-        follow,
-        empty_attention,
-        width,
-        height,
-        0,
-    )
-}
-
 fn now_task_paint_rows_scrolled(
     entities: &[Entity],
     store_connected: bool,
@@ -16203,7 +16182,7 @@ mod tests {
         me_system_sections, motion_clock_for, next_in_cycle, next_pending_action,
         now_action_at_scrolled,
         now_attention_hit_scrolled, now_next_hit, now_next_paint_rows, now_object_tapped, now_task_hit,
-        now_task_paint_rows, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
+        now_task_paint_rows_scrolled, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
         now_workflow_sections,
         object_view_action_at,
         object_view_content, object_view_content_with, object_view_details,
@@ -23930,7 +23909,7 @@ mod tests {
         running
             .properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let now_rows = now_task_paint_rows(
+        let now_rows = now_task_paint_rows_scrolled(
             std::slice::from_ref(&running),
             true,
             false,
@@ -23938,6 +23917,7 @@ mod tests {
             false,
             1080,
             2400,
+            0,
         );
         assert_eq!(now_rows.len(), 1);
         assert_eq!(now_rows[0].1.primary, LONG_RU);
@@ -25248,7 +25228,7 @@ mod tests {
         running
             .properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        let rows = now_task_paint_rows(
+        let rows = now_task_paint_rows_scrolled(
             std::slice::from_ref(&running),
             true,
             false,
@@ -25256,17 +25236,21 @@ mod tests {
             false,
             1080,
             2400,
+            0,
         );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_task_paint_rows", "(")));
+        assert!(src.contains("fn now_task_paint_rows_scrolled("));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.primary, "Собрать отчёт");
         assert_eq!(rows[0].1.secondary.as_deref(), Some("Выполняется"));
         assert_eq!(rows[0].1.action.as_deref(), Some("now.task.0"));
         assert_eq!(rows[0].0, saai_ui_core::Rect::new(49, 650, 982, 190));
-        let empty = now_task_paint_rows(&[], true, true, &[], false, 1080, 2400);
+        let empty = now_task_paint_rows_scrolled(&[], true, true, &[], false, 1080, 2400, 0);
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].1.primary, "Нет текущих задач");
         assert!(!empty[0].1.is_actionable());
-        assert!(now_task_paint_rows(&[], true, false, &[], false, 1080, 2400).is_empty());
+        assert!(now_task_paint_rows_scrolled(&[], true, false, &[], false, 1080, 2400, 0).is_empty());
     }
 
     #[test]

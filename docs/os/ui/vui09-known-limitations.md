@@ -195,6 +195,7 @@ The verification ledger stays in
 | leftover now_action_at | ADR-622; host; wrapper gone; scrolled hits stay; dest-no-lock stays off |
 | leftover now_attention_paint_rows | ADR-623; host; wrapper gone; scrolled paint stays; dest-no-lock stays off |
 | leftover now_attention_hit | ADR-624; host; wrapper gone; scrolled hits stay; dest-no-lock stays off |
+| leftover now_task_paint_rows | ADR-625; host; wrapper gone; scrolled paint stays; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
