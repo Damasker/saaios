@@ -7487,31 +7487,6 @@ fn now_next_hit_scrolled(
     })
 }
 
-fn now_next_paint_rows(
-    entities: &[Entity],
-    store_connected: bool,
-    has_other_now_content: bool,
-    follow: &[bool],
-    empty_attention: bool,
-    task_count: usize,
-    empty_tasks: bool,
-    width: u32,
-    height: u32,
-) -> Vec<(Rect, DataRow)> {
-    now_next_paint_rows_scrolled(
-        entities,
-        store_connected,
-        has_other_now_content,
-        follow,
-        empty_attention,
-        task_count,
-        empty_tasks,
-        width,
-        height,
-        0,
-    )
-}
-
 fn now_next_paint_rows_scrolled(
     entities: &[Entity],
     store_connected: bool,
@@ -16170,7 +16145,7 @@ mod tests {
         lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
         me_system_sections, motion_clock_for, next_in_cycle, next_pending_action,
         now_action_at_scrolled,
-        now_attention_hit_scrolled, now_next_hit, now_next_paint_rows, now_object_tapped, now_task_hit_scrolled,
+        now_attention_hit_scrolled, now_next_hit, now_next_paint_rows_scrolled, now_object_tapped, now_task_hit_scrolled,
         now_task_paint_rows_scrolled, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
         now_workflow_sections,
         object_view_action_at,
@@ -25270,7 +25245,7 @@ mod tests {
             None
         );
         let action = action_entity("Экспорт PDF", uuid::Uuid::new_v4(), "pending");
-        let rows = now_next_paint_rows(
+        let rows = now_next_paint_rows_scrolled(
             std::slice::from_ref(&action),
             true,
             true,
@@ -25280,17 +25255,24 @@ mod tests {
             false,
             1080,
             2400,
+            0,
         );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_next_paint_rows", "(")));
+        assert!(src.contains("fn now_next_paint_rows_scrolled("));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.primary, "Экспорт PDF");
         assert_eq!(rows[0].1.secondary.as_deref(), Some("Ожидает запуска"));
         assert_eq!(rows[0].1.action.as_deref(), Some("now.next.0"));
         assert_eq!(rows[0].0, saai_ui_core::Rect::new(49, 650, 982, 190));
-        let empty = now_next_paint_rows(&[], true, true, &[], false, 0, false, 1080, 2400);
+        let empty = now_next_paint_rows_scrolled(&[], true, true, &[], false, 0, false, 1080, 2400, 0);
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].1.primary, "Нет следующего действия");
         assert!(!empty[0].1.is_actionable());
-        assert!(now_next_paint_rows(&[], true, false, &[], false, 0, false, 1080, 2400).is_empty());
+        assert!(
+            now_next_paint_rows_scrolled(&[], true, false, &[], false, 0, false, 1080, 2400, 0)
+                .is_empty()
+        );
     }
 
     #[test]
