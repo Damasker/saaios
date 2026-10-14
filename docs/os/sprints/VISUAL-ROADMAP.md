@@ -372,7 +372,8 @@ real phone interface consistently.
   ObjectSummary paint uses `title_lines` (ADR-606). Live
   ContextHeader paint wraps the Space name (ADR-607). Live
   Sistema Task paint uses `title_lines` (ADR-608). Live
-  Sistema Intent paint uses `title_lines` (ADR-609). Wrap
+  Sistema Intent paint uses `title_lines` (ADR-609). Live
+  Sistema Metric paint uses `label_lines` (ADR-610). Wrap
   Acceptance stays unchecked: host only; font compare and
   panther evidence still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
@@ -1765,6 +1766,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Live Sistema IntentSummary paint wraps the title
   (ADR-609; host). dest-no-lock stays off. «Нет задачи»
   stays. Leave Сейчас. Still Experimental.
+- [x] Live Sistema Metric paint wraps the label (ADR-610;
+  host). dest-no-lock stays off. Value stays one line.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1976,7 +1980,8 @@ wraps (ADR-594). Gallery Field paint wraps
 (ADR-606). Live ContextHeader paint wraps
 (ADR-607). Live Sistema Task paint wraps
 (ADR-608). Live Sistema Intent paint wraps
-(ADR-609). dest-no-lock stays off.
+(ADR-609). Live Sistema Metric paint wraps
+(ADR-610). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

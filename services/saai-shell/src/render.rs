@@ -1957,9 +1957,9 @@ fn draw_gallery_metric(
     left: u32,
     top: u32,
     max_width: u32,
-) {
+) -> u32 {
     let (label_font, label_size) = fonts.resolve(TextRole::Caption);
-    let (labels, verified, _) = gallery_metric_paint(metric, |text| {
+    let (labels, verified, height) = gallery_metric_paint(metric, |text| {
         text_width(label_font, text, label_size * text_scale()) as u32 <= max_width
     });
     let caption = physical_line_height(TextRole::Caption);
@@ -2006,6 +2006,7 @@ fn draw_gallery_metric(
         );
         cursor_y = cursor_y.saturating_add(caption);
     }
+    height
 }
 
 fn gallery_disclosure_paint(
@@ -3259,36 +3260,14 @@ pub fn draw_now(
                             );
                         }
                         SystemSectionRow::Metric(metric) => {
-                            let (label_font, label_size) = fonts.resolve(TextRole::Caption);
-                            draw_text(
+                            cursor_y += draw_gallery_metric(
                                 canvas,
-                                label_font,
-                                &metric.label,
-                                label_size,
+                                fonts,
+                                metric,
                                 left,
                                 cursor_y,
-                                theme_color(ColorRole::TextSecondary),
+                                content_width,
                             );
-                            cursor_y += scaled_line_height(TextRole::Caption);
-                            let value_text = match &metric.value {
-                                MetricValue::Known(value) => match &metric.unit {
-                                    Some(unit) => format!("{value} {unit}"),
-                                    None => value.clone(),
-                                },
-                                MetricValue::Unknown => "—".to_string(),
-                                MetricValue::Unavailable => "—".to_string(),
-                            };
-                            let (value_font, value_size) = fonts.resolve(TextRole::Body);
-                            draw_text(
-                                canvas,
-                                value_font,
-                                &value_text,
-                                value_size,
-                                left,
-                                cursor_y,
-                                theme_color(ColorRole::TextPrimary),
-                            );
-                            cursor_y += scaled_line_height(TextRole::Body);
                         }
                     }
                     if cursor_y >= content.y + content.height {
@@ -4001,6 +3980,33 @@ mod tests {
             short_height,
             physical_line_height(TextRole::Caption) + physical_line_height(TextRole::Title)
         );
+    }
+
+    #[test]
+    fn sistema_metric_live_paint_uses_label_lines() {
+        let src = include_str!("render.rs");
+        let metric_arm = src
+            .split("SystemSectionRow::Metric(metric) => {")
+            .nth(1)
+            .expect("metric arm")
+            .split("if cursor_y >=")
+            .next()
+            .expect("cursor");
+        assert!(metric_arm.contains("draw_gallery_metric"));
+        assert!(!metric_arm.contains(concat!("metric.", "label,")));
+        let metric = Metric::new(
+            "Заряд батареи сейчас",
+            MetricValue::Known("87".to_string()),
+        )
+        .with_unit("%");
+        let (labels, _, height) =
+            gallery_metric_paint(&metric, |text| text.chars().count() <= 8);
+        assert_eq!(labels.len(), 2);
+        assert_eq!(
+            height,
+            physical_line_height(TextRole::Caption) * 2 + physical_line_height(TextRole::Title)
+        );
+        assert_eq!(metric.accessibility().value.as_deref(), Some("87 %"));
     }
 
     #[test]

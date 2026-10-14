@@ -180,6 +180,7 @@ The verification ledger stays in
 | live ContextHeader wrap paint | ADR-607; host; Space name wraps; section title one line; dest-no-lock stays off |
 | live TaskSummary wrap paint | ADR-608; host; title wraps; related stays separate; dest-no-lock stays off |
 | live IntentSummary wrap paint | ADR-609; host; title wraps; «Нет задачи» stays; dest-no-lock stays off |
+| live Metric wrap paint | ADR-610; host; label wraps; value one line; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
