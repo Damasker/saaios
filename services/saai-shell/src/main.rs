@@ -9710,28 +9710,6 @@ fn object_overlay_fact_locs(
     facts
 }
 
-/// ADR-229: decision-row paint from the same generated tree hits use.
-fn overlay_decision_paint(
-    screen_id: &str,
-    locs: &[&str],
-    why: &'static str,
-    width: u32,
-    height: u32,
-) -> (Rect, Vec<Rect>) {
-    let tree = layout_live_v2(
-        &overlay_buttons_v2_source(screen_id, locs),
-        why,
-        width,
-        height,
-    );
-    let header = tree.children[0].rect;
-    let buttons = locs
-        .iter()
-        .map(|id| v2_named_rect(&tree, id, why))
-        .collect();
-    (header, buttons)
-}
-
 /// ADR-433: consent / remote-pair ContextHeader, Status cards, and
 /// decision Buttons share one generated tree.
 fn status_overlay_paint(
@@ -18253,28 +18231,30 @@ mod tests {
     fn overlay_paint_buttons_match_layout_v2_nodes() {
         let width = 1080;
         let height = 2400;
-        let (header, buttons) = super::overlay_decision_paint(
+        let (_, header, _, buttons) = super::status_overlay_paint(
             "consent",
+            &["consent.app", "consent.empty"],
             &[super::CONSENT_ACCEPT_ACTION, super::CONSENT_DECLINE_ACTION],
-            "ADR-229 overlay paint",
+            "ADR-433 status overlay",
             width,
             height,
         );
         assert_eq!(header.y, 0);
         assert_eq!(buttons[0].y, buttons[1].y);
         assert_eq!(buttons[0].height, 300);
-        let pair = super::overlay_decision_paint(
-            "consent",
+        let pair = super::status_overlay_paint(
+            "remote-pair",
+            &["pair.client", "pair.fingerprint"],
             &[
                 super::TASK_CONFIRM_ACCEPT_ACTION,
                 super::TASK_CONFIRM_DECLINE_ACTION,
             ],
-            "ADR-229 overlay paint",
+            "ADR-433 status overlay",
             width,
             height,
         );
-        assert_eq!(pair.1[0].y, buttons[0].y);
-        assert_eq!(pair.1[0].height, 300);
+        assert_eq!(pair.3[0].y, buttons[0].y);
+        assert_eq!(pair.3[0].height, 300);
         let (compose_header, field) =
             super::overlay_field_paint("intent", super::INTENT_FIELD_ID, true, width, height);
         assert_eq!(compose_header.y, 0);
@@ -18290,9 +18270,10 @@ mod tests {
         assert_eq!(wifi.0.x, field.x);
         assert_eq!(wifi.1, field);
         let main = include_str!("main.rs");
-        assert!(main.contains("ADR-229 overlay paint"));
+        assert!(main.contains("ADR-229/433"));
         assert!(main.contains("ADR-439 wifi-password overlay"));
-        assert!(main.contains("overlay_decision_paint"));
+        assert!(!main.contains(concat!("fn overlay_decision", "_paint(")));
+        assert!(main.contains("status_overlay_paint"));
         assert!(main.contains("overlay_field_paint"));
     }
 

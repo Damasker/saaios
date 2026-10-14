@@ -382,6 +382,7 @@ real phone interface consistently.
   Live observation bearer/endpoint paint MonoBody (ADR-616).
   DevSurface build/kernel paint MonoBody (ADR-617).
   Live Sistema `video*` nodes paint MonoBody (ADR-618).
+  Leftover `overlay_decision_paint` is gone (ADR-619).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1800,6 +1801,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Live Sistema camera nodes paint MonoBody (ADR-618;
   host). dest-no-lock stays off. `video*` stays. Leave
   Сейчас. Still Experimental.
+- [x] Leftover `overlay_decision_paint` is gone (ADR-619;
+  host). dest-no-lock stays off. Hits stay. Leave Сейчас.
+  Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2020,7 +2024,8 @@ paint on `/data` (ADR-614; `f09b83e0…`). Live observation
 IPv4/IPv6/DNS/CID paint MonoBody (ADR-615). Live observation
 bearer/endpoint paint MonoBody (ADR-616). DevSurface
 build/kernel paint MonoBody (ADR-617). Live Sistema
-`video*` nodes paint MonoBody (ADR-618). dest-no-lock stays off.
+`video*` nodes paint MonoBody (ADR-618). Leftover
+`overlay_decision_paint` is gone (ADR-619). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

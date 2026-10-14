@@ -389,6 +389,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-05 live bearer/endpoint | live observation bearer/endpoint paint MonoBody **host** (ADR-616; dest-no-lock stays off; leave Сейчас) |
 | VUI-05 diagnostic IDs | DevSurface build/kernel paint MonoBody **host** (ADR-617; dest-no-lock stays off; leave Сейчас) |
 | VUI-05 live camera nodes | live Sistema `video*` nodes paint MonoBody **host** (ADR-618; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 leftover overlay paint | drop `overlay_decision_paint` **host** (ADR-619; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -575,6 +576,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-05 live bearer/endpoint: live observation bearer/endpoint paint MonoBody (ADR-616; host; dest-no-lock stays off)
 - VUI-05 diagnostic IDs: DevSurface build/kernel paint MonoBody (ADR-617; host; dest-no-lock stays off)
 - VUI-05 live camera nodes: live Sistema `video*` nodes paint MonoBody (ADR-618; host; dest-no-lock stays off)
+- VUI-09 leftover overlay paint: drop `overlay_decision_paint` (ADR-619; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
