@@ -7776,16 +7776,6 @@ fn spaces_list_scroll_max(spaces: &[Space], store_connected: bool, width: u32, h
     )
 }
 
-fn space_row_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    spaces: &[Space],
-    store_connected: bool,
-) -> Option<String> {
-    space_row_at_scrolled(pos, width, height, spaces, store_connected, 0)
-}
-
 fn space_row_at_scrolled(
     pos: (f64, f64),
     width: u32,
@@ -16061,7 +16051,7 @@ mod tests {
         space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row,
         space_focus_task, space_for_wifi_ssid, space_member_paint_rows,
         space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
-        space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
+        space_relation_targets, space_row_at_scrolled, spaces_header, stacked_control_rect,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at_scrolled, trusted_client_card_from_row, trusted_client_is_protected,
         trusted_client_list_rows, trusted_client_revoke_decision, trusted_header,
@@ -18527,7 +18517,8 @@ mod tests {
     fn space_actions_come_from_live_spaces_not_sui_markup() {
         let src = include_str!("main.rs");
         assert!(!src.contains(concat!("fn content_action_", "at(")));
-        assert!(src.contains("fn space_row_at("));
+        assert!(!src.contains(concat!("fn space_row_at", "(")));
+        assert!(src.contains("fn space_row_at_scrolled("));
     }
 
     #[test]
@@ -22369,7 +22360,7 @@ mod tests {
         assert_eq!(offline.len(), 1);
         assert_eq!(offline[0].row.primary, "Нет связи");
         assert!(!offline[0].row.is_actionable());
-        assert!(space_row_at((540.0, 500.0), 1080, 2400, &spaces, false).is_none());
+        assert!(space_row_at_scrolled((540.0, 500.0), 1080, 2400, &spaces, false, 0).is_none());
 
         let empty = space_list_rows(&[], "home", true, &counts, &system);
         assert_eq!(empty[0].row.primary, "Нет пространств");
@@ -22380,7 +22371,7 @@ mod tests {
             (first.y + first.height / 2) as f64,
         );
         assert_eq!(
-            space_row_at(point, 1080, 2400, &spaces, true).as_deref(),
+            space_row_at_scrolled(point, 1080, 2400, &spaces, true, 0).as_deref(),
             Some("home")
         );
     }
@@ -22406,7 +22397,7 @@ mod tests {
             (last_slot.x + last_slot.width / 2) as f64,
             (last_slot.y + last_slot.height / 2) as f64,
         );
-        assert!(space_row_at(last_point, 1080, 2400, &spaces, true).is_none());
+        assert!(space_row_at_scrolled(last_point, 1080, 2400, &spaces, true, 0).is_none());
         let scrolled = super::layout_live_v2_scrolled(
             &super::spaces_v2_source(&spaces, true),
             "ADR-493 spaces list overflow",
