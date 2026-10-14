@@ -242,6 +242,7 @@ The verification ledger stays in
 | Me window | ADR-669; host; compile only visible Sistema rows; dest-no-lock stays off |
 | Me window flash | ADR-670; `7c3b9bac…` on `/data`; first Me fill still fact-heavy; dest-no-lock stays off |
 | Sistema works | ADR-671; `7c3b9bac…`; user-confirmed; Search p95_ok; warm Me switch slept; dest-no-lock stays off |
+| Me obs next turn | ADR-672; host; first flatten omits «Наблюдения»; full list next loop; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

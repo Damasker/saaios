@@ -9071,6 +9071,15 @@ fn me_rows_or_empty(cache: &Option<Vec<MeRow>>) -> Vec<MeRow> {
     cache.clone().unwrap_or_default()
 }
 
+fn me_facts_for_first_paint(mut facts: MeFacts, obs_ready: bool) -> (MeFacts, bool) {
+    if obs_ready {
+        return (facts, false);
+    }
+    let pending = !facts.observations.is_empty();
+    facts.observations.clear();
+    (facts, pending)
+}
+
 fn ensure_me_row_cache(
     cache: &mut Option<Vec<MeRow>>,
     build: impl FnOnce() -> Vec<MeRow>,
@@ -10064,6 +10073,8 @@ fn main() {
         me_row_cache: None,
         me_paint_cache: None,
         me_facts_pending: false,
+        me_obs_ready: false,
+        me_obs_pending: false,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -10138,6 +10149,14 @@ fn main() {
     while !shell.exit {
         if shell.me_facts_pending {
             shell.me_facts_pending = false;
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_obs_pending {
+            shell.me_obs_pending = false;
+            shell.me_obs_ready = true;
+            shell.invalidate_me_rows();
             shell.capture_me_rows();
             if !shell.locked && shell.current_page == RootPage::Me {
                 shell.draw(&conn, &qh);
@@ -10422,6 +10441,10 @@ struct Shell {
     /// First Sistema paint is chrome only. The next event-loop turn
     /// fills `me_row_cache` so `me_facts()` cannot block the tab switch.
     me_facts_pending: bool,
+    /// First flatten omits `Наблюдения`. The next turn rebuilds with
+    /// live observation rows so the first Sistema list can commit.
+    me_obs_ready: bool,
+    me_obs_pending: bool,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -13597,7 +13620,10 @@ impl Shell {
 
     fn capture_me_rows(&mut self) -> usize {
         if self.me_row_cache.is_none() {
-            let rows = flatten_me_rows(&me_system_sections(&self.me_facts()));
+            let (facts, pending) =
+                me_facts_for_first_paint(self.me_facts(), self.me_obs_ready);
+            self.me_obs_pending |= pending;
+            let rows = flatten_me_rows(&me_system_sections(&facts));
             self.me_row_cache = Some(rows);
             self.me_paint_cache = None;
         }
@@ -27117,6 +27143,29 @@ mod tests {
             panic!("Я motion must not respawn wpa_cli/df")
         });
         assert_eq!(reused.len(), len);
+    }
+
+    #[test]
+    fn me_facts_for_first_paint_defers_observations() {
+        let cpu = super::LiveObservationFact {
+            key: "cpu.percent".into(),
+            label: "CPU".into(),
+            value: "1".into(),
+            source: "procfs".into(),
+        };
+        let mut light_src = me_fixture_facts();
+        light_src.observations = vec![cpu.clone()];
+        let (light, pending) = super::me_facts_for_first_paint(light_src, false);
+        assert!(pending);
+        assert!(light.observations.is_empty());
+        assert!(me_system_sections(&light)
+            .iter()
+            .all(|section| section.title != "Наблюдения"));
+        let mut full_src = me_fixture_facts();
+        full_src.observations = vec![cpu];
+        let (full, again) = super::me_facts_for_first_paint(full_src, true);
+        assert!(!again);
+        assert_eq!(full.observations.len(), 1);
     }
 
     #[test]
