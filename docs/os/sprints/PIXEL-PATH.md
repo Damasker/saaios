@@ -396,6 +396,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 leftover attention paint | drop `now_attention_paint_rows` **host** (ADR-623; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 leftover attention hit | drop `now_attention_hit` **host** (ADR-624; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 leftover task paint | drop `now_task_paint_rows` **host** (ADR-625; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 leftover task hit | drop `now_task_hit` **host** (ADR-626; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -589,6 +590,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 leftover attention paint: drop `now_attention_paint_rows` (ADR-623; host; dest-no-lock stays off)
 - VUI-09 leftover attention hit: drop `now_attention_hit` (ADR-624; host; dest-no-lock stays off)
 - VUI-09 leftover task paint: drop `now_task_paint_rows` (ADR-625; host; dest-no-lock stays off)
+- VUI-09 leftover task hit: drop `now_task_hit` (ADR-626; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
