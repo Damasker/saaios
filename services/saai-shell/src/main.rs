@@ -4449,7 +4449,7 @@ fn intent_keyboard_keys(
 /// ADR-161/162: the compose Field is the `intent-field` leaf in
 /// `intent_view`, immediately above the docked keyboard.
 fn intent_field_rect(width: u32, height: u32, _mode: KeyboardMode) -> Rect {
-    overlay_field_rect("intent", INTENT_FIELD_ID, width, height)
+    overlay_field_rect_with("intent", INTENT_FIELD_ID, width, height, true)
 }
 
 fn layout_node_by_id<'a>(node: &'a LayoutNode, id: &str) -> Option<&'a LayoutNode> {
@@ -5162,7 +5162,7 @@ fn pin_setup_action_at(
 }
 
 fn pin_setup_field_rect(width: u32, height: u32, _has_existing_pin: bool) -> Rect {
-    overlay_field_rect("pin-setup", PIN_SETUP_FIELD_ID, width, height)
+    overlay_field_rect_with("pin-setup", PIN_SETUP_FIELD_ID, width, height, true)
 }
 
 #[cfg(test)]
@@ -6690,7 +6690,7 @@ fn lock_pin_entry_field(entered_len: usize) -> Field {
 }
 
 fn lock_pin_field_rect(width: u32) -> Rect {
-    overlay_field_rect("lock", "lock-pin-field", width, 2400)
+    overlay_field_rect_with("lock", "lock-pin-field", width, 2400, true)
 }
 
 /// VUI-07 (ADR-130/155/156): «Bluetooth устройства» lists live
@@ -9591,10 +9591,6 @@ fn orb_v2_source(menu_actions: &[OrbAction]) -> String {
     }
     src.push('}');
     src
-}
-
-fn overlay_field_rect(screen_id: &str, field_id: &str, width: u32, height: u32) -> Rect {
-    overlay_field_rect_with(screen_id, field_id, width, height, true)
 }
 
 fn overlay_field_rect_with(
@@ -17483,6 +17479,9 @@ mod tests {
                 );
             }
         }
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn overlay_field_rect", "(")));
+        assert!(src.contains("fn overlay_field_rect_with("));
     }
 
     #[test]
