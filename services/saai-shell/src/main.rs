@@ -5195,22 +5195,6 @@ const NOTIFICATION_ENTITY_TYPE: &str = "saaios.notification";
 /// Action / derived-ready Task — «Планирует»), Complete (Result whose
 /// Task is `done`, not a worker claim), Active (menu open), Idle.
 /// Слушает stays unlit: Pixel voice is hardware-blocked (ADR-092).
-fn orb_visual_state(
-    appd_connected: bool,
-    entityd_connected: bool,
-    entities: &[Entity],
-    menu_open: bool,
-) -> UniversalState {
-    orb_visual_state_with(
-        appd_connected,
-        entityd_connected,
-        entities,
-        menu_open,
-        None,
-        None,
-    )
-}
-
 fn orb_visual_state_with(
     appd_connected: bool,
     entityd_connected: bool,
@@ -15960,7 +15944,7 @@ mod tests {
         object_summary_meta, object_view_related_peer_lines, object_view_step_lines,
         object_view_summary, orb_action_at,
         orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
-        orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
+        orb_visual_state_with, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
         related_object_first_peer, remote_pair_content_cards, remote_pair_header,
         remove_context_source, retain_pressed_while_clock, search_header, search_paint_rows_scrolled,
@@ -24531,31 +24515,34 @@ mod tests {
             .properties
             .insert("status".into(), serde_json::Value::String("running".into()));
         assert_eq!(
-            orb_visual_state(false, true, &[waiting.clone()], true),
+            orb_visual_state_with(false, true, &[waiting.clone()], true, None, None),
             UniversalState::Offline
         );
         assert_eq!(
-            orb_visual_state(true, false, &[waiting.clone()], true),
+            orb_visual_state_with(true, false, &[waiting.clone()], true, None, None),
             UniversalState::Offline
         );
         assert_eq!(
-            orb_visual_state(true, true, &[waiting.clone(), running.clone()], true),
+            orb_visual_state_with(true, true, &[waiting.clone(), running.clone()], true, None, None),
             UniversalState::Attention
         );
         assert_eq!(
-            orb_visual_state(true, true, std::slice::from_ref(&running), true),
+            orb_visual_state_with(true, true, std::slice::from_ref(&running), true, None, None),
             UniversalState::Running
         );
         assert_eq!(
-            orb_visual_state(true, true, &[], true),
+            orb_visual_state_with(true, true, &[], true, None, None),
             UniversalState::Active
         );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn orb_visual_state", "(")));
+        assert!(src.contains("fn orb_visual_state_with("));
     }
 
     #[test]
     fn orb_visual_state_is_idle_only_when_connected_and_nothing_else_is_true() {
         assert_eq!(
-            orb_visual_state(true, true, &[], false),
+            orb_visual_state_with(true, true, &[], false, None, None),
             UniversalState::Idle
         );
     }
@@ -24565,7 +24552,7 @@ mod tests {
         let waiting = task_entity("Подтвердите удаление", None);
         assert!(orb_attention_from_entities(&[waiting.clone()]));
         assert_eq!(
-            orb_visual_state(true, true, std::slice::from_ref(&waiting), false),
+            orb_visual_state_with(true, true, std::slice::from_ref(&waiting), false, None, None),
             UniversalState::Attention
         );
     }
@@ -24594,13 +24581,13 @@ mod tests {
             .properties
             .insert("status".into(), serde_json::Value::String("failed".into()));
         assert_eq!(
-            orb_visual_state(true, true, std::slice::from_ref(&failed), false),
+            orb_visual_state_with(true, true, std::slice::from_ref(&failed), false, None, None),
             UniversalState::Failed
         );
 
         let action = action_entity("Экспорт PDF", uuid::Uuid::new_v4(), "pending");
         assert_eq!(
-            orb_visual_state(true, true, std::slice::from_ref(&action), true),
+            orb_visual_state_with(true, true, std::slice::from_ref(&action), true, None, None),
             UniversalState::Waiting
         );
 
@@ -24611,11 +24598,11 @@ mod tests {
             "файл на диске",
         );
         assert_eq!(
-            orb_visual_state(true, true, std::slice::from_ref(&orphan), true),
+            orb_visual_state_with(true, true, std::slice::from_ref(&orphan), true, None, None),
             UniversalState::Active
         );
         assert_ne!(
-            orb_visual_state(true, true, std::slice::from_ref(&orphan), false),
+            orb_visual_state_with(true, true, std::slice::from_ref(&orphan), false, None, None),
             UniversalState::Complete
         );
 
@@ -24624,7 +24611,7 @@ mod tests {
             .insert("status".into(), serde_json::Value::String("done".into()));
         let verified = result_entity("PDF готов", done.id, uuid::Uuid::new_v4(), "файл на диске");
         assert_eq!(
-            orb_visual_state(true, true, &[done.clone(), verified.clone()], false),
+            orb_visual_state_with(true, true, &[done.clone(), verified.clone()], false, None, None),
             UniversalState::Complete
         );
 
@@ -24640,11 +24627,11 @@ mod tests {
             "файл на диске",
         );
         assert_eq!(
-            orb_visual_state(true, true, &[verifying.clone(), inflight.clone()], false),
+            orb_visual_state_with(true, true, &[verifying.clone(), inflight.clone()], false, None, None),
             UniversalState::Running
         );
         assert_ne!(
-            orb_visual_state(true, true, &[verifying, inflight], false),
+            orb_visual_state_with(true, true, &[verifying, inflight], false, None, None),
             UniversalState::Complete
         );
 
@@ -24663,21 +24650,21 @@ mod tests {
             .properties
             .insert("error".into(), serde_json::Value::String("boom".into()));
         assert_eq!(
-            orb_visual_state(true, true, &[verifying_fail, claimed_error.clone()], false),
+            orb_visual_state_with(true, true, &[verifying_fail, claimed_error.clone()], false, None, None),
             UniversalState::Running
         );
         assert_ne!(
-            orb_visual_state(true, true, std::slice::from_ref(&claimed_error), false),
+            orb_visual_state_with(true, true, std::slice::from_ref(&claimed_error), false, None, None),
             UniversalState::Failed
         );
 
         let waiting = task_entity("Подтвердите удаление", None);
         assert_eq!(
-            orb_visual_state(true, true, &[waiting, orphan], false),
+            orb_visual_state_with(true, true, &[waiting, orphan], false, None, None),
             UniversalState::Attention
         );
         assert_ne!(
-            orb_visual_state(true, true, &[], false),
+            orb_visual_state_with(true, true, &[], false, None, None),
             UniversalState::Running
         );
     }
