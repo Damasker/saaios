@@ -8953,6 +8953,67 @@ fn cached_me_rows(cache: &Option<Vec<MeRow>>, build: impl FnOnce() -> Vec<MeRow>
     }
 }
 
+struct MePaintCache {
+    screen: saai_ui_compiler::SuiV2Screen,
+    width: u32,
+    height: u32,
+    offset: i32,
+    view: LayoutNode,
+}
+
+fn me_paint_view(
+    cache: &mut Option<MePaintCache>,
+    rows: &[MeRow],
+    width: u32,
+    height: u32,
+    offset: i32,
+) -> LayoutNode {
+    me_paint_view_with(
+        cache,
+        || compile_live_v2(&me_v2_source(rows), "ADR-227 me paint"),
+        width,
+        height,
+        offset,
+    )
+}
+
+fn me_paint_view_with(
+    cache: &mut Option<MePaintCache>,
+    compile: impl FnOnce() -> saai_ui_compiler::SuiV2Screen,
+    width: u32,
+    height: u32,
+    offset: i32,
+) -> LayoutNode {
+    match cache.as_ref() {
+        Some(hit) if hit.width == width && hit.height == height && hit.offset == offset => {
+            return hit.view.clone();
+        }
+        Some(hit) if hit.width == width && hit.height == height => {
+            let view = saai_ui_compiler::layout_v2_scrolled(&hit.screen, width, height, offset);
+            let screen = hit.screen.clone();
+            *cache = Some(MePaintCache {
+                screen,
+                width,
+                height,
+                offset,
+                view: view.clone(),
+            });
+            return view;
+        }
+        _ => {}
+    }
+    let screen = compile();
+    let view = saai_ui_compiler::layout_v2_scrolled(&screen, width, height, offset);
+    *cache = Some(MePaintCache {
+        screen,
+        width,
+        height,
+        offset,
+        view: view.clone(),
+    });
+    view
+}
+
 fn ensure_me_row_cache(
     cache: &mut Option<Vec<MeRow>>,
     build: impl FnOnce() -> Vec<MeRow>,
@@ -9933,6 +9994,7 @@ fn main() {
         me_scroll_dirty: false,
         scroll_content_only: false,
         me_row_cache: None,
+        me_paint_cache: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -10278,6 +10340,9 @@ struct Shell {
     /// out to `wpa_cli` and `df` — that is fine once per tap, not on
     /// every motion event.
     me_row_cache: Option<Vec<MeRow>>,
+    /// Compiled Sistema tree + last scrolled layout. Selection and
+    /// Orb pulse must not `compile_v2` the SettingRow list every 8ms.
+    me_paint_cache: Option<MePaintCache>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -10929,7 +10994,7 @@ impl TouchHandler for Shell {
                 .rect
                 .contains(position.0, position.1)
         {
-            self.me_row_cache = None;
+            self.invalidate_me_rows();
             self.capture_me_rows();
             Some((position.1, self.me_scroll_offset))
         } else {
@@ -11442,7 +11507,7 @@ impl TouchHandler for Shell {
                     self.now_scroll_offset,
                 ) {
                     let _ = refresh_locality();
-                    self.me_row_cache = None;
+                    self.invalidate_me_rows();
                     self.draw(conn, qh);
                 } else if let Some(index) =
                     now_attention_hit_scrolled(
@@ -11735,7 +11800,7 @@ impl TouchHandler for Shell {
         self.unlock_pending = false;
         self.tab_touch_pending = false;
         self.me_drag = None;
-        self.me_row_cache = None;
+        self.invalidate_me_rows();
         self.touch_down_action = None;
         self.key_finger_down = false;
         self.tab_finger_down = false;
@@ -12595,13 +12660,7 @@ impl Shell {
                 0,
                 me_max_scroll_offset(all.len(), width, height, content_rect),
             );
-            let view = layout_live_v2_scrolled(
-                &me_v2_source(&all),
-                "ADR-227 me paint",
-                width,
-                height,
-                offset,
-            );
+            let view = me_paint_view(&mut self.me_paint_cache, &all, width, height, offset);
             let archived = space_lifecycle(&self.system_space_entities, &self.selected_space_id)
                 == SpaceLifecycle::Archived;
             Frame::Me {
@@ -13448,6 +13507,11 @@ impl Shell {
         }
     }
 
+    fn invalidate_me_rows(&mut self) {
+        self.me_row_cache = None;
+        self.me_paint_cache = None;
+    }
+
     fn capture_me_rows(&mut self) -> usize {
         if self.me_row_cache.is_none() {
             let rows = flatten_me_rows(&me_system_sections(&self.me_facts()));
@@ -13473,7 +13537,7 @@ impl Shell {
     }
 
     fn invoke_me_action(&mut self, action: &str, conn: &Connection, qh: &QueueHandle<Self>) {
-        self.me_row_cache = None;
+        self.invalidate_me_rows();
         match action {
             "tap_build_info" => {
                 // HIA-20: no toast, no counter shown anywhere -- see
@@ -13602,7 +13666,7 @@ impl Shell {
                 // Five fetch attempts, then the widget shows the reason.
                 // Tap starts the cycle again. No settings persist.
                 let _ = refresh_locality();
-                self.me_row_cache = None;
+                self.invalidate_me_rows();
                 self.draw(conn, qh);
                 return;
             }
@@ -26971,6 +27035,27 @@ mod tests {
             panic!("Я motion must not respawn wpa_cli/df")
         });
         assert_eq!(reused.len(), len);
+    }
+
+    #[test]
+    fn me_paint_view_does_not_recompile_on_same_offset() {
+        let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
+        let mut cache = None;
+        let first = super::me_paint_view_with(
+            &mut cache,
+            || super::compile_live_v2(&super::me_v2_source(&rows), "test me paint"),
+            1080,
+            2400,
+            0,
+        );
+        let second = super::me_paint_view_with(
+            &mut cache,
+            || panic!("Я motion must not recompile me v2"),
+            1080,
+            2400,
+            0,
+        );
+        assert_eq!(first, second);
     }
 
     #[test]
