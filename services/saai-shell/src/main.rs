@@ -3506,18 +3506,6 @@ fn object_view_hit_scrolled(
     })
 }
 
-fn object_view_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    action_count: usize,
-) -> Option<usize> {
-    match object_view_hit_scrolled(pos, width, height, action_count, 0, 0, 0, false, 0) {
-        Some(ObjectViewHit::Action(index)) => Some(index),
-        _ => None,
-    }
-}
-
 /// What Object View shows for one entity -- `saaios.task`/`saaios.
 /// notification` are the two real, pre-existing types "Входящие"
 /// already listed before this (S13 Change 2 / S21); every other
@@ -14956,7 +14944,7 @@ impl Shell {
     /// entity_type. `index` is only ever consulted for the types that
     /// define an action at that position at all -- an entity_type
     /// with an empty `actions` list never reaches here in the first
-    /// place (`object_view_action_at` returns `None` when
+    /// place (`object_view_hit_scrolled` returns no Action when
     /// `action_count == 0`).
     fn handle_object_view_action(&mut self, index: usize) {
         let Some(entity) = self.viewing_entity().cloned() else {
@@ -15997,7 +15985,6 @@ mod tests {
         now_attention_hit_scrolled, now_next_hit_scrolled, now_next_paint_rows_scrolled, now_object_tapped, now_task_hit_scrolled,
         now_task_paint_rows_scrolled, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
         now_workflow_sections,
-        object_view_action_at,
         object_view_content, object_view_content_with, object_view_details,
         object_view_history_lines, object_view_hit_scrolled,
         object_view_permission_pattern,
@@ -23287,32 +23274,43 @@ mod tests {
         // object_overlay_v2_source docks the two action locs through
         // layout_v2 (ADR-221/428).
         assert_eq!(
-            object_view_action_at((270.0, 2250.0), 1080, 2400, 2),
-            Some(0)
+            object_view_hit_scrolled((270.0, 2250.0), 1080, 2400, 2, 0, 0, 0, false, 0),
+            Some(ObjectViewHit::Action(0))
         );
         assert_eq!(
-            object_view_action_at((810.0, 2250.0), 1080, 2400, 2),
-            Some(1)
+            object_view_hit_scrolled((810.0, 2250.0), 1080, 2400, 2, 0, 0, 0, false, 0),
+            Some(ObjectViewHit::Action(1))
         );
-        assert_eq!(object_view_action_at((540.0, 1000.0), 1080, 2400, 2), None);
+        assert_eq!(
+            object_view_hit_scrolled((540.0, 1000.0), 1080, 2400, 2, 0, 0, 0, false, 0),
+            None
+        );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn object_view_action_at", "(")));
     }
 
     #[test]
     fn object_view_action_at_finds_a_single_button_spanning_the_full_row() {
         assert_eq!(
-            object_view_action_at((270.0, 2250.0), 1080, 2400, 1),
-            Some(0)
+            object_view_hit_scrolled((270.0, 2250.0), 1080, 2400, 1, 0, 0, 0, false, 0),
+            Some(ObjectViewHit::Action(0))
         );
         assert_eq!(
-            object_view_action_at((810.0, 2250.0), 1080, 2400, 1),
-            Some(0)
+            object_view_hit_scrolled((810.0, 2250.0), 1080, 2400, 1, 0, 0, 0, false, 0),
+            Some(ObjectViewHit::Action(0))
         );
     }
 
     #[test]
     fn object_view_action_at_finds_nothing_with_zero_actions() {
-        assert_eq!(object_view_action_at((270.0, 2250.0), 1080, 2400, 0), None);
-        assert_eq!(object_view_action_at((540.0, 1000.0), 1080, 2400, 0), None);
+        assert_eq!(
+            object_view_hit_scrolled((270.0, 2250.0), 1080, 2400, 0, 0, 0, 0, false, 0),
+            None
+        );
+        assert_eq!(
+            object_view_hit_scrolled((540.0, 1000.0), 1080, 2400, 0, 0, 0, 0, false, 0),
+            None
+        );
     }
 
     #[test]
@@ -23332,7 +23330,10 @@ mod tests {
             object_view_hit_scrolled((270.0, 2250.0), 1080, 2400, 1, 2, 0, 0, false, 0),
             Some(ObjectViewHit::Action(0))
         );
-        assert_eq!(object_view_action_at((540.0, 292.0), 1080, 2400, 1), None);
+        assert_eq!(
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 1, 0, 0, 0, false, 0),
+            None
+        );
     }
 
     #[test]
