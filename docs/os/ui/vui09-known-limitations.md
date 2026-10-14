@@ -250,6 +250,7 @@ The verification ledger stays in
 | Me chrome flash | ADR-677; `36a07194…` on `/data`; chrome list before live probes; dest-no-lock stays off |
 | Wi-Fi cli hang | ADR-678; host; `wpa_cli` 400 ms timeout; connect next loop; do not type PSK; dest-no-lock stays off |
 | Wi-Fi cli flash | ADR-679; `60fe8f16…` on `/data`; unlock slept; do not type PSK; dest-no-lock stays off |
+| proc camp one pass | ADR-680; host; one `/proc` walk for owner/endpoint/status; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

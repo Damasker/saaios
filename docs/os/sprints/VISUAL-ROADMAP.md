@@ -441,7 +441,8 @@ real phone interface consistently.
   probes (ADR-676; host). Chrome list on `/data`
   (ADR-677; `36a07194…`). `wpa_cli` timeout + deferred
   connect (ADR-678; host). Timeout on `/data`
-  (ADR-679; `60fe8f16…`).
+  (ADR-679; `60fe8f16…`). One `/proc` camp walk
+  (ADR-680; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2044,6 +2045,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Wi-Fi `wpa_cli` timeout on panther (ADR-679; `60fe8f16…`).
   dest-no-lock stays off. Unlock slept. Do not type PSK.
   Leave Сейчас. Still Experimental.
+- [x] One `/proc` camp walk (ADR-680; host). dest-no-lock stays
+  off. Owner, endpoint, and status-query share one scan.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2323,7 +2327,8 @@ idle mid-fill (ADR-674; host). Hold + idle skip on `/data`
 probes (ADR-676; host). Chrome list on `/data`
 (ADR-677; `36a07194…`). `wpa_cli` timeout + deferred
 connect (ADR-678; host). Timeout on `/data`
-(ADR-679; `60fe8f16…`).
+(ADR-679; `60fe8f16…`). One `/proc` camp walk
+(ADR-680; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

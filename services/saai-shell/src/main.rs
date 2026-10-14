@@ -1379,55 +1379,74 @@ fn camp_log_current_from(owner: bool, cp: Option<&str>) -> bool {
     owner && cp == Some("ONLINE")
 }
 
-fn status_query_running() -> bool {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
-            continue;
-        }
-        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
-        let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
-        if String::from_utf8_lossy(argv0).ends_with("/sit-sim-status") {
-            return true;
-        }
-    }
-    false
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ProcCampPresence {
+    owner: bool,
+    status_query: bool,
+    endpoint: Option<&'static str>,
 }
 
-fn camp_owner_running() -> bool {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if !name.bytes().all(|byte| byte.is_ascii_digit()) {
-            continue;
-        }
-        let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
-        if saai_observation::cmdline_is_camp_owner(&cmdline) {
-            return true;
-        }
-    }
-    false
+struct ProcCampRow<'a> {
+    cmdline: &'a [u8],
+    holds_endpoint: bool,
 }
 
-/// Who holds `umts_ipc0` or `umts_rfs0`, from `/proc` symlinks. The
-/// devices themselves stay closed.
-fn read_endpoint_holder() -> Option<&'static str> {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return None;
-    };
+fn proc_camp_presence_from_rows(rows: &[ProcCampRow<'_>]) -> ProcCampPresence {
+    let mut owner = false;
+    let mut status_query = false;
     let mut owner_has = false;
     let mut modemd_has = false;
+    for row in rows {
+        if saai_observation::cmdline_is_camp_owner(row.cmdline) {
+            owner = true;
+        }
+        let argv0 = row.cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
+        let argv0 = String::from_utf8_lossy(argv0);
+        if argv0.ends_with("/sit-sim-status") {
+            status_query = true;
+        }
+        let kind = if argv0.ends_with("/modem-rfs-camp-combined-owner") {
+            Some("owner")
+        } else if argv0.ends_with("/saai-modemd") {
+            Some("modemd")
+        } else {
+            None
+        };
+        if let (Some(kind), true) = (kind, row.holds_endpoint) {
+            match kind {
+                "owner" => owner_has = true,
+                _ => modemd_has = true,
+            }
+        }
+    }
+    ProcCampPresence {
+        owner,
+        status_query,
+        endpoint: saai_observation::endpoint_holder(owner_has, modemd_has),
+    }
+}
+
+fn proc_pid_holds_modem_endpoint(proc_dir: &Path) -> bool {
+    let Ok(fds) = std::fs::read_dir(proc_dir.join("fd")) else {
+        return false;
+    };
+    fds.flatten().any(|fd| {
+        std::fs::read_link(fd.path())
+            .ok()
+            .and_then(|target| target.to_str().map(str::to_string))
+            .is_some_and(|target| saai_observation::link_is_modem_endpoint(&target))
+    })
+}
+
+fn proc_camp_presence() -> ProcCampPresence {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return ProcCampPresence {
+            owner: false,
+            status_query: false,
+            endpoint: None,
+        };
+    };
+    let mut collected = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
@@ -1439,30 +1458,36 @@ fn read_endpoint_holder() -> Option<&'static str> {
         let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
         let argv0 = cmdline.split(|byte| *byte == 0).next().unwrap_or(b"");
         let argv0 = String::from_utf8_lossy(argv0);
-        let kind = if argv0.ends_with("/modem-rfs-camp-combined-owner") {
-            "owner"
-        } else if argv0.ends_with("/saai-modemd") {
-            "modemd"
-        } else {
-            continue;
-        };
-        let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
-            continue;
-        };
-        let holds = fds.flatten().any(|fd| {
-            std::fs::read_link(fd.path())
-                .ok()
-                .and_then(|target| target.to_str().map(str::to_string))
-                .is_some_and(|target| saai_observation::link_is_modem_endpoint(&target))
-        });
-        if holds {
-            match kind {
-                "owner" => owner_has = true,
-                _ => modemd_has = true,
-            }
-        }
+        let check_fd = argv0.ends_with("/modem-rfs-camp-combined-owner")
+            || argv0.ends_with("/saai-modemd");
+        let holds_endpoint = check_fd && proc_pid_holds_modem_endpoint(&entry.path());
+        collected.push((cmdline, holds_endpoint));
     }
-    saai_observation::endpoint_holder(owner_has, modemd_has)
+    let rows: Vec<ProcCampRow<'_>> = collected
+        .iter()
+        .map(|(cmdline, holds_endpoint)| ProcCampRow {
+            cmdline,
+            holds_endpoint: *holds_endpoint,
+        })
+        .collect();
+    proc_camp_presence_from_rows(&rows)
+}
+
+#[allow(dead_code)]
+fn status_query_running() -> bool {
+    proc_camp_presence().status_query
+}
+
+#[allow(dead_code)]
+fn camp_owner_running() -> bool {
+    proc_camp_presence().owner
+}
+
+/// Who holds `umts_ipc0` or `umts_rfs0`, from `/proc` symlinks. The
+/// devices themselves stay closed.
+#[allow(dead_code)]
+fn read_endpoint_holder() -> Option<&'static str> {
+    proc_camp_presence().endpoint
 }
 
 fn read_supervisor_token() -> Option<String> {
@@ -14751,11 +14776,12 @@ impl Shell {
         let live = read_runtime_live_facts();
         let (node_class, node_target, node_arch) =
             node_identity_resolved(live.identity.as_ref(), phone_gate_surface());
-        let camp_owner = camp_owner_running();
+        let camp = proc_camp_presence();
+        let camp_owner = camp.owner;
         let cellular_cp = read_cp_state();
         let camp_current = camp_log_current_from(camp_owner, cellular_cp.as_deref());
-        let cellular_endpoint = read_endpoint_holder();
-        let status_query = status_query_running();
+        let cellular_endpoint = camp.endpoint;
+        let status_query = camp.status_query;
         MeFacts {
             space_count: self.spaces.len(),
             entity_count: total_entities,
@@ -27572,6 +27598,26 @@ mod tests {
         let src = include_str!("main.rs");
         assert!(!src.contains(concat!("fn camp_log_is_current", "(")));
         assert!(src.contains("fn camp_log_current_from("));
+    }
+
+    #[test]
+    fn proc_camp_presence_classifies_one_pass() {
+        let owner = super::ProcCampRow {
+            cmdline: b"/data/saaios/bin/modem-rfs-camp-combined-owner\0",
+            holds_endpoint: true,
+        };
+        let status = super::ProcCampRow {
+            cmdline: b"/data/saaios/bin/sit-sim-status\0",
+            holds_endpoint: false,
+        };
+        let got = super::proc_camp_presence_from_rows(&[owner, status]);
+        assert!(got.owner);
+        assert!(got.status_query);
+        assert_eq!(got.endpoint, Some("owner"));
+        let empty = super::proc_camp_presence_from_rows(&[]);
+        assert!(!empty.owner);
+        assert!(!empty.status_query);
+        assert!(empty.endpoint.is_none());
     }
 
     #[test]
