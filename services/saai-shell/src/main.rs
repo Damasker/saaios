@@ -6908,6 +6908,10 @@ fn diagnostic_row(label: impl Into<String>, value: impl Into<String>) -> DataRow
     DataRow::new(label, DataRowVariant::Static).with_value(value)
 }
 
+fn diagnostic_technical_row(label: impl Into<String>, value: impl Into<String>) -> DataRow {
+    DataRow::new(label, DataRowVariant::Static).with_technical_value(value)
+}
+
 fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
     render::ActionCardView::new(
         row.primary.clone(),
@@ -14804,9 +14808,9 @@ impl Shell {
                 "Пространство",
                 diagnostic_space_copy(&self.spaces, &self.selected_space_id),
             ),
-            diagnostic_row("Сборка", env!("SAAIOS_BUILD_ID")),
+            diagnostic_technical_row("Сборка", env!("SAAIOS_BUILD_ID")),
             diagnostic_row("Модель", hardware_model()),
-            diagnostic_row("Ядро", kernel_release()),
+            diagnostic_technical_row("Ядро", kernel_release()),
             diagnostic_row("Работает", uptime_string()),
             diagnostic_row(
                 "Пространств",
@@ -16246,6 +16250,7 @@ mod tests {
         consent_action_at, consent_content_cards, consent_header, context_source_copy,
         cp_state_token,
         dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
+        diagnostic_technical_row,
         diagnostic_v2_source, drop_clocks_if_reduced, effective_context_space, ensure_me_row_cache,
         field_shows_context_focus, flatten_me_rows, format_utc_offset, in_progress_work,
         inbox_header, input_idle_for_at_least, intent_action_at, intent_compose_header,
@@ -27144,15 +27149,22 @@ mod tests {
 
     #[test]
     fn diagnostic_card_from_row_keeps_label_and_value_apart() {
-        let row = diagnostic_row("Сборка", "abc123");
+        let row = diagnostic_technical_row("Сборка", "abc123");
         assert_eq!(row.variant, DataRowVariant::Static);
         assert!(!row.is_actionable());
+        assert!(!row.is_copyable());
         assert_eq!(row.primary, "Сборка");
         assert_eq!(row.value.as_deref(), Some("abc123"));
+        assert_eq!(row.value_role(), saai_ui_core::TextRole::MonoBody);
         let card = diagnostic_card_from_row(&row);
         assert_eq!(card.label, "Сборка");
         assert_eq!(card.status, "abc123");
         assert_eq!(card.action, "");
+        let space = diagnostic_row("Пространство", "дом");
+        assert_eq!(space.value_role(), saai_ui_core::TextRole::Body);
+        let kernel = diagnostic_technical_row("Ядро", "6.1.0");
+        assert_eq!(kernel.value_role(), saai_ui_core::TextRole::MonoBody);
+        assert!(!kernel.is_copyable());
     }
 
     #[test]

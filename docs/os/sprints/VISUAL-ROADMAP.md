@@ -380,6 +380,7 @@ real phone interface consistently.
   594–613 wrap paint is on `/data` (ADR-614; `f09b83e0…`).
   Live observation IPv4/IPv6/DNS/CID paint MonoBody (ADR-615).
   Live observation bearer/endpoint paint MonoBody (ADR-616).
+  DevSurface build/kernel paint MonoBody (ADR-617).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1792,6 +1793,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Live observation bearer/endpoint paint MonoBody
   (ADR-616; host). dest-no-lock stays off. Labels stay.
   Leave Сейчас. Still Experimental.
+- [x] DevSurface build/kernel paint MonoBody (ADR-617;
+  host). dest-no-lock stays off. Space stays Body. Leave
+  Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2010,7 +2014,8 @@ facts paint as Body (ADR-612). Live Sistema DataRow
 advances by wrap height (ADR-613). Host 594–613 wrap
 paint on `/data` (ADR-614; `f09b83e0…`). Live observation
 IPv4/IPv6/DNS/CID paint MonoBody (ADR-615). Live observation
-bearer/endpoint paint MonoBody (ADR-616). dest-no-lock stays off.
+bearer/endpoint paint MonoBody (ADR-616). DevSurface
+build/kernel paint MonoBody (ADR-617). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
