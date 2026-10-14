@@ -222,6 +222,7 @@ The verification ledger stays in
 | leftover now_attention_v2_source | ADR-649; host; alias gone; body_v2_source stays; dest-no-lock stays off |
 | leftover now_footer_action_views | ADR-650; host; wrapper gone; views_from stays; dest-no-lock stays off |
 | leftover now_node_rect | ADR-651; host; alias gone; v2_named_rect stays; dest-no-lock stays off |
+| leftover space_member_rows | ADR-652; host; alias gone; search_rows stays; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

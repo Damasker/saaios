@@ -7754,12 +7754,8 @@ fn space_member_kind_label(entity: &Entity) -> &'static str {
     }
 }
 
-fn space_member_rows(entities: &[Entity]) -> Vec<&Entity> {
-    search_rows(entities)
-}
-
 fn space_focus_task(entities: &[Entity]) -> Option<&Entity> {
-    let members = space_member_rows(entities);
+    let members = search_rows(entities);
     in_progress_work(entities)
         .into_iter()
         .find(|task| members.iter().any(|member| member.id == task.id))
@@ -7767,7 +7763,7 @@ fn space_focus_task(entities: &[Entity]) -> Option<&Entity> {
 
 fn space_detail_member_rows<'a>(entities: &'a [Entity]) -> Vec<&'a Entity> {
     let focus_id = space_focus_task(entities).map(|task| task.id);
-    space_member_rows(entities)
+    search_rows(entities)
         .into_iter()
         .filter(|entity| focus_id != Some(entity.id))
         .collect()
@@ -15936,7 +15932,7 @@ mod tests {
         search_rows, space_color, space_color_entity, space_detail_action_at_scrolled,
         space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row_scrolled,
         space_focus_task, space_for_wifi_ssid, space_member_paint_rows_scrolled,
-        space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
+        space_lifecycle, space_list_rows, space_member_kind_label,
         space_relation_targets, space_row_at_scrolled, spaces_header, stacked_control_rect,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
         trusted_client_action_at_scrolled, trusted_client_card_from_row, trusted_client_is_protected,
@@ -22331,7 +22327,7 @@ mod tests {
         color_props.insert("color".into(), serde_json::Value::String("teal".into()));
         let color = test_entity(SPACE_COLOR_ENTITY_TYPE, color_props);
         let entities = vec![intent.clone(), task.clone(), notice, person.clone(), color];
-        let rows = space_member_rows(&entities);
+        let rows = search_rows(&entities);
         let titles: Vec<&str> = rows.iter().map(|entity| entity.title.as_str()).collect();
         assert_eq!(titles.len(), 3);
         assert!(titles.contains(&"Собрать слайды"));
@@ -22339,6 +22335,9 @@ mod tests {
         assert!(titles.contains(&"Андрей"));
         assert_eq!(space_member_kind_label(&person), "Человек");
         assert!(!titles.iter().any(|title| title.contains("Люди")));
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn space_member_rows", "(")));
+        assert!(src.contains("fn search_rows("));
         assert_eq!(space_detail_empty_card(true).label, "Нет объектов");
         assert_eq!(space_detail_empty_card(false).label, "Нет связи");
         let header = space_detail_header("Дом", true, false);
