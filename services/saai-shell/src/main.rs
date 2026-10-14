@@ -7228,10 +7228,6 @@ fn now_weather_hit_scrolled(pos: (f64, f64), width: u32, height: u32, scroll_off
         == Some("now.weather")
 }
 
-fn now_weather_paint_row(width: u32, height: u32) -> Option<(Rect, DataRow)> {
-    now_weather_paint_row_scrolled(width, height, 0)
-}
-
 fn now_weather_paint_row_scrolled(
     width: u32,
     height: u32,
@@ -16243,7 +16239,7 @@ mod tests {
         lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
         me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
         now_attention_hit, now_next_hit, now_next_paint_rows, now_object_tapped, now_task_hit,
-        now_task_paint_rows, now_weather_hit, now_weather_paint_row, now_workflow_sections,
+        now_task_paint_rows, now_weather_hit, now_weather_paint_row_scrolled, now_workflow_sections,
         object_view_action_at,
         object_view_content, object_view_content_with, object_view_details,
         object_view_history_lines, object_view_hit,
@@ -25393,7 +25389,9 @@ mod tests {
     fn now_weather_row_shows_live_status_and_retries() {
         assert!(now_weather_hit((540.0, 438.0), 1080, 2400));
         assert!(!now_weather_hit((540.0, 658.0), 1080, 2400));
-        let (rect, row) = now_weather_paint_row(1080, 2400).expect("weather");
+        let (rect, row) = now_weather_paint_row_scrolled(1080, 2400, 0).expect("weather");
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_weather_paint_row", "(")));
         assert_eq!(rect, saai_ui_core::Rect::new(49, 430, 982, 190));
         assert_eq!(row.primary, "Местность");
         assert_eq!(row.action.as_deref(), Some("now.weather"));
