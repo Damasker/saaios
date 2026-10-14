@@ -186,6 +186,7 @@ The verification ledger stays in
 | live Sistema DataRow wrap height | ADR-613; host; cursor uses wrap paint height; dest-no-lock stays off |
 | shell 594–613 wrap paint | ADR-614; `f09b83e0…` on `/data`; dest-no-lock stays off; lock surface |
 | live technical IDs MonoBody | ADR-615; host; IPv4/IPv6/DNS/CID MonoBody; no copy; dest-no-lock stays off |
+| live bearer/endpoint MonoBody | ADR-616; host; Канал/Дескриптор stay; no copy; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

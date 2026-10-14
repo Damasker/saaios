@@ -310,6 +310,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   live observation IPv4/IPv6/DNS/CID paint MonoBody (ADR-615).
   dest-no-lock stays off.
+  live observation bearer/endpoint paint MonoBody (ADR-616).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

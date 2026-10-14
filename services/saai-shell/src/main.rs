@@ -8607,6 +8607,8 @@ impl LiveObservationFact {
                 | "cellular.dns"
                 | "cellular.dns6"
                 | "cellular.dcall_cid"
+                | "cellular.bearer"
+                | "cellular.endpoint"
         )
     }
 
@@ -26796,6 +26798,35 @@ mod tests {
         assert_eq!(ipv4.as_row().value_role(), saai_ui_core::TextRole::MonoBody);
         assert_eq!(cpu.as_row().value_role(), saai_ui_core::TextRole::Body);
         assert!(!ipv4.as_row().is_copyable());
+        let bearer = super::LiveObservationFact {
+            key: "cellular.bearer".into(),
+            label: "Канал".into(),
+            value: "rmnet1".into(),
+            source: "camp.owner.bearer".into(),
+        };
+        let endpoint = super::LiveObservationFact {
+            key: "cellular.endpoint".into(),
+            label: "Дескриптор".into(),
+            value: "oem_ipc0".into(),
+            source: "camp.owner.endpoint".into(),
+        };
+        assert_eq!(
+            bearer.as_row().value_role(),
+            saai_ui_core::TextRole::MonoBody
+        );
+        assert_eq!(
+            endpoint.as_row().value_role(),
+            saai_ui_core::TextRole::MonoBody
+        );
+        assert!(!bearer.as_row().is_copyable());
+        assert_eq!(
+            super::observation_row_label("cellular.bearer").as_deref(),
+            Some("Канал")
+        );
+        assert_eq!(
+            super::observation_row_label("cellular.endpoint").as_deref(),
+            Some("Дескриптор")
+        );
         let mut facts = me_fixture_facts();
         facts.observations = vec![ipv4, cpu];
         let sections = me_system_sections(&facts);
