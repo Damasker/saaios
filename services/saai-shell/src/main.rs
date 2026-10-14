@@ -5222,10 +5222,6 @@ fn orb_visual_state_with(
     }
 }
 
-fn orb_attention_from_entities(entities: &[Entity]) -> bool {
-    orb_attention(entities, None)
-}
-
 fn orb_attention(entities: &[Entity], health: Option<&HealthReport>) -> bool {
     live_orb_attention(entities, health, None)
 }
@@ -15943,7 +15939,7 @@ mod tests {
         object_view_permission_pattern,
         object_summary_meta, object_view_related_peer_lines, object_view_step_lines,
         object_view_summary, orb_action_at,
-        orb_attention_from_entities, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
+        orb_attention, orb_menu_actions, orb_shows_activity_pulse, orb_v2_source,
         orb_visual_state_with, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
         related_object_first_peer, remote_pair_content_cards, remote_pair_header,
@@ -24550,7 +24546,7 @@ mod tests {
     #[test]
     fn waiting_confirmation_task_lights_orb_without_a_notification() {
         let waiting = task_entity("Подтвердите удаление", None);
-        assert!(orb_attention_from_entities(&[waiting.clone()]));
+        assert!(orb_attention(&[waiting.clone()], None));
         assert_eq!(
             orb_visual_state_with(true, true, std::slice::from_ref(&waiting), false, None, None),
             UniversalState::Attention
@@ -24563,7 +24559,7 @@ mod tests {
         running
             .properties
             .insert("status".into(), serde_json::Value::String("running".into()));
-        assert!(!orb_attention_from_entities(&[running]));
+        assert!(!orb_attention(&[running], None));
     }
 
     #[test]
@@ -24571,7 +24567,10 @@ mod tests {
         let mut gone = notification_entity("Notice", "body");
         gone.properties
             .insert("dismissed".into(), serde_json::Value::Bool(true));
-        assert!(!orb_attention_from_entities(&[gone]));
+        assert!(!orb_attention(&[gone], None));
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn orb_attention_from_entities", "(")));
+        assert!(src.contains("fn orb_attention("));
     }
 
     #[test]
