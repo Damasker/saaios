@@ -7207,10 +7207,6 @@ fn now_scroll_max(
     )
 }
 
-fn now_weather_hit(pos: (f64, f64), width: u32, height: u32) -> bool {
-    now_weather_hit_scrolled(pos, width, height, 0)
-}
-
 fn now_weather_hit_scrolled(pos: (f64, f64), width: u32, height: u32, scroll_offset: i32) -> bool {
     if width == 0 || height == 0 {
         return false;
@@ -16239,7 +16235,8 @@ mod tests {
         lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
         me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
         now_attention_hit, now_next_hit, now_next_paint_rows, now_object_tapped, now_task_hit,
-        now_task_paint_rows, now_weather_hit, now_weather_paint_row_scrolled, now_workflow_sections,
+        now_task_paint_rows, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
+        now_workflow_sections,
         object_view_action_at,
         object_view_content, object_view_content_with, object_view_details,
         object_view_history_lines, object_view_hit,
@@ -25381,14 +25378,16 @@ mod tests {
             ),
             Some(0)
         );
-        assert!(now_weather_hit((540.0, 438.0), 1080, 2400));
-        assert!(!super::now_weather_hit_scrolled((540.0, 438.0), 1080, 2400, max));
+        assert!(now_weather_hit_scrolled((540.0, 438.0), 1080, 2400, 0));
+        assert!(!now_weather_hit_scrolled((540.0, 438.0), 1080, 2400, max));
     }
 
     #[test]
     fn now_weather_row_shows_live_status_and_retries() {
-        assert!(now_weather_hit((540.0, 438.0), 1080, 2400));
-        assert!(!now_weather_hit((540.0, 658.0), 1080, 2400));
+        assert!(now_weather_hit_scrolled((540.0, 438.0), 1080, 2400, 0));
+        assert!(!now_weather_hit_scrolled((540.0, 658.0), 1080, 2400, 0));
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_weather_hit", "(")));
         let (rect, row) = now_weather_paint_row_scrolled(1080, 2400, 0).expect("weather");
         let src = include_str!("main.rs");
         assert!(!src.contains(concat!("fn now_weather_paint_row", "(")));

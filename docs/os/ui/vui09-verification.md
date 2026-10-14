@@ -320,6 +320,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   leftover `now_weather_paint_row` is gone (ADR-620).
   dest-no-lock stays off.
+  leftover `now_weather_hit` is gone (ADR-621).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
