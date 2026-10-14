@@ -417,6 +417,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Visible Sistema window (ADR-669; host). dest-no-lock stays off.
   Visible Sistema window on `/data` (ADR-670; `7c3b9bac…`). dest-no-lock
   stays off.
+  User-confirmed Sistema (ADR-671; `7c3b9bac…`). dest-no-lock stays
+  off. Search `p95_ok=1`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

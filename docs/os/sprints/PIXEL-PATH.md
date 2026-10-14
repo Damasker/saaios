@@ -441,6 +441,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 camp flash | ADR-667 snapshot on `/data` **на panther** (ADR-668; `1bb214c6…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 Me window | paint only visible Sistema rows **host** (ADR-669; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 Me window flash | visible window on `/data` **на panther** (ADR-670; `7c3b9bac…`; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 Sistema works | user-confirmed Me + Search p95 **на panther** (ADR-671; `7c3b9bac…`; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -679,6 +680,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 camp flash: ADR-667 snapshot on `/data` (ADR-668; `1bb214c6…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 Me window: paint only visible Sistema rows (ADR-669; host; dest-no-lock stays off)
 - VUI-09 Me window flash: visible window on `/data` (ADR-670; `7c3b9bac…`; dest-no-lock stays off)
+- VUI-09 Sistema works: user-confirmed Me + Search p95 (ADR-671; `7c3b9bac…`; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
