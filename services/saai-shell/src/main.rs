@@ -6904,6 +6904,15 @@ fn trusted_client_card_from_row(
 /// ADR-136: one live diagnostic fact as a Static `DataRow`. Not a
 /// button -- HIA-20's only tap target on this screen is trailing
 /// «Назад».
+fn camera_setting_row(nodes: &[String]) -> DataRow {
+    if nodes.is_empty() {
+        SettingRow::readout("Камера", "Нет узла захвата").row
+    } else {
+        DataRow::new("Камера", DataRowVariant::Static)
+            .with_technical_value(nodes.join(" · "))
+    }
+}
+
 fn diagnostic_row(label: impl Into<String>, value: impl Into<String>) -> DataRow {
     DataRow::new(label, DataRowVariant::Static).with_value(value)
 }
@@ -9335,11 +9344,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 )
                 .row,
                 SettingRow::readout("Обновления", format!("Слот {}", facts.boot_slot)).row,
-                if facts.camera_nodes.is_empty() {
-                    SettingRow::readout("Камера", "Нет узла захвата").row
-                } else {
-                    SettingRow::readout("Камера", facts.camera_nodes.join(" · ")).row
-                },
+                camera_setting_row(&facts.camera_nodes),
                 SettingRow::cycle(
                     "Часовой пояс",
                     format_utc_offset(facts.utc_offset_minutes),
@@ -16246,7 +16251,8 @@ mod tests {
         bluetooth_list_row_count, bluetooth_list_rows, bluetooth_pair_error_from,
         bluetooth_transport_copy,
         bluetooth_scan_pattern, calibration_requested, capability_label,
-        capture_nodes_from_v4l_listing, cellular_ifaces_from_net_listing, cellular_row_status,
+        camera_setting_row, capture_nodes_from_v4l_listing, cellular_ifaces_from_net_listing,
+        cellular_row_status,
         consent_action_at, consent_content_cards, consent_header, context_source_copy,
         cp_state_token,
         dev_surface_back_tapped, diagnostic_card_from_row, diagnostic_header, diagnostic_row,
@@ -21879,6 +21885,13 @@ mod tests {
         assert!(camera.dispatch.is_none());
         assert!(!camera.card.status.contains("preview"));
         assert!(!camera.card.status.contains("Android"));
+        let live = camera_setting_row(&["video0".into()]);
+        assert_eq!(live.value_role(), saai_ui_core::TextRole::MonoBody);
+        assert!(!live.is_copyable());
+        assert_eq!(live.value.as_deref(), Some("video0"));
+        let missing = camera_setting_row(&[]);
+        assert_eq!(missing.value_role(), saai_ui_core::TextRole::Body);
+        assert_eq!(missing.value.as_deref(), Some("Нет узла захвата"));
     }
 
     #[test]
