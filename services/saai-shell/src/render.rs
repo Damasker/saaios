@@ -433,10 +433,7 @@ fn draw_object_summary(
     max_width: u32,
 ) -> u32 {
     let mut y = top;
-    draw_semantic_text(canvas, fonts, &object.title_text(), left, y, max_width);
-    y += scaled_line_height(TextRole::Body);
-    draw_semantic_text(canvas, fonts, &object.meta_text(), left, y, max_width);
-    y += scaled_line_height(TextRole::Caption);
+    y += draw_gallery_object(canvas, fonts, object, left, y, max_width);
     if let Some(ObjectSummaryTrailing::Status(status)) = &object.trailing {
         y += draw_status_indicator(canvas, fonts, status, left, y, max_width);
     } else if let Some(ObjectSummaryTrailing::Value(value)) = &object.trailing {
@@ -4173,6 +4170,26 @@ mod tests {
             scaled_line_height(TextRole::Body) + scaled_line_height(TextRole::Caption)
         );
         assert_eq!(short.meta, "saaios.document · версия 3");
+    }
+
+    #[test]
+    fn object_summary_live_paint_uses_title_lines() {
+        let src = include_str!("render.rs");
+        assert!(src.contains(
+            "y += draw_gallery_object(canvas, fonts, object, left, y, max_width);"
+        ));
+        assert!(!src.contains(concat!(
+            "draw_semantic_text(canvas, fonts, &object.",
+            "title_text()"
+        )));
+        let object = ObjectSummary::new("Ежедневный отчёт по заряду", "saaios.task · версия 3");
+        let (lines, height) = gallery_object_paint(&object, |text| text.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            height,
+            scaled_line_height(TextRole::Body) * 2 + scaled_line_height(TextRole::Caption)
+        );
+        assert_eq!(object.meta, "saaios.task · версия 3");
     }
 
     #[test]
