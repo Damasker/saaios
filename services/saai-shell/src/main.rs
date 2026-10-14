@@ -9018,6 +9018,10 @@ fn me_motion_should_repaint(paint_cache: &Option<MePaintCache>, scroll_dirty: bo
     paint_cache.is_none() || scroll_dirty
 }
 
+fn me_rows_or_empty(cache: &Option<Vec<MeRow>>) -> Vec<MeRow> {
+    cache.clone().unwrap_or_default()
+}
+
 fn ensure_me_row_cache(
     cache: &mut Option<Vec<MeRow>>,
     build: impl FnOnce() -> Vec<MeRow>,
@@ -9999,6 +10003,7 @@ fn main() {
         scroll_content_only: false,
         me_row_cache: None,
         me_paint_cache: None,
+        me_facts_pending: false,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -10071,6 +10076,13 @@ fn main() {
     }
 
     while !shell.exit {
+        if shell.me_facts_pending {
+            shell.me_facts_pending = false;
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        }
         event_loop
             .dispatch(Duration::from_millis(16), &mut shell)
             .expect("event loop dispatch failed");
@@ -10347,6 +10359,9 @@ struct Shell {
     /// Compiled Sistema tree + last scrolled layout. Selection and
     /// Orb pulse must not `compile_v2` the SettingRow list every 8ms.
     me_paint_cache: Option<MePaintCache>,
+    /// First Sistema paint is chrome only. The next event-loop turn
+    /// fills `me_row_cache` so `me_facts()` cannot block the tab switch.
+    me_facts_pending: bool,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -12661,7 +12676,9 @@ impl Shell {
                 }
             }
         } else if self.current_page == RootPage::Me {
-            self.capture_me_rows();
+            if self.me_row_cache.is_none() {
+                self.me_facts_pending = true;
+            }
             let all = self.me_all_rows();
             let content_rect = root_view(width, height).children[0].rect;
             let offset = self.me_scroll_offset.clamp(
@@ -13524,6 +13541,7 @@ impl Shell {
         if self.me_row_cache.is_none() {
             let rows = flatten_me_rows(&me_system_sections(&self.me_facts()));
             self.me_row_cache = Some(rows);
+            self.me_paint_cache = None;
         }
         self.me_row_cache
             .as_ref()
@@ -14497,9 +14515,7 @@ impl Shell {
     }
 
     fn me_all_rows(&self) -> Vec<MeRow> {
-        cached_me_rows(&self.me_row_cache, || {
-            flatten_me_rows(&me_system_sections(&self.me_facts()))
-        })
+        me_rows_or_empty(&self.me_row_cache)
     }
 
     /// HIA-20: the hidden diagnostic screen's own content -- real,
@@ -27074,6 +27090,14 @@ mod tests {
         let _ = super::me_paint_view(&mut cache, &rows, 1080, 2400, 0);
         assert!(!super::me_motion_should_repaint(&cache, false));
         assert!(super::me_motion_should_repaint(&cache, true));
+    }
+
+    #[test]
+    fn me_first_paint_is_empty_until_facts_are_captured() {
+        assert!(super::me_rows_or_empty(&None).is_empty());
+        let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
+        let cache = Some(rows.clone());
+        assert_eq!(super::me_rows_or_empty(&cache).len(), rows.len());
     }
 
     #[test]

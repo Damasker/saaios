@@ -234,6 +234,7 @@ The verification ledger stays in
 | Me cache flash | ADR-661; `4a03a41b…` on `/data`; dest-no-lock stays off; lock surface |
 | Me paint cache | ADR-662; host; compiled Sistema layout reused across Selection/`tick_motion`; dest-no-lock stays off |
 | Me motion skip | ADR-663; host; cached Sistema is not full-painted on motion ticks; dest-no-lock stays off |
+| Me facts next turn | ADR-664; host; first Sistema paint is chrome; `me_facts` waits one loop; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

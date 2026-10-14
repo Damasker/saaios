@@ -405,6 +405,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   stays off.
   Me motion skip full paint (ADR-663; host). dest-no-lock stays
   off.
+  Me facts on the next event-loop turn (ADR-664; host). dest-no-lock
+  stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
