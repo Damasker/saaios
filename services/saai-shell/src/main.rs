@@ -1374,8 +1374,8 @@ fn last_field_registration_raw(log: &str, field: &str) -> Option<u32> {
     })
 }
 
-fn camp_log_is_current() -> bool {
-    camp_owner_running() && read_cp_state().as_deref() == Some("ONLINE")
+fn camp_log_current_from(owner: bool, cp: Option<&str>) -> bool {
+    owner && cp == Some("ONLINE")
 }
 
 fn status_query_running() -> bool {
@@ -2115,20 +2115,19 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
     if base == "Нет модема" {
         return base;
     }
+    let camp_current = camp_log_current_from(
+        facts.cellular_owner.as_deref() == Some("running"),
+        facts.cellular_cp.as_deref(),
+    );
     let suffix = data_session_suffix(
-        camp_log_is_current().then(read_data_call).flatten(),
+        camp_current.then(read_data_call).flatten(),
         live_traffic_token(),
-        camp_log_is_current().then(read_signal_token).flatten(),
-        camp_log_is_current().then(read_link_estimate).flatten(),
+        camp_current.then(read_signal_token).flatten(),
+        camp_current.then(read_link_estimate).flatten(),
     );
-    let phy = camp_log_is_current().then(read_phy_channel).flatten();
+    let phy = camp_current.then(read_phy_channel).flatten();
     let radio = radio_suffix(phy.as_ref());
-    let barring = barring_phrase(
-        camp_log_is_current()
-            .then(read_barring)
-            .flatten()
-            .as_deref(),
-    );
+    let barring = barring_phrase(camp_current.then(read_barring).flatten().as_deref());
     let suffix = [suffix, radio, barring.unwrap_or("").to_string()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -14399,6 +14398,11 @@ impl Shell {
         let live = read_runtime_live_facts();
         let (node_class, node_target, node_arch) =
             node_identity_resolved(live.identity.as_ref(), phone_gate_surface());
+        let camp_owner = camp_owner_running();
+        let cellular_cp = read_cp_state();
+        let camp_current = camp_log_current_from(camp_owner, cellular_cp.as_deref());
+        let cellular_endpoint = read_endpoint_holder();
+        let status_query = status_query_running();
         MeFacts {
             space_count: self.spaces.len(),
             entity_count: total_entities,
@@ -14424,75 +14428,70 @@ impl Shell {
             bluetooth_paired: bluetooth_paired_count(),
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
-            cellular_cp: read_cp_state(),
-            cellular_registration_raw: camp_log_is_current()
-                .then(read_data_registration_raw)
-                .flatten(),
-            cellular_voice_raw: camp_log_is_current()
-                .then(read_voice_registration_raw)
-                .flatten(),
-            cellular_radio: camp_log_is_current().then(read_radio_token).flatten(),
-            cellular_selection: camp_log_is_current().then(read_selection_mode).flatten(),
-            cellular_stack: camp_log_is_current().then(read_stack_mode).flatten(),
-            cellular_device_service: camp_log_is_current().then(read_device_service).flatten(),
-            cellular_voice_operation: camp_log_is_current().then(read_voice_operation).flatten(),
-            cellular_allow_data: camp_log_is_current().then(read_allow_data).flatten(),
-            cellular_initial_attach: camp_log_is_current().then(read_initial_attach).flatten(),
-            cellular_dns: camp_log_is_current().then(read_dns).flatten(),
-            cellular_dns6: camp_log_is_current().then(read_dns6).flatten(),
-            cellular_config: camp_log_is_current().then(read_modem_config).flatten(),
-            cellular_sgc: camp_log_is_current().then(read_sgc).flatten(),
-            cellular_power: camp_log_is_current().then(read_radio_power).flatten(),
-            cellular_voice_set: camp_log_is_current().then(read_voice_set).flatten(),
-            cellular_ipv4: camp_log_is_current().then(read_ipv4).flatten(),
-            cellular_ipv6: camp_log_is_current().then(read_ipv6).flatten(),
-            cellular_setup: camp_log_is_current().then(read_setup).flatten(),
-            cellular_profile: camp_log_is_current().then(read_profile).flatten(),
-            cellular_activity: camp_log_is_current().then(read_activity).flatten(),
-            cellular_fastdorm: camp_log_is_current().then(read_fastdorm).flatten(),
-            cellular_endc: camp_log_is_current().then(read_endc).flatten(),
-            cellular_throttle: camp_log_is_current().then(read_throttle).flatten(),
-            cellular_unsolff: camp_log_is_current().then(read_unsolff).flatten(),
-            cellular_unsol: camp_log_is_current().then(read_unsol).flatten(),
-            cellular_screen: camp_log_is_current().then(read_screen).flatten(),
-            cellular_cellinfo: camp_log_is_current().then(read_cellinfo).flatten(),
-            cellular_smsc: camp_log_is_current().then(read_smsc).flatten(),
-            cellular_vonrget: camp_log_is_current().then(read_vonrget).flatten(),
-            cellular_aptime: camp_log_is_current().then(read_aptime).flatten(),
-            cellular_dbgtrace: camp_log_is_current().then(read_dbgtrace).flatten(),
-            cellular_tty: camp_log_is_current().then(read_tty).flatten(),
-            cellular_pssvc: camp_log_is_current().then(read_pssvc).flatten(),
-            cellular_prefmodem: camp_log_is_current().then(read_prefmodem).flatten(),
-            cellular_slot: camp_log_is_current().then(read_slot).flatten(),
-            cellular_sigcrit: camp_log_is_current().then(read_sigcrit).flatten(),
-            cellular_smsact: camp_log_is_current().then(read_smsact).flatten(),
-            cellular_linkcrit: camp_log_is_current().then(read_linkcrit).flatten(),
-            cellular_smscb: camp_log_is_current().then(read_smscb).flatten(),
-            cellular_calllist: camp_log_is_current().then(read_calllist).flatten(),
-            cellular_gpslock: camp_log_is_current().then(read_gpslock).flatten(),
-            cellular_gpsnfw: camp_log_is_current().then(read_gpsnfw).flatten(),
-            cellular_samode: camp_log_is_current().then(read_samode).flatten(),
-            cellular_sim: camp_log_is_current().then(read_sim_presence).flatten(),
+            cellular_cp: cellular_cp.clone(),
+            cellular_registration_raw: camp_current.then(read_data_registration_raw).flatten(),
+            cellular_voice_raw: camp_current.then(read_voice_registration_raw).flatten(),
+            cellular_radio: camp_current.then(read_radio_token).flatten(),
+            cellular_selection: camp_current.then(read_selection_mode).flatten(),
+            cellular_stack: camp_current.then(read_stack_mode).flatten(),
+            cellular_device_service: camp_current.then(read_device_service).flatten(),
+            cellular_voice_operation: camp_current.then(read_voice_operation).flatten(),
+            cellular_allow_data: camp_current.then(read_allow_data).flatten(),
+            cellular_initial_attach: camp_current.then(read_initial_attach).flatten(),
+            cellular_dns: camp_current.then(read_dns).flatten(),
+            cellular_dns6: camp_current.then(read_dns6).flatten(),
+            cellular_config: camp_current.then(read_modem_config).flatten(),
+            cellular_sgc: camp_current.then(read_sgc).flatten(),
+            cellular_power: camp_current.then(read_radio_power).flatten(),
+            cellular_voice_set: camp_current.then(read_voice_set).flatten(),
+            cellular_ipv4: camp_current.then(read_ipv4).flatten(),
+            cellular_ipv6: camp_current.then(read_ipv6).flatten(),
+            cellular_setup: camp_current.then(read_setup).flatten(),
+            cellular_profile: camp_current.then(read_profile).flatten(),
+            cellular_activity: camp_current.then(read_activity).flatten(),
+            cellular_fastdorm: camp_current.then(read_fastdorm).flatten(),
+            cellular_endc: camp_current.then(read_endc).flatten(),
+            cellular_throttle: camp_current.then(read_throttle).flatten(),
+            cellular_unsolff: camp_current.then(read_unsolff).flatten(),
+            cellular_unsol: camp_current.then(read_unsol).flatten(),
+            cellular_screen: camp_current.then(read_screen).flatten(),
+            cellular_cellinfo: camp_current.then(read_cellinfo).flatten(),
+            cellular_smsc: camp_current.then(read_smsc).flatten(),
+            cellular_vonrget: camp_current.then(read_vonrget).flatten(),
+            cellular_aptime: camp_current.then(read_aptime).flatten(),
+            cellular_dbgtrace: camp_current.then(read_dbgtrace).flatten(),
+            cellular_tty: camp_current.then(read_tty).flatten(),
+            cellular_pssvc: camp_current.then(read_pssvc).flatten(),
+            cellular_prefmodem: camp_current.then(read_prefmodem).flatten(),
+            cellular_slot: camp_current.then(read_slot).flatten(),
+            cellular_sigcrit: camp_current.then(read_sigcrit).flatten(),
+            cellular_smsact: camp_current.then(read_smsact).flatten(),
+            cellular_linkcrit: camp_current.then(read_linkcrit).flatten(),
+            cellular_smscb: camp_current.then(read_smscb).flatten(),
+            cellular_calllist: camp_current.then(read_calllist).flatten(),
+            cellular_gpslock: camp_current.then(read_gpslock).flatten(),
+            cellular_gpsnfw: camp_current.then(read_gpsnfw).flatten(),
+            cellular_samode: camp_current.then(read_samode).flatten(),
+            cellular_sim: camp_current.then(read_sim_presence).flatten(),
             cellular_owner: Some(
-                if camp_owner_running() {
+                if camp_owner {
                     "running"
                 } else {
                     "gone"
                 }
                 .to_string(),
             ),
-            cellular_endpoint: read_endpoint_holder().map(str::to_string),
+            cellular_endpoint: cellular_endpoint.map(str::to_string),
             cellular_supervisor: read_supervisor_token(),
             cellular_action: Some(
-                saai_observation::camp_action(read_cp_state().as_deref(), camp_owner_running())
-                    .to_string(),
+                saai_observation::camp_action(cellular_cp.as_deref(), camp_owner).to_string(),
             ),
             cellular_open: Some(
                 saai_observation::camp_open(
-                    read_cp_state().as_deref(),
-                    camp_owner_running(),
-                    read_endpoint_holder(),
-                    status_query_running(),
+                    cellular_cp.as_deref(),
+                    camp_owner,
+                    cellular_endpoint,
+                    status_query,
                 )
                 .to_string(),
             ),
@@ -27102,6 +27101,17 @@ mod tests {
         let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
         let cache = Some(rows.clone());
         assert_eq!(super::me_rows_or_empty(&cache).len(), rows.len());
+    }
+
+    #[test]
+    fn camp_log_current_from_needs_owner_and_online() {
+        assert!(!super::camp_log_current_from(false, Some("ONLINE")));
+        assert!(!super::camp_log_current_from(true, Some("OFFLINE")));
+        assert!(!super::camp_log_current_from(true, None));
+        assert!(super::camp_log_current_from(true, Some("ONLINE")));
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn camp_log_is_current", "(")));
+        assert!(src.contains("fn camp_log_current_from("));
     }
 
     #[test]
