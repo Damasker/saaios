@@ -239,6 +239,7 @@ The verification ledger stays in
 | Sistema hang fix | ADR-666; `ed2bc0d1…` on `/data`; first Me paint chrome then facts; dest-no-lock stays off |
 | camp snapshot | ADR-667; host; one `/proc` camp walk per Me facts; dest-no-lock stays off |
 | camp flash | ADR-668; `1bb214c6…` on `/data`; first Me fill still paint-heavy; dest-no-lock stays off |
+| Me window | ADR-669; host; compile only visible Sistema rows; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

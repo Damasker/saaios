@@ -430,7 +430,8 @@ real phone interface consistently.
   (ADR-665; host). Hang fix on `/data`
   (ADR-666; `ed2bc0d1…`). One camp snapshot per Me facts
   (ADR-667; host). Snapshot on `/data`
-  (ADR-668; `1bb214c6…`).
+  (ADR-668; `1bb214c6…`). Visible Sistema window
+  (ADR-669; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1998,6 +1999,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Camp snapshot on panther (ADR-668; `1bb214c6…`). dest-no-lock
   stays off. `switched to Me` then process `S`. Leave Сейчас.
   Still Experimental.
+- [x] Visible Sistema window (ADR-669; host). dest-no-lock stays off.
+  Paint/hits compile only on-screen rows. Leave Сейчас.
+  Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2266,7 +2270,8 @@ next turn (ADR-664; host). Empty Me header dock
 (ADR-665; host). Hang fix on `/data`
 (ADR-666; `ed2bc0d1…`). One camp snapshot per Me facts
 (ADR-667; host). Snapshot on `/data`
-(ADR-668; `1bb214c6…`).
+(ADR-668; `1bb214c6…`). Visible Sistema window
+(ADR-669; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

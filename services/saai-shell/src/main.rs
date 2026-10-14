@@ -8957,7 +8957,38 @@ struct MePaintCache {
     width: u32,
     height: u32,
     offset: i32,
+    start: usize,
+    end: usize,
     view: LayoutNode,
+}
+
+fn me_stacked_pitch(width: u32, height: u32) -> i32 {
+    stacked_row_rect(1, width, height).y as i32 - stacked_row_rect(0, width, height).y as i32
+}
+
+fn me_window_range(len: usize, offset: i32, width: u32, height: u32) -> (usize, usize) {
+    if len == 0 {
+        return (0, 0);
+    }
+    let content = root_view(width, height).children[0].rect;
+    let vis_top = content.y as i32;
+    let vis_bot = (content.y + content.height) as i32;
+    let mut start = None;
+    let mut end = 0usize;
+    for index in 0..len {
+        let row = stacked_row_rect(index, width, height);
+        let y = row.y as i32 - offset;
+        let bottom = y + row.height as i32;
+        if bottom > vis_top && y < vis_bot {
+            if start.is_none() {
+                start = Some(index);
+            }
+            end = index + 1;
+        } else if start.is_some() && y >= vis_bot {
+            break;
+        }
+    }
+    (start.unwrap_or(0), end)
 }
 
 fn me_paint_view(
@@ -8967,12 +8998,17 @@ fn me_paint_view(
     height: u32,
     offset: i32,
 ) -> LayoutNode {
+    let (start, end) = me_window_range(rows.len(), offset, width, height);
+    let window = &rows[start..end];
+    let window_offset = offset - start as i32 * me_stacked_pitch(width, height);
     me_paint_view_with(
         cache,
-        || compile_live_v2(&me_v2_source(rows), "ADR-227 me paint"),
+        || compile_live_v2(&me_v2_source_from(window, start), "ADR-227 me paint"),
         width,
         height,
-        offset,
+        window_offset,
+        start,
+        end,
     )
 }
 
@@ -8982,12 +9018,22 @@ fn me_paint_view_with(
     width: u32,
     height: u32,
     offset: i32,
+    start: usize,
+    end: usize,
 ) -> LayoutNode {
     match cache.as_ref() {
-        Some(hit) if hit.width == width && hit.height == height && hit.offset == offset => {
+        Some(hit)
+            if hit.width == width
+                && hit.height == height
+                && hit.offset == offset
+                && hit.start == start
+                && hit.end == end =>
+        {
             return hit.view.clone();
         }
-        Some(hit) if hit.width == width && hit.height == height => {
+        Some(hit)
+            if hit.width == width && hit.height == height && hit.start == start && hit.end == end =>
+        {
             let view = saai_ui_compiler::layout_v2_scrolled(&hit.screen, width, height, offset);
             let screen = hit.screen.clone();
             *cache = Some(MePaintCache {
@@ -8995,6 +9041,8 @@ fn me_paint_view_with(
                 width,
                 height,
                 offset,
+                start,
+                end,
                 view: view.clone(),
             });
             return view;
@@ -9008,6 +9056,8 @@ fn me_paint_view_with(
         width,
         height,
         offset,
+        start,
+        end,
         view: view.clone(),
     });
     view
@@ -9324,13 +9374,17 @@ fn flatten_me_rows(sections: &[SystemSection]) -> Vec<MeRow> {
 }
 
 fn me_v2_source(rows: &[MeRow]) -> String {
+    me_v2_source_from(rows, 0)
+}
+
+fn me_v2_source_from(rows: &[MeRow], start: usize) -> String {
     let mut src = String::from("sui 2\nscreen me {\n");
     src.push_str(&v2_header_block("me.header"));
     if rows.is_empty() {
         src.push_str(&v2_stacked_block("SettingRow", "Status", "me.pending"));
     } else {
         for (index, row) in rows.iter().enumerate() {
-            let loc = me_row_loc(index, row);
+            let loc = me_row_loc(start + index, row);
             if row.dispatch.is_some() {
                 src.push_str(&v2_stacked_block("SettingRow", "Button", &loc));
             } else {
@@ -9647,13 +9701,16 @@ fn me_dispatch_at(
     rows: &[MeRow],
     scroll_offset: i32,
 ) -> Option<&'static str> {
+    let (start, end) = me_window_range(rows.len(), scroll_offset, width, height);
+    let window = &rows[start..end];
+    let window_offset = scroll_offset - start as i32 * me_stacked_pitch(width, height);
     let (_, action) = live_v2_hit_scrolled(
-        &me_v2_source(rows),
+        &me_v2_source_from(window, start),
         "ADR-219 me",
         pos,
         width,
         height,
-        scroll_offset,
+        window_offset,
     )?;
     intern_me_action(action.as_deref())
 }
@@ -11016,8 +11073,6 @@ impl TouchHandler for Shell {
                 .rect
                 .contains(position.0, position.1)
         {
-            self.invalidate_me_rows();
-            self.capture_me_rows();
             Some((position.1, self.me_scroll_offset))
         } else {
             None
@@ -27065,6 +27120,17 @@ mod tests {
     }
 
     #[test]
+    fn me_window_range_keeps_first_screen_small() {
+        let (start, end) = super::me_window_range(40, 0, 1080, 2400);
+        assert_eq!(start, 0);
+        assert!(end <= 12);
+        assert!(end > 0);
+        let shifted = super::me_window_range(40, 880, 1080, 2400);
+        assert!(shifted.0 > 0);
+        assert!(shifted.1 - shifted.0 <= 12);
+    }
+
+    #[test]
     fn me_paint_view_does_not_recompile_on_same_offset() {
         let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
         let mut cache = None;
@@ -27074,6 +27140,8 @@ mod tests {
             1080,
             2400,
             0,
+            0,
+            rows.len(),
         );
         let second = super::me_paint_view_with(
             &mut cache,
@@ -27081,6 +27149,8 @@ mod tests {
             1080,
             2400,
             0,
+            0,
+            rows.len(),
         );
         assert_eq!(first, second);
     }
