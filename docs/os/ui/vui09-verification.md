@@ -300,6 +300,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   live Sistema Metric paint wraps (ADR-610).
   dest-no-lock stays off.
+  live Object View overlay buttons wrap (ADR-611).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

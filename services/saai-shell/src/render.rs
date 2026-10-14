@@ -541,29 +541,29 @@ pub fn draw_object_view(
         );
     }
 
-    let overlay_labels: Option<[&str; 2]> = decision.map(|overlay| {
-        [
-            overlay.accept.label.as_str(),
-            overlay.decline.label.as_str(),
-        ]
-    });
-    for (index, (rect, label)) in actions.iter().enumerate() {
-        let text = overlay_labels
-            .and_then(|labels| labels.get(index).copied())
-            .unwrap_or(*label);
-        draw_text_centered(
-            canvas,
-            &fonts.semibold,
-            text,
-            role_px(TextRole::Label),
-            rect.x + rect.width / 2,
-            rect.y + rect.height / 2 - 20,
-            if index == 0 {
-                theme_color(ColorRole::Canvas)
-            } else {
-                theme_color(ColorRole::TextPrimary)
-            },
-        );
+    if let Some(overlay) = decision {
+        if let Some((rect, _)) = actions.first() {
+            draw_gallery_button(canvas, fonts, &overlay.accept, *rect);
+        }
+        if let Some((rect, _)) = actions.get(1) {
+            draw_gallery_button(canvas, fonts, &overlay.decline, *rect);
+        }
+    } else {
+        for (index, (rect, label)) in actions.iter().enumerate() {
+            draw_text_centered(
+                canvas,
+                &fonts.semibold,
+                label,
+                role_px(TextRole::Label),
+                rect.x + rect.width / 2,
+                rect.y + rect.height / 2 - 20,
+                if index == 0 {
+                    theme_color(ColorRole::Canvas)
+                } else {
+                    theme_color(ColorRole::TextPrimary)
+                },
+            );
+        }
     }
 }
 
@@ -3894,6 +3894,33 @@ mod tests {
         let (one, short_height) = gallery_button_paint(&short, |text| text.chars().count() <= 20);
         assert_eq!(one, vec!["Сохранить".to_string()]);
         assert_eq!(short_height, physical(MIN_TOUCH_TARGET));
+    }
+
+    #[test]
+    fn object_view_decision_buttons_use_label_lines() {
+        let src = include_str!("render.rs");
+        let painter = src
+            .split("pub fn draw_object_view(")
+            .nth(1)
+            .expect("object view")
+            .split("/// HIA-04b:")
+            .next()
+            .expect("orb");
+        assert!(painter.contains("draw_gallery_button"));
+        assert!(!painter.contains("overlay_labels"));
+        assert!(!painter.contains(concat!("heading", "()")));
+        let button = Button::new(
+            "Сохранить изменения и выйти",
+            "gallery:save",
+            ButtonVariant::Primary,
+        );
+        let (lines, height) = gallery_button_paint(&button, |text| text.chars().count() <= 10);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(height, physical(TWO_LINE_ROW_HEIGHT));
+        assert_eq!(
+            button.accessibility().name.as_deref(),
+            Some("Сохранить изменения и выйти")
+        );
     }
 
     #[test]
