@@ -9327,12 +9327,16 @@ fn flatten_me_rows(sections: &[SystemSection]) -> Vec<MeRow> {
 fn me_v2_source(rows: &[MeRow]) -> String {
     let mut src = String::from("sui 2\nscreen me {\n");
     src.push_str(&v2_header_block("me.header"));
-    for (index, row) in rows.iter().enumerate() {
-        let loc = me_row_loc(index, row);
-        if row.dispatch.is_some() {
-            src.push_str(&v2_stacked_block("SettingRow", "Button", &loc));
-        } else {
-            src.push_str(&v2_stacked_block("SettingRow", "Status", &loc));
+    if rows.is_empty() {
+        src.push_str(&v2_stacked_block("SettingRow", "Status", "me.pending"));
+    } else {
+        for (index, row) in rows.iter().enumerate() {
+            let loc = me_row_loc(index, row);
+            if row.dispatch.is_some() {
+                src.push_str(&v2_stacked_block("SettingRow", "Button", &loc));
+            } else {
+                src.push_str(&v2_stacked_block("SettingRow", "Status", &loc));
+            }
         }
     }
     src.push_str(V2_ROOT_TABS);
@@ -27098,6 +27102,14 @@ mod tests {
         let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
         let cache = Some(rows.clone());
         assert_eq!(super::me_rows_or_empty(&cache).len(), rows.len());
+    }
+
+    #[test]
+    fn empty_me_v2_has_header_and_content_child() {
+        let mut cache = None;
+        let view = super::me_paint_view(&mut cache, &[], 1080, 2400, 0);
+        assert!(!view.children.is_empty());
+        let _ = super::v2_named_rect(&view, "ContextHeader", "empty me header");
     }
 
     #[test]
