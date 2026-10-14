@@ -434,7 +434,8 @@ real phone interface consistently.
   (ADR-669; host). Window on `/data`
   (ADR-670; `7c3b9bac…`). User-confirmed Sistema
   (ADR-671; `7c3b9bac…`). First flatten omits
-  «Наблюдения» (ADR-672; host).
+  «Наблюдения» (ADR-672; host). Deferred observations on
+  `/data` (ADR-673; `828b6ff9…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2014,6 +2015,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] First Sistema flatten omits «Наблюдения» (ADR-672; host).
   dest-no-lock stays off. Full observations wait one loop.
   Leave Сейчас. Still Experimental.
+- [x] Deferred Sistema observations on panther (ADR-673; `828b6ff9…`).
+  dest-no-lock stays off. `switched to Me` + `surface=me`
+  `idle_ok=1`. First facts still long. Leave Сейчас.
+  Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2286,7 +2291,8 @@ next turn (ADR-664; host). Empty Me header dock
 (ADR-669; host). Window on `/data`
 (ADR-670; `7c3b9bac…`). User-confirmed Sistema
 (ADR-671; `7c3b9bac…`). First flatten omits
-«Наблюдения» (ADR-672; host).
+«Наблюдения» (ADR-672; host). Deferred observations on
+`/data` (ADR-673; `828b6ff9…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
