@@ -428,6 +428,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 leftover related first peer | drop `related_object_first_peer` **host** (ADR-655; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 shell 615–655 | leftover helpers on `/data` **на panther** (ADR-656; `eb3197c9…`; dest-no-lock stays off; lock surface; leave Сейчас) |
 | VUI-09 shell 656 frames | unlock + Now/Spaces/Search commits **на panther** (ADR-657; `eb3197c9…`; dest-no-lock stays off; Me log pending; leave Сейчас) |
+| VUI-09 shell 656 four tabs | Now/Spaces/Search/Me commits **на panther** (ADR-658; `eb3197c9…`; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -653,6 +654,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 leftover related first peer: drop `related_object_first_peer` (ADR-655; host; dest-no-lock stays off)
 - VUI-09 shell 615–655: leftover helpers on `/data` (ADR-656; `eb3197c9…`; dest-no-lock stays off; lock surface)
 - VUI-09 shell 656 frames: unlock + Now/Spaces/Search commits (ADR-657; `eb3197c9…`; dest-no-lock stays off; Me log pending)
+- VUI-09 shell 656 four tabs: Now/Spaces/Search/Me commits (ADR-658; `eb3197c9…`; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

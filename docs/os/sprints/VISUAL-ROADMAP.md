@@ -421,7 +421,8 @@ real phone interface consistently.
   Leftover `related_object_first_peer` is gone (ADR-655).
   Host 615–655 leftover helpers are on `/data` (ADR-656; `eb3197c9…`).
   Panther frames after that flash: unlock + Now/Spaces/Search
-  (ADR-657). Wrap Acceptance stays unchecked: font compare still open.
+  (ADR-657). Four root tabs after respawn (ADR-658).
+  Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
   requires running `build-native-c-image.sh`, which needs a real
@@ -1956,6 +1957,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Panther frames after ADR-656 (ADR-657; `eb3197c9…`).
   dest-no-lock stays off. Unlock + Now/Spaces/Search commits.
   Me log pending. Leave Сейчас. Still Experimental.
+- [x] Four root tabs after ADR-656 respawn (ADR-658; `eb3197c9…`).
+  dest-no-lock stays off. `switched to Me` + status/main blit.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2215,7 +2219,8 @@ build/kernel paint MonoBody (ADR-617). Live Sistema
 `scroll_surface_damage` is gone (ADR-654). Leftover
 `related_object_first_peer` is gone (ADR-655). Host 615–655 leftover
 helpers on `/data` (ADR-656; `eb3197c9…`). Panther frames after
-that flash (ADR-657). dest-no-lock stays off.
+that flash (ADR-657). Four root tabs after respawn (ADR-658).
+dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
