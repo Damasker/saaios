@@ -9562,10 +9562,6 @@ fn object_overlay_scroll_max(
     last_bottom.saturating_sub(floor) as i32
 }
 
-fn overlay_field_v2_source(screen_id: &str, field_id: &str) -> String {
-    overlay_field_v2_source_with(screen_id, field_id, true)
-}
-
 fn overlay_field_v2_source_with(screen_id: &str, field_id: &str, with_keyboard: bool) -> String {
     let keyboard = if with_keyboard {
         format!(
@@ -9619,11 +9615,7 @@ fn overlay_field_paint(
     width: u32,
     height: u32,
 ) -> (Rect, Rect) {
-    let source = if with_keyboard {
-        overlay_field_v2_source(screen_id, field_id)
-    } else {
-        overlay_field_v2_source_with(screen_id, field_id, false)
-    };
+    let source = overlay_field_v2_source_with(screen_id, field_id, with_keyboard);
     let why = if screen_id == "wifi-password" {
         "ADR-439 wifi-password overlay"
     } else if screen_id == "lock" {
@@ -18019,6 +18011,8 @@ mod tests {
         assert!(main.contains("ADR-229/433"));
         assert!(main.contains("ADR-439 wifi-password overlay"));
         assert!(!main.contains(concat!("fn overlay_decision", "_paint(")));
+        assert!(!main.contains(concat!("fn overlay_field_v2_source", "(")));
+        assert!(main.contains("fn overlay_field_v2_source_with("));
         assert!(main.contains("status_overlay_paint"));
         assert!(main.contains("overlay_field_paint"));
     }
