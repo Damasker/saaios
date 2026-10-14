@@ -9506,17 +9506,6 @@ fn status_overlay_paint(
 
 /// ADR-430: Object View identity, Status facts, permission, and
 /// decision Buttons share one tree.
-fn object_overlay_paint(
-    locs: &[&str],
-    facts: &[&str],
-    permission: bool,
-    why: &'static str,
-    width: u32,
-    height: u32,
-) -> (Rect, Rect, Vec<Option<Rect>>, Option<Rect>, Vec<Rect>) {
-    object_overlay_paint_scrolled(locs, facts, permission, why, width, height, 0)
-}
-
 fn object_overlay_paint_scrolled(
     locs: &[&str],
     facts: &[&str],
@@ -9573,13 +9562,14 @@ fn object_overlay_scroll_max(
         .map(|index| format!("{OBJECT_VIEW_ACTION_PREFIX}{index}"))
         .collect();
     let loc_refs: Vec<&str> = locs.iter().map(String::as_str).collect();
-    let (_, _, fact_rects, _, buttons) = object_overlay_paint(
+    let (_, _, fact_rects, _, buttons) = object_overlay_paint_scrolled(
         &loc_refs,
         &["object.related.0"],
         false,
         "ADR-486 object overlay scroll",
         width,
         height,
+        0,
     );
     let Some(first) = fact_rects.first().copied().flatten() else {
         return 0;
@@ -23359,13 +23349,14 @@ mod tests {
             object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false, 0),
             None
         );
-        let painted = super::object_overlay_paint(
+        let painted = super::object_overlay_paint_scrolled(
             &[],
             &["object.detail.0"],
             false,
             "ADR-487 object overlay",
             1080,
             2400,
+            0,
         );
         let row = painted.2[0].expect("offline related");
         assert_eq!(row, saai_ui_core::Rect::new(49, 284, 982, row.height));
@@ -23385,7 +23376,7 @@ mod tests {
             object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 0, 1, 0, false, 0),
             Some(ObjectViewHit::Step(0))
         );
-        let painted = super::object_overlay_paint(
+        let painted = super::object_overlay_paint_scrolled(
             &[],
             &[
                 "object.step.0",
@@ -23398,6 +23389,7 @@ mod tests {
             "ADR-473 object overlay",
             1080,
             2400,
+            0,
         );
         assert_eq!(painted.2.len(), 5);
         let first = painted.2[0].expect("step 0");
@@ -23422,13 +23414,14 @@ mod tests {
             .map(|index| format!("object.step.{index}"))
             .collect();
         let refs: Vec<&str> = facts.iter().map(String::as_str).collect();
-        let rest = super::object_overlay_paint(
+        let rest = super::object_overlay_paint_scrolled(
             &["object-view-action:0"],
             &refs,
             false,
             "ADR-486 object overlay",
             1080,
             2400,
+            0,
         );
         let max = super::object_overlay_scroll_max(1, STEP_COUNT, false, 1080, 2400);
         assert!(max > 0, "overflowing plan steps must cross the footer");
@@ -23499,13 +23492,14 @@ mod tests {
         );
         let task = task_entity("Работает", None);
         assert!(super::object_view_quick_actions(&task).is_empty());
-        let painted = super::object_overlay_paint(
+        let painted = super::object_overlay_paint_scrolled(
             &[],
             &["object.action.0"],
             false,
             "ADR-477 object overlay",
             1080,
             2400,
+            0,
         );
         let action = painted.2[0].expect("oam row");
         assert_eq!(action, saai_ui_core::Rect::new(49, 284, 982, action.height));
@@ -23604,20 +23598,31 @@ mod tests {
     fn empty_object_view_header_comes_from_layout_v2() {
         let width = 1080;
         let height = 2400;
-        let (header, summary, facts, permission, buttons) =
-            super::object_overlay_paint(&[], &[], false, "ADR-430 object overlay", width, height);
+        let (header, summary, facts, permission, buttons) = super::object_overlay_paint_scrolled(
+            &[],
+            &[],
+            false,
+            "ADR-430 object overlay",
+            width,
+            height,
+            0,
+        );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn object_overlay_paint", "(")));
+        assert!(src.contains("fn object_overlay_paint_scrolled("));
         assert!(buttons.is_empty());
         assert!(facts.is_empty());
         assert!(permission.is_none());
         assert_eq!(header, saai_ui_core::Rect::new(0, 0, width, height));
         assert_eq!(summary, saai_ui_core::Rect::new(49, 140, 982, 144));
-        let with_fact = super::object_overlay_paint(
+        let with_fact = super::object_overlay_paint_scrolled(
             &[],
             &["object.related.0"],
             true,
             "ADR-430 object overlay",
             width,
             height,
+            0,
         );
         assert_eq!(with_fact.2.len(), 1);
         let fact = with_fact.2[0].expect("related");
@@ -23628,13 +23633,14 @@ mod tests {
         assert_eq!(perm.width, 982);
         assert_eq!(perm.y, fact.y + fact.height);
         assert!(perm.height > 0);
-        let two = super::object_overlay_paint(
+        let two = super::object_overlay_paint_scrolled(
             &["object-view-action:0", "object-view-action:1"],
             &["object.related.0"],
             true,
             "ADR-430 object overlay",
             width,
             height,
+            0,
         );
         assert_eq!(two.4.len(), 2);
         assert_eq!(two.1, summary);
@@ -23792,13 +23798,14 @@ mod tests {
         assert_eq!(now_rows[0].1.primary, LONG_RU);
         assert!(now_rows[0].0.height >= 48);
 
-        let painted = super::object_overlay_paint(
+        let painted = super::object_overlay_paint_scrolled(
             &[],
             &["object.detail.0"],
             false,
             "ADR-502 long ru",
             1080,
             2400,
+            0,
         );
         let row = painted.2[0].expect("long fact");
         assert!(row.height >= 48);
@@ -24152,13 +24159,14 @@ mod tests {
             object_view_hit_scrolled(hit, 1080, 2400, 0, 0, 0, 0, false, 0),
             None
         );
-        let painted = super::object_overlay_paint(
+        let painted = super::object_overlay_paint_scrolled(
             &[],
             &["object.history"],
             false,
             "ADR-499 history paint",
             1080,
             2400,
+            0,
         );
         assert!(painted.2.iter().any(Option::is_some));
     }

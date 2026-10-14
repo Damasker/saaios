@@ -403,6 +403,7 @@ real phone interface consistently.
   Leftover `space_detail_action_at` is gone (ADR-637).
   Leftover `space_focus_paint_row` is gone (ADR-638).
   Leftover `space_member_paint_rows` is gone (ADR-639).
+  Leftover `object_overlay_paint` is gone (ADR-640).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1884,6 +1885,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Leftover `space_member_paint_rows` is gone (ADR-639;
   host). dest-no-lock stays off. Scrolled paint stays.
   Leave Сейчас. Still Experimental.
+- [x] Leftover `object_overlay_paint` is gone (ADR-640; host).
+  dest-no-lock stays off. Scrolled paint stays. Leave Сейчас.
+  Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2125,7 +2129,8 @@ build/kernel paint MonoBody (ADR-617). Live Sistema
 `space_row_at` is gone (ADR-636). Leftover
 `space_detail_action_at` is gone (ADR-637). Leftover
 `space_focus_paint_row` is gone (ADR-638). Leftover
-`space_member_paint_rows` is gone (ADR-639). dest-no-lock stays off.
+`space_member_paint_rows` is gone (ADR-639). Leftover
+`object_overlay_paint` is gone (ADR-640). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
