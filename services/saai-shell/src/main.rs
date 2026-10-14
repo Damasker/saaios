@@ -7002,10 +7002,6 @@ fn health_attention_reason(summary: Option<&str>) -> String {
     }
 }
 
-fn now_attention_v2_source(follow: &[bool], empty_caption: bool) -> String {
-    now_body_v2_source(follow, empty_caption, 0, false, 0, false)
-}
-
 fn now_body_v2_source(
     follow: &[bool],
     empty_attention: bool,
@@ -7110,7 +7106,7 @@ fn now_weather_hit_scrolled(pos: (f64, f64), width: u32, height: u32, scroll_off
         return false;
     }
     live_v2_hit_scrolled(
-        &now_attention_v2_source(&[], false),
+        &now_body_v2_source(&[], false, 0, false, 0, false),
         "ADR-476 now weather",
         pos,
         width,
@@ -7131,7 +7127,7 @@ fn now_weather_paint_row_scrolled(
         return None;
     }
     let tree = layout_live_v2_scrolled(
-        &now_attention_v2_source(&[], false),
+        &now_body_v2_source(&[], false, 0, false, 0, false),
         "ADR-476 now weather",
         width,
         height,
@@ -7158,7 +7154,7 @@ fn now_attention_hit_scrolled(
         return None;
     }
     live_v2_hit_scrolled(
-        &now_attention_v2_source(follow, false),
+        &now_body_v2_source(follow, false, 0, false, 0, false),
         "ADR-474 now attention",
         pos,
         width,
@@ -7205,7 +7201,7 @@ fn now_attention_paint_rows_scrolled(
         .map(|item| now_attention_follow_id(item).is_some())
         .collect();
     let tree = layout_live_v2_scrolled(
-        &now_attention_v2_source(&follow, empty_caption),
+        &now_body_v2_source(&follow, empty_caption, 0, false, 0, false),
         "ADR-474 now attention",
         width,
         height,
@@ -25228,6 +25224,8 @@ mod tests {
         let (rect, row) = now_weather_paint_row_scrolled(1080, 2400, 0).expect("weather");
         let src = include_str!("main.rs");
         assert!(!src.contains(concat!("fn now_weather_paint_row", "(")));
+        assert!(!src.contains(concat!("fn now_attention_v2_source", "(")));
+        assert!(src.contains("fn now_body_v2_source("));
         assert_eq!(rect, saai_ui_core::Rect::new(49, 430, 982, 190));
         assert_eq!(row.primary, "Местность");
         assert_eq!(row.action.as_deref(), Some("now.weather"));

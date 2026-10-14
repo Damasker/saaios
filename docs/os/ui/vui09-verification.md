@@ -376,6 +376,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   leftover `orb_attention_from_entities` is gone (ADR-648).
   dest-no-lock stays off.
+  leftover `now_attention_v2_source` is gone (ADR-649).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
