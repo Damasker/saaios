@@ -446,7 +446,8 @@ real phone interface consistently.
   (ADR-681; `ce4c374b…`). One camp-log read
   (ADR-682; host). One camp-log read on `/data`
   (ADR-683; `bb350461…`). 8 KiB supervisor tail
-  (ADR-684; host).
+  (ADR-684; host). 8 KiB supervisor tail on `/data`
+  (ADR-685; `f29eb476…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2064,6 +2065,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] 8 KiB supervisor tail (ADR-684; host). dest-no-lock
   stays off. `supervise=` no longer reads 256 KiB.
   Leave Сейчас. Still Experimental.
+- [x] 8 KiB supervisor tail on panther (ADR-685; `f29eb476…`).
+  dest-no-lock stays off. `switched to Me` + `surface=me`
+  then process `S`. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2348,7 +2352,8 @@ connect (ADR-678; host). Timeout on `/data`
 (ADR-681; `ce4c374b…`). One camp-log read
 (ADR-682; host). One camp-log read on `/data`
 (ADR-683; `bb350461…`). 8 KiB supervisor tail
-(ADR-684; host).
+(ADR-684; host). 8 KiB supervisor tail on `/data`
+(ADR-685; `f29eb476…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

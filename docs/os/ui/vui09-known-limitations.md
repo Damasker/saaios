@@ -255,6 +255,7 @@ The verification ledger stays in
 | camp log one read | ADR-682; host; one owner-log read for all Sistema camp fields; dest-no-lock stays off |
 | camp log flash | ADR-683; `bb350461…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | supervisor tail | ADR-684; host; 8 KiB `supervise=` tail instead of 256 KiB; dest-no-lock stays off |
+| supervisor flash | ADR-685; `f29eb476…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
