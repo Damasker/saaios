@@ -1960,6 +1960,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Four root tabs after ADR-656 respawn (ADR-658; `eb3197c9…`).
   dest-no-lock stays off. `switched to Me` + status/main blit.
   Leave Сейчас. Still Experimental.
+- [x] Me motion hang respawned (ADR-659; `eb3197c9…`). dest-no-lock
+  stays off. Kill 12671; new lock 3916. Leave Сейчас. Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.

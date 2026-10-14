@@ -396,6 +396,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   four root tabs after respawn (ADR-658): `switched to Me`.
   dest-no-lock stays off.
+  Me motion hang respawned (ADR-659). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
