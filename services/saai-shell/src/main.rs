@@ -8284,15 +8284,6 @@ fn apps_grid_scroll_max(app_count: usize, width: u32, height: u32) -> i32 {
     (last_bottom - floor).max(0)
 }
 
-fn now_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    installed_apps: &BTreeMap<String, AppSummary>,
-) -> Option<String> {
-    now_action_at_scrolled(pos, width, height, installed_apps, 0)
-}
-
 fn now_action_at_scrolled(
     pos: (f64, f64),
     width: u32,
@@ -16233,7 +16224,8 @@ mod tests {
         intent_field_rect, intent_input_field, known_surfaces, last_field_registration_raw,
         lock_attention_view, lock_device_view, lock_idle_view, lock_pin_entry_field,
         lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
-        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action, now_action_at,
+        me_system_sections, motion_clock_for, next_in_cycle, next_pending_action,
+        now_action_at_scrolled,
         now_attention_hit, now_next_hit, now_next_paint_rows, now_object_tapped, now_task_hit,
         now_task_paint_rows, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
         now_workflow_sections,
@@ -17854,23 +17846,25 @@ mod tests {
         );
         let first = super::v2_named_rect(&tree, "manage_app:demo", "apps");
         assert_eq!(
-            now_action_at(
+            now_action_at_scrolled(
                 (f64::from(first.x + 10), f64::from(first.y + 10)),
                 1080,
                 2400,
-                &apps
+                &apps,
+                0
             ),
             Some("manage_app:demo".to_string())
         );
         assert_eq!(
-            now_action_at(
+            now_action_at_scrolled(
                 (
                     f64::from(first.x + first.width + 40),
                     f64::from(first.y + 10)
                 ),
                 1080,
                 2400,
-                &apps
+                &apps,
+                0
             ),
             None
         );
@@ -17880,7 +17874,8 @@ mod tests {
     fn leftover_now_grid_rect_is_gone() {
         let src = include_str!("main.rs");
         assert!(!src.contains(concat!("fn now_grid_", "rect(")));
-        assert!(src.contains("fn now_action_at("));
+        assert!(!src.contains(concat!("fn now_action_at", "(")));
+        assert!(src.contains("fn now_action_at_scrolled("));
         assert!(src.contains("fn apps_v2_source("));
     }
 
@@ -17935,7 +17930,7 @@ mod tests {
             (last_slot.x + last_slot.width / 2) as f64,
             (last_slot.y + last_slot.height / 2) as f64,
         );
-        assert!(now_action_at(last_point, width, height, &apps).is_none());
+        assert!(now_action_at_scrolled(last_point, width, height, &apps, 0).is_none());
         let scrolled = super::layout_live_v2_scrolled(
             &super::apps_v2_source(&apps),
             "ADR-498 apps overflow",
