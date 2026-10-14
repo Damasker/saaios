@@ -3104,15 +3104,6 @@ fn trusted_list_scroll_max(client_count: usize, width: u32, height: u32) -> i32 
     )
 }
 
-fn trusted_client_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    client_count: usize,
-) -> Option<TrustedClientTap> {
-    trusted_client_action_at_scrolled(pos, width, height, client_count, 0)
-}
-
 fn trusted_client_action_at_scrolled(
     pos: (f64, f64),
     width: u32,
@@ -3157,7 +3148,7 @@ fn diagnostic_v2_source(row_count: usize) -> String {
 /// HIA-20: every `dev_surface_rows()` row is read-only diagnostic
 /// text, not a button -- the only real tap target on this screen is
 /// the trailing "Назад" row right after them, same convention
-/// `trusted_client_action_at`'s own `Back` variant already uses, just
+/// `trusted_client_action_at_scrolled`'s own `Back` variant already uses, just
 /// without the per-row action this screen has no need for.
 fn dev_surface_back_tapped(pos: (f64, f64), width: u32, height: u32, row_count: usize) -> bool {
     live_v2_hit(
@@ -16124,7 +16115,7 @@ mod tests {
         space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
         space_relation_targets, space_row_at, spaces_header, stacked_control_rect,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
-        trusted_client_action_at, trusted_client_card_from_row, trusted_client_is_protected,
+        trusted_client_action_at_scrolled, trusted_client_card_from_row, trusted_client_is_protected,
         trusted_client_list_rows, trusted_client_revoke_decision, trusted_header,
         upsert_context_entry, wifi_card_from_row, wifi_header, wifi_list_action_at_scrolled,
         wifi_list_row_count, wifi_list_rows, wifi_password_compose_header, wifi_password_field,
@@ -18424,19 +18415,25 @@ mod tests {
             )
         };
         assert!(matches!(
-            trusted_client_action_at(center(client_0), width, height, client_count),
+            trusted_client_action_at_scrolled(center(client_0), width, height, client_count, 0),
             Some(TrustedClientTap::Revoke(0))
         ));
         assert!(matches!(
-            trusted_client_action_at(center(back), width, height, client_count),
+            trusted_client_action_at_scrolled(center(back), width, height, client_count, 0),
             Some(TrustedClientTap::Back)
         ));
-        assert!(trusted_client_action_at((10.0, 10.0), width, height, client_count).is_none());
+        assert!(
+            trusted_client_action_at_scrolled((10.0, 10.0), width, height, client_count, 0)
+                .is_none()
+        );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn trusted_client_action_at", "(")));
+        assert!(src.contains("fn trusted_client_action_at_scrolled("));
         let empty = stacked_row_rect(0, width, height);
         let back_empty = stacked_row_rect(1, width, height);
-        assert!(trusted_client_action_at(center(empty), width, height, 0).is_none());
+        assert!(trusted_client_action_at_scrolled(center(empty), width, height, 0, 0).is_none());
         assert!(matches!(
-            trusted_client_action_at(center(back_empty), width, height, 0),
+            trusted_client_action_at_scrolled(center(back_empty), width, height, 0, 0),
             Some(TrustedClientTap::Back)
         ));
     }
@@ -18459,7 +18456,7 @@ mod tests {
             (back.y + back.height / 2) as f64,
         );
         assert!(matches!(
-            trusted_client_action_at(center, width, height, client_count),
+            trusted_client_action_at_scrolled(center, width, height, client_count, 0),
             Some(TrustedClientTap::Back)
         ));
     }
@@ -18485,7 +18482,9 @@ mod tests {
             (last_slot.x + last_slot.width / 2) as f64,
             (last_slot.y + last_slot.height / 2) as f64,
         );
-        assert!(trusted_client_action_at(last_point, width, height, client_count).is_none());
+        assert!(
+            trusted_client_action_at_scrolled(last_point, width, height, client_count, 0).is_none()
+        );
         let scrolled = super::layout_live_v2_scrolled(
             &super::trusted_v2_source(client_count),
             "ADR-497 trusted overflow",
