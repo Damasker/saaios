@@ -7638,15 +7638,6 @@ fn search_row_at_scrolled(
         .map(|entity| entity.id)
 }
 
-fn search_paint_rows(
-    entities: &[Entity],
-    store_connected: bool,
-    width: u32,
-    height: u32,
-) -> Vec<(Rect, DataRow)> {
-    search_paint_rows_scrolled(entities, store_connected, width, height, 0)
-}
-
 fn search_paint_rows_scrolled(
     entities: &[Entity],
     store_connected: bool,
@@ -16074,7 +16065,7 @@ mod tests {
         orb_visual_state, orb_zone_rect, pcm_volume_from_pct, pin_setup_field, pin_setup_header,
         playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
         related_object_first_peer, remote_pair_content_cards, remote_pair_header,
-        remove_context_source, retain_pressed_while_clock, search_header, search_paint_rows,
+        remove_context_source, retain_pressed_while_clock, search_header, search_paint_rows_scrolled,
         search_row_at_scrolled,
         search_rows, space_color, space_color_entity, space_detail_action_at,
         space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row,
@@ -17378,7 +17369,7 @@ mod tests {
         let rows = search_rows(&entities);
         let titles: Vec<&str> = rows.iter().map(|entity| entity.title.as_str()).collect();
         assert_eq!(titles, ["Собрать слайды", "Подготовить демо"]);
-        let painted = search_paint_rows(&[intent.clone(), task.clone()], true, 1080, 2400);
+        let painted = search_paint_rows_scrolled(&[intent.clone(), task.clone()], true, 1080, 2400, 0);
         assert_eq!(painted.len(), 2);
         assert_eq!(painted[0].1.primary, "Собрать слайды");
         assert_eq!(painted[0].1.secondary.as_deref(), Some("Задача"));
@@ -17401,10 +17392,12 @@ mod tests {
         let src = include_str!("main.rs");
         assert!(!src.contains(concat!("fn search_row_at", "(")));
         assert!(src.contains("fn search_row_at_scrolled("));
-        let empty = search_paint_rows(&[], true, 1080, 2400);
+        assert!(!src.contains(concat!("fn search_paint_rows", "(")));
+        assert!(src.contains("fn search_paint_rows_scrolled("));
+        let empty = search_paint_rows_scrolled(&[], true, 1080, 2400, 0);
         assert_eq!(empty[0].1.primary, "Нет объектов");
         assert!(!empty[0].1.is_actionable());
-        let offline = search_paint_rows(&[intent], false, 1080, 2400);
+        let offline = search_paint_rows_scrolled(&[intent], false, 1080, 2400, 0);
         assert_eq!(offline[0].1.primary, "Нет связи");
         assert!(!offline[0].1.is_actionable());
     }
@@ -17461,7 +17454,7 @@ mod tests {
         assert!(painted
             .iter()
             .any(|(rect, row)| row.primary == last_title && *rect == found.rect));
-        assert!(search_paint_rows(&entities, true, 1080, 2400)
+        assert!(search_paint_rows_scrolled(&entities, true, 1080, 2400, 0)
             .iter()
             .all(|(_, row)| row.primary != last_title));
     }
