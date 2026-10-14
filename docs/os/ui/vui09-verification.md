@@ -384,6 +384,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   leftover `space_member_rows` is gone (ADR-652).
   dest-no-lock stays off.
+  leftover `diagnostic_space_copy` is gone (ADR-653).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

@@ -430,10 +430,6 @@ fn context_source_copy(source: ContextSource) -> &'static str {
 
 /// ADR-558: Диагностика names the space. The raw id stays on
 /// ContextFrame (ADR-538).
-fn diagnostic_space_copy(spaces: &[Space], space_id: &str) -> String {
-    space_display_name(spaces, space_id)
-}
-
 fn remove_context_source(frame: &mut Vec<ContextFrameEntry>, source: ContextSource) {
     frame.retain(|existing| existing.source != source);
 }
@@ -14461,7 +14457,7 @@ impl Shell {
         let mut rows = vec![
             diagnostic_row(
                 "Пространство",
-                diagnostic_space_copy(&self.spaces, &self.selected_space_id),
+                space_display_name(&self.spaces, &self.selected_space_id),
             ),
             diagnostic_technical_row("Сборка", env!("SAAIOS_BUILD_ID")),
             diagnostic_row("Модель", hardware_model()),
@@ -23064,11 +23060,14 @@ mod tests {
 
     #[test]
     fn diagnostic_space_copy_uses_the_space_name_not_the_id() {
-        assert_eq!(super::diagnostic_space_copy(&[], "home"), "Дом");
-        assert_eq!(super::diagnostic_space_copy(&[], "work"), "Работа");
-        assert!(!super::diagnostic_space_copy(&[], "home").contains("home"));
-        assert!(!super::diagnostic_space_copy(&[], "work").contains('('));
-        assert_eq!(super::diagnostic_space_copy(&[], "maybe"), "maybe");
+        assert_eq!(super::space_display_name(&[], "home"), "Дом");
+        assert_eq!(super::space_display_name(&[], "work"), "Работа");
+        assert!(!super::space_display_name(&[], "home").contains("home"));
+        assert!(!super::space_display_name(&[], "work").contains('('));
+        assert_eq!(super::space_display_name(&[], "maybe"), "maybe");
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn diagnostic_space_copy", "(")));
+        assert!(src.contains("fn space_display_name("));
     }
 
     #[test]
