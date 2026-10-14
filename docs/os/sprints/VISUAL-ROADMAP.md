@@ -451,7 +451,8 @@ real phone interface consistently.
   (ADR-686; host). Deferred Wi-Fi/`df` on `/data`
   (ADR-687; `04308074…`). Inline `/proc` camp classify
   (ADR-688; host). Inline classify on `/data`
-  (ADR-689; `0e6ea3d9…`).
+  (ADR-689; `0e6ea3d9…`). Camp facts skip runtime JSON
+  (ADR-690; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2085,6 +2086,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Inline `/proc` camp classify on panther (ADR-689; `0e6ea3d9…`).
   dest-no-lock stays off. `switched to Me` + `surface=me`
   then process `S`. Leave Сейчас. Still Experimental.
+- [x] Defer runtime JSON off camp facts (ADR-690; host). dest-no-lock
+  stays off. Identity and «Наблюдения» wait one loop after Wi-Fi.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2374,7 +2378,8 @@ connect (ADR-678; host). Timeout on `/data`
 (ADR-686; host). Deferred Wi-Fi/`df` on `/data`
 (ADR-687; `04308074…`). Inline `/proc` camp classify
 (ADR-688; host). Inline classify on `/data`
-(ADR-689; `0e6ea3d9…`).
+(ADR-689; `0e6ea3d9…`). Camp facts skip runtime JSON
+(ADR-690; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

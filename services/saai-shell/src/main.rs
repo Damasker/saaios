@@ -9172,9 +9172,49 @@ fn me_fill_blocks_idle(
     facts_pending: bool,
     full_pending: bool,
     net_pending: bool,
+    runtime_pending: bool,
     obs_pending: bool,
 ) -> bool {
-    facts_pending || full_pending || net_pending || obs_pending
+    facts_pending || full_pending || net_pending || runtime_pending || obs_pending
+}
+
+fn apply_me_runtime_values(
+    facts: &mut MeFacts,
+    model: String,
+    node_class: String,
+    node_target: String,
+    node_arch: String,
+    observations: Vec<LiveObservationFact>,
+    memory_records: Vec<LiveMemoryFact>,
+) {
+    facts.model = model;
+    facts.node_class = node_class;
+    facts.node_target = node_target;
+    facts.node_arch = node_arch;
+    facts.observations = observations;
+    facts.memory_records = memory_records;
+}
+
+fn apply_me_runtime_probes(facts: &mut MeFacts) {
+    let live = read_runtime_live_facts();
+    let (node_class, node_target, node_arch) =
+        node_identity_resolved(live.identity.as_ref(), phone_gate_surface());
+    apply_me_runtime_values(
+        facts,
+        node_model_resolved(live.identity.as_ref(), hardware_model()),
+        node_class.to_string(),
+        node_target.to_string(),
+        node_arch.to_string(),
+        live.observations,
+        live.memory_records,
+    );
+}
+
+#[allow(dead_code)]
+fn me_facts_without_runtime(mut facts: MeFacts) -> MeFacts {
+    facts.observations.clear();
+    facts.memory_records.clear();
+    facts
 }
 
 fn apply_me_net_values(
@@ -10279,6 +10319,8 @@ fn main() {
         me_full_pending: false,
         me_net_ready: false,
         me_net_pending: false,
+        me_runtime_ready: false,
+        me_runtime_pending: false,
         me_facts_held: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
@@ -10371,6 +10413,19 @@ fn main() {
             shell.me_net_ready = true;
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_net_probes(&mut facts);
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_runtime_pending {
+            shell.me_runtime_pending = false;
+            shell.me_runtime_ready = true;
+            shell.me_obs_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_runtime_probes(&mut facts);
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -10680,16 +10735,20 @@ struct Shell {
     me_obs_ready: bool,
     me_obs_pending: bool,
     /// First flatten is settings + sysfs. The next turn runs the live
-    /// `me_facts()` camp / `/proc` / runtime probes. `wpa_cli` / `df`
-    /// wait for `me_net_ready`.
+    /// `me_facts()` camp / `/proc` probes. `wpa_cli` / `df` wait for
+    /// `me_net_ready`. Runtime JSON waits for `me_runtime_ready`.
     me_full_ready: bool,
     me_full_pending: bool,
     /// Live camp facts keep Wi-Fi «Нет статуса» and storage
     /// «неизвестно» until this turn runs one `wpa_cli status` and `df`.
     me_net_ready: bool,
     me_net_pending: bool,
-    /// First `me_facts()` kept for the net and observation turns so
-    /// later flattens do not shell out again.
+    /// Camp facts keep phone-gate identity and empty observations until
+    /// this turn reads runtime `status`.
+    me_runtime_ready: bool,
+    me_runtime_pending: bool,
+    /// First `me_facts()` kept for the net and runtime turns so later
+    /// flattens do not shell out again.
     me_facts_held: Option<MeFacts>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
@@ -13872,6 +13931,9 @@ impl Shell {
                     if self.me_net_ready {
                         apply_me_net_probes(&mut facts);
                     }
+                    if self.me_runtime_ready {
+                        apply_me_runtime_probes(&mut facts);
+                    }
                     facts
                 } else {
                     self.me_facts_chrome()
@@ -13883,7 +13945,11 @@ impl Shell {
             if self.me_full_ready && !self.me_net_ready {
                 self.me_net_pending = true;
             }
+            if self.me_full_ready && !self.me_runtime_ready {
+                self.me_runtime_pending = true;
+            }
             let hold = if !self.me_net_ready
+                || !self.me_runtime_ready
                 || (!self.me_obs_ready && !raw.observations.is_empty())
             {
                 Some(raw.clone())
@@ -13892,7 +13958,7 @@ impl Shell {
             };
             let (facts, pending) = me_facts_for_first_paint(raw, self.me_obs_ready);
             self.me_obs_pending |= pending;
-            if pending {
+            if hold.is_some() {
                 self.me_facts_held = hold;
             }
             let rows = flatten_me_rows(&me_system_sections(&facts));
@@ -14877,9 +14943,8 @@ impl Shell {
                 }
             })
             .collect();
-        let live = read_runtime_live_facts();
         let (node_class, node_target, node_arch) =
-            node_identity_resolved(live.identity.as_ref(), phone_gate_surface());
+            node_identity_resolved(None, phone_gate_surface());
         let camp = proc_camp_presence();
         let camp_owner = camp.owner;
         let cellular_cp = read_cp_state();
@@ -14896,7 +14961,7 @@ impl Shell {
             space_count: self.spaces.len(),
             entity_count: total_entities,
             build_id: env!("SAAIOS_BUILD_ID").to_string(),
-            model: node_model_resolved(live.identity.as_ref(), hardware_model()),
+            model: node_model_resolved(None, hardware_model()),
             node_class: node_class.to_string(),
             node_target: node_target.to_string(),
             node_arch: node_arch.to_string(),
@@ -15001,8 +15066,8 @@ impl Shell {
             entityd_connected: self.entityd.is_connected(),
             appd_connected: self.appd.is_connected(),
             apps,
-            observations: live.observations,
-            memory_records: live.memory_records,
+            observations: Vec::new(),
+            memory_records: Vec::new(),
         }
     }
 
@@ -15795,6 +15860,7 @@ impl Shell {
                 self.me_facts_pending,
                 self.me_full_pending,
                 self.me_net_pending,
+                self.me_runtime_pending,
                 self.me_obs_pending,
             )
         {
@@ -27608,11 +27674,45 @@ mod tests {
 
     #[test]
     fn me_fill_blocks_idle_while_pending() {
-        assert!(super::me_fill_blocks_idle(true, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, true, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, true, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, true));
-        assert!(!super::me_fill_blocks_idle(false, false, false, false));
+        assert!(super::me_fill_blocks_idle(true, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, true, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, true, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, true, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, false, true));
+        assert!(!super::me_fill_blocks_idle(false, false, false, false, false));
+    }
+
+    #[test]
+    fn me_facts_without_runtime_keep_camp() {
+        let cpu = super::LiveObservationFact {
+            key: "cpu.percent".into(),
+            label: "CPU".into(),
+            value: "1".into(),
+            source: "procfs".into(),
+        };
+        let mut src = me_fixture_facts();
+        src.observations = vec![cpu.clone()];
+        src.cellular_cp = Some("ONLINE".into());
+        src.model = "other".into();
+        let stripped = super::me_facts_without_runtime(src);
+        assert!(stripped.observations.is_empty());
+        assert_eq!(stripped.cellular_cp.as_deref(), Some("ONLINE"));
+        let mut filled = stripped;
+        super::apply_me_runtime_values(
+            &mut filled,
+            "panther".into(),
+            "phone".into(),
+            "panther".into(),
+            "aarch64".into(),
+            vec![cpu],
+            Vec::new(),
+        );
+        assert_eq!(filled.model, "panther");
+        assert_eq!(filled.observations.len(), 1);
+        assert_eq!(filled.cellular_cp.as_deref(), Some("ONLINE"));
+        assert!(me_system_sections(&filled)
+            .iter()
+            .any(|section| section.title == "Наблюдения"));
     }
 
     #[test]

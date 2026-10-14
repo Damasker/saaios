@@ -260,6 +260,7 @@ The verification ledger stays in
 | Me net flash | ADR-687; `04308074…` on `/data`; `surface=me` then process `S`; do not type PSK; dest-no-lock stays off |
 | proc camp inline | ADR-688; host; classify `/proc` camp presence without a cmdline `Vec`; dest-no-lock stays off |
 | proc camp inline flash | ADR-689; `0e6ea3d9…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| Me runtime next turn | ADR-690; host; camp facts skip runtime JSON; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
