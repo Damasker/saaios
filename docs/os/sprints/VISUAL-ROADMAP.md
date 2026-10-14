@@ -444,7 +444,8 @@ real phone interface consistently.
   (ADR-679; `60fe8f16…`). One `/proc` camp walk
   (ADR-680; host). One `/proc` walk on `/data`
   (ADR-681; `ce4c374b…`). One camp-log read
-  (ADR-682; host).
+  (ADR-682; host). One camp-log read on `/data`
+  (ADR-683; `bb350461…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2056,6 +2057,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] One camp-log read (ADR-682; host). dest-no-lock stays
   off. Sistema camp fields share one owner-log string.
   Leave Сейчас. Still Experimental.
+- [x] One camp-log read on panther (ADR-683; `bb350461…`).
+  dest-no-lock stays off. `switched to Me` + `surface=me`
+  then process `S`. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2338,7 +2342,8 @@ connect (ADR-678; host). Timeout on `/data`
 (ADR-679; `60fe8f16…`). One `/proc` camp walk
 (ADR-680; host). One `/proc` walk on `/data`
 (ADR-681; `ce4c374b…`). One camp-log read
-(ADR-682; host).
+(ADR-682; host). One camp-log read on `/data`
+(ADR-683; `bb350461…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
