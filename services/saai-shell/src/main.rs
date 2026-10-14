@@ -9014,6 +9014,10 @@ fn me_paint_view_with(
     view
 }
 
+fn me_motion_should_repaint(paint_cache: &Option<MePaintCache>, scroll_dirty: bool) -> bool {
+    paint_cache.is_none() || scroll_dirty
+}
+
 fn ensure_me_row_cache(
     cache: &mut Option<Vec<MeRow>>,
     build: impl FnOnce() -> Vec<MeRow>,
@@ -11865,6 +11869,10 @@ impl Shell {
         }
         if self.locked {
             self.present_lock_pin_entry(qh);
+        } else if self.current_page == RootPage::Me
+            && !me_motion_should_repaint(&self.me_paint_cache, self.me_scroll_dirty)
+        {
+            return;
         } else {
             self.draw(conn, qh);
         }
@@ -27056,6 +27064,16 @@ mod tests {
             0,
         );
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn me_motion_skips_repaint_when_layout_is_cached() {
+        let rows = flatten_me_rows(&me_system_sections(&me_fixture_facts()));
+        let mut cache = None;
+        assert!(super::me_motion_should_repaint(&cache, false));
+        let _ = super::me_paint_view(&mut cache, &rows, 1080, 2400, 0);
+        assert!(!super::me_motion_should_repaint(&cache, false));
+        assert!(super::me_motion_should_repaint(&cache, true));
     }
 
     #[test]

@@ -433,6 +433,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 Me row cache | Sistema paint reuses `me_row_cache` across motion **host** (ADR-660; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 Me cache flash | ADR-660 cache on `/data` **на panther** (ADR-661; `4a03a41b…`; dest-no-lock stays off; lock surface; leave Сейчас) |
 | VUI-09 Me paint cache | Sistema layout reused across motion **host** (ADR-662; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 Me motion skip | motion ticks do not repaint cached Sistema **host** (ADR-663; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -663,6 +664,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 Me row cache: Sistema paint reuses `me_row_cache` across motion (ADR-660; host; dest-no-lock stays off)
 - VUI-09 Me cache flash: ADR-660 cache on `/data` (ADR-661; `4a03a41b…`; dest-no-lock stays off; lock surface)
 - VUI-09 Me paint cache: Sistema layout reused across motion (ADR-662; host; dest-no-lock stays off)
+- VUI-09 Me motion skip: motion ticks do not repaint cached Sistema (ADR-663; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

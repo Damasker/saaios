@@ -425,7 +425,7 @@ real phone interface consistently.
   Me motion hang respawned (ADR-659). Me row cache across
   motion ticks (ADR-660; host). Cache on `/data`
   (ADR-661; `4a03a41b…`). Me paint cache across motion
-  (ADR-662; host).
+  (ADR-662; host). Me motion skip (ADR-663; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1975,6 +1975,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Me paint cache across motion ticks (ADR-662; host). dest-no-lock
   stays off. `me_paint_view` reuses compiled Sistema layout.
   Leave Сейчас. Still Experimental.
+- [x] Me motion skip full paint (ADR-663; host). dest-no-lock stays
+  off. Cached Sistema is not redrawn on Selection ticks.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2238,7 +2241,7 @@ that flash (ADR-657). Four root tabs after respawn (ADR-658).
 Me motion hang respawned (ADR-659). Me row cache across
 motion ticks (ADR-660; host). Cache on `/data`
 (ADR-661; `4a03a41b…`). Me paint cache across motion
-(ADR-662; host).
+(ADR-662; host). Me motion skip (ADR-663; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
