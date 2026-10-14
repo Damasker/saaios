@@ -428,6 +428,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   off. `surface=me` then process `S`.
   First flatten skips live probes (ADR-676; host). dest-no-lock
   stays off.
+  Chrome list on `/data` (ADR-677; `36a07194…`). dest-no-lock stays
+  off. Chrome list before live probes.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
