@@ -203,6 +203,7 @@ The verification ledger stays in
 | leftover bluetooth_list_action_at | ADR-630; host; wrapper gone; scrolled hits stay; dest-no-lock stays off |
 | leftover trusted_client_action_at | ADR-631; host; wrapper gone; scrolled hits stay; dest-no-lock stays off |
 | leftover object_view_hit | ADR-632; host; wrapper gone; scrolled hits stay; dest-no-lock stays off |
+| leftover search_row_at | ADR-633; host; wrapper gone; scrolled hits stay; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

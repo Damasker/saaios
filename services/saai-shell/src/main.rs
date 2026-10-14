@@ -7609,16 +7609,6 @@ fn search_scroll_max(
     )
 }
 
-fn search_row_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    entities: &[Entity],
-    store_connected: bool,
-) -> Option<Uuid> {
-    search_row_at_scrolled(pos, width, height, entities, store_connected, 0)
-}
-
 fn search_row_at_scrolled(
     pos: (f64, f64),
     width: u32,
@@ -16085,7 +16075,7 @@ mod tests {
         playback_ready_from_paths, playback_status, pressed_key_from_keys, pressed_tab_from_touch,
         related_object_first_peer, remote_pair_content_cards, remote_pair_header,
         remove_context_source, retain_pressed_while_clock, search_header, search_paint_rows,
-        search_row_at,
+        search_row_at_scrolled,
         search_rows, space_color, space_color_entity, space_detail_action_at,
         space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row,
         space_focus_task, space_for_wifi_ssid, space_member_paint_rows,
@@ -17401,10 +17391,16 @@ mod tests {
             (first.y + first.height / 2) as f64,
         );
         assert_eq!(
-            search_row_at(point, 1080, 2400, &[intent.clone(), task.clone()], true),
+            search_row_at_scrolled(point, 1080, 2400, &[intent.clone(), task.clone()], true, 0),
             Some(task.id)
         );
-        assert!(search_row_at(point, 1080, 2400, &[intent.clone(), task.clone()], false).is_none());
+        assert!(
+            search_row_at_scrolled(point, 1080, 2400, &[intent.clone(), task.clone()], false, 0)
+                .is_none()
+        );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn search_row_at", "(")));
+        assert!(src.contains("fn search_row_at_scrolled("));
         let empty = search_paint_rows(&[], true, 1080, 2400);
         assert_eq!(empty[0].1.primary, "Нет объектов");
         assert!(!empty[0].1.is_actionable());
@@ -17437,7 +17433,7 @@ mod tests {
             (last_slot.x + last_slot.width / 2) as f64,
             (last_slot.y + last_slot.height / 2) as f64,
         );
-        assert!(search_row_at(last_point, 1080, 2400, &entities, true).is_none());
+        assert!(search_row_at_scrolled(last_point, 1080, 2400, &entities, true, 0).is_none());
         let scrolled = super::layout_live_v2_scrolled(
             &super::search_v2_source(&entities, true),
             "ADR-491 search overflow",
