@@ -7908,16 +7908,6 @@ fn space_detail_scroll_max(
     )
 }
 
-fn space_detail_action_at(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    entities: &[Entity],
-    store_connected: bool,
-) -> Option<SpaceDetailTap> {
-    space_detail_action_at_scrolled(pos, width, height, entities, store_connected, 0)
-}
-
 fn space_detail_action_at_scrolled(
     pos: (f64, f64),
     width: u32,
@@ -16047,7 +16037,7 @@ mod tests {
         related_object_first_peer, remote_pair_content_cards, remote_pair_header,
         remove_context_source, retain_pressed_while_clock, search_header, search_paint_rows_scrolled,
         search_row_at_scrolled,
-        search_rows, space_color, space_color_entity, space_detail_action_at,
+        search_rows, space_color, space_color_entity, space_detail_action_at_scrolled,
         space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row,
         space_focus_task, space_for_wifi_ssid, space_member_paint_rows,
         space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
@@ -22459,9 +22449,12 @@ mod tests {
             (first.y + first.height / 2) as f64,
         );
         assert_eq!(
-            space_detail_action_at(member_point, 1080, 2400, &entities, true),
+            space_detail_action_at_scrolled(member_point, 1080, 2400, &entities, true, 0),
             Some(SpaceDetailTap::Member(intent.id))
         );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn space_detail_action_at", "(")));
+        assert!(src.contains("fn space_detail_action_at_scrolled("));
         let tree = super::layout_live_v2(
             &super::space_detail_v2_source(&entities, true),
             "ADR-455 space detail",
@@ -22474,10 +22467,10 @@ mod tests {
             (back.y + back.height / 2) as f64,
         );
         assert_eq!(
-            space_detail_action_at(back_point, 1080, 2400, &entities, true),
+            space_detail_action_at_scrolled(back_point, 1080, 2400, &entities, true, 0),
             Some(SpaceDetailTap::Back)
         );
-        assert!(space_detail_action_at(member_point, 1080, 2400, &entities, false).is_none());
+        assert!(space_detail_action_at_scrolled(member_point, 1080, 2400, &entities, false, 0).is_none());
     }
 
     #[test]
@@ -22495,7 +22488,7 @@ mod tests {
             (first.y + first.height / 2) as f64,
         );
         assert_eq!(
-            space_detail_action_at(focus_point, 1080, 2400, &entities, true),
+            space_detail_action_at_scrolled(focus_point, 1080, 2400, &entities, true, 0),
             Some(SpaceDetailTap::Member(running.id))
         );
         let second = stacked_row_rect(1, 1080, 2400);
@@ -22504,7 +22497,7 @@ mod tests {
             (second.y + second.height / 2) as f64,
         );
         assert_eq!(
-            space_detail_action_at(member_point, 1080, 2400, &entities, true),
+            space_detail_action_at_scrolled(member_point, 1080, 2400, &entities, true, 0),
             Some(SpaceDetailTap::Member(intent.id))
         );
         let rows = space_focus_paint_row(&entities, true, 1080, 2400).expect("focus");
@@ -22532,7 +22525,7 @@ mod tests {
             (first.y + first.height / 2) as f64,
         );
         assert_eq!(
-            space_detail_action_at(point, 1080, 2400, &entities, true),
+            space_detail_action_at_scrolled(point, 1080, 2400, &entities, true, 0),
             Some(SpaceDetailTap::Member(intent.id))
         );
         let empty = space_member_paint_rows(&[], true, 1080, 2400);
@@ -22576,7 +22569,7 @@ mod tests {
             (last_slot.y + last_slot.height / 2) as f64,
         );
         assert_eq!(
-            space_detail_action_at(last_point, 1080, 2400, &entities, true),
+            space_detail_action_at_scrolled(last_point, 1080, 2400, &entities, true, 0),
             None
         );
         let scrolled = super::layout_live_v2_scrolled(
