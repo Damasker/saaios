@@ -3414,29 +3414,6 @@ enum ObjectViewHit {
 /// The tapped Object View control, or `None` if the tap missed.
 /// Related is a SOM peer (ADR-472). Step is an Intent Task
 /// (ADR-473). Action index is the trailing Button list.
-fn object_view_hit(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    action_count: usize,
-    related_count: usize,
-    step_count: usize,
-    quick_count: usize,
-    history: bool,
-) -> Option<ObjectViewHit> {
-    object_view_hit_scrolled(
-        pos,
-        width,
-        height,
-        action_count,
-        related_count,
-        step_count,
-        quick_count,
-        history,
-        0,
-    )
-}
-
 fn object_view_hit_scrolled(
     pos: (f64, f64),
     width: u32,
@@ -3535,7 +3512,7 @@ fn object_view_action_at(
     height: u32,
     action_count: usize,
 ) -> Option<usize> {
-    match object_view_hit(pos, width, height, action_count, 0, 0, 0, false) {
+    match object_view_hit_scrolled(pos, width, height, action_count, 0, 0, 0, false, 0) {
         Some(ObjectViewHit::Action(index)) => Some(index),
         _ => None,
     }
@@ -16099,7 +16076,7 @@ mod tests {
         now_workflow_sections,
         object_view_action_at,
         object_view_content, object_view_content_with, object_view_details,
-        object_view_history_lines, object_view_hit,
+        object_view_history_lines, object_view_hit_scrolled,
         object_view_permission_pattern,
         object_summary_meta, object_view_related_peer_lines, object_view_step_lines,
         object_view_summary, orb_action_at,
@@ -23400,12 +23377,18 @@ mod tests {
     #[test]
     fn object_view_related_button_hits_the_concept_row() {
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0, 0, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 1, 0, 0, false, 0),
             Some(ObjectViewHit::Related(0))
         );
-        assert_eq!(object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false), None);
         assert_eq!(
-            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 2, 0, 0, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false, 0),
+            None
+        );
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn object_view_hit", "(")));
+        assert!(src.contains("fn object_view_hit_scrolled("));
+        assert_eq!(
+            object_view_hit_scrolled((270.0, 2250.0), 1080, 2400, 1, 2, 0, 0, false, 0),
             Some(ObjectViewHit::Action(0))
         );
         assert_eq!(object_view_action_at((540.0, 292.0), 1080, 2400, 1), None);
@@ -23422,7 +23405,7 @@ mod tests {
         let note = test_entity("note.doc", serde_json::Map::new());
         assert!(object_view_related_peer_lines(&note, &[note.clone()], &[]).is_empty());
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false, 0),
             None
         );
         let painted = super::object_overlay_paint(
@@ -23436,11 +23419,11 @@ mod tests {
         let row = painted.2[0].expect("offline related");
         assert_eq!(row, saai_ui_core::Rect::new(49, 284, 982, row.height));
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 0, 0, 0, false, 0),
             None
         );
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 0, 0, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 1, 0, 0, false, 0),
             Some(ObjectViewHit::Related(0))
         );
     }
@@ -23448,7 +23431,7 @@ mod tests {
     #[test]
     fn object_view_intent_step_button_hits_the_plan_row() {
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 1, 0, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 0, 1, 0, false, 0),
             Some(ObjectViewHit::Step(0))
         );
         let painted = super::object_overlay_paint(
@@ -23472,11 +23455,11 @@ mod tests {
         assert_eq!(first, saai_ui_core::Rect::new(49, 284, 982, first.height));
         assert_eq!(second.y, first.y + first.height);
         assert_eq!(
-            object_view_hit((540.0, (last.y + 8) as f64), 1080, 2400, 0, 0, 5, 0, false),
+            object_view_hit_scrolled((540.0, (last.y + 8) as f64), 1080, 2400, 0, 0, 5, 0, false, 0),
             Some(ObjectViewHit::Step(4))
         );
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 1, 1, 0, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 1, 1, 0, false, 0),
             Some(ObjectViewHit::Related(0))
         );
     }
@@ -23513,7 +23496,7 @@ mod tests {
         let last = STEP_COUNT - 1;
         let last_rect = scrolled.2[last].expect("scrolled last step");
         assert_eq!(
-            object_view_hit((270.0, 2250.0), 1080, 2400, 1, 0, STEP_COUNT, 0, false),
+            object_view_hit_scrolled((270.0, 2250.0), 1080, 2400, 1, 0, STEP_COUNT, 0, false, 0),
             Some(ObjectViewHit::Action(0))
         );
         assert_eq!(
@@ -23531,7 +23514,7 @@ mod tests {
             Some(ObjectViewHit::Action(0))
         );
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, STEP_COUNT, 0, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 0, STEP_COUNT, 0, false, 0),
             Some(ObjectViewHit::Step(0))
         );
         assert_eq!(
@@ -23560,7 +23543,7 @@ mod tests {
         let lines = super::object_view_quick_action_lines(&display);
         assert_eq!(lines, ["Состояние экрана"]);
         assert_eq!(
-            object_view_hit((540.0, 292.0), 1080, 2400, 0, 0, 0, 1, false),
+            object_view_hit_scrolled((540.0, 292.0), 1080, 2400, 0, 0, 0, 1, false, 0),
             None
         );
         let task = task_entity("Работает", None);
@@ -24211,10 +24194,13 @@ mod tests {
             (row.y + 8) as f64,
         );
         assert_eq!(
-            object_view_hit(hit, 1080, 2400, 0, 0, 0, 0, true),
+            object_view_hit_scrolled(hit, 1080, 2400, 0, 0, 0, 0, true, 0),
             Some(ObjectViewHit::History)
         );
-        assert_eq!(object_view_hit(hit, 1080, 2400, 0, 0, 0, 0, false), None);
+        assert_eq!(
+            object_view_hit_scrolled(hit, 1080, 2400, 0, 0, 0, 0, false, 0),
+            None
+        );
         let painted = super::object_overlay_paint(
             &[],
             &["object.history"],
