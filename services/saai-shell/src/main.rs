@@ -1490,9 +1490,14 @@ fn read_endpoint_holder() -> Option<&'static str> {
     proc_camp_presence().endpoint
 }
 
+const SUPERVISOR_LOG_TAIL: u64 = 8 * 1024;
+
+fn supervisor_token_from(text: &str) -> Option<String> {
+    saai_observation::last_supervisor_token(text).map(str::to_string)
+}
+
 fn read_supervisor_token() -> Option<String> {
-    let text = read_log_tail(MODEM_BOOT_LOG, 256 * 1024)?;
-    saai_observation::last_supervisor_token(&text).map(str::to_string)
+    supervisor_token_from(&read_log_tail(MODEM_BOOT_LOG, SUPERVISOR_LOG_TAIL)?)
 }
 
 fn read_log_tail(path: &str, max: u64) -> Option<String> {
@@ -27646,6 +27651,18 @@ camp_sim=ready\n";
         assert_eq!(super::read_radio_token(log).as_deref(), Some("on"));
         assert_eq!(super::read_sim_presence(log).as_deref(), Some("ready"));
         assert!(super::read_dns("").is_none());
+    }
+
+    #[test]
+    fn supervisor_token_reads_from_small_tail() {
+        assert_eq!(super::SUPERVISOR_LOG_TAIL, 8 * 1024);
+        let pad = "noise\n".repeat(64);
+        let text = format!("{pad}supervise=hold\n");
+        assert_eq!(
+            super::supervisor_token_from(&text).as_deref(),
+            Some("hold")
+        );
+        assert!(super::supervisor_token_from("").is_none());
     }
 
     #[test]
