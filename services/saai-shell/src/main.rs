@@ -1223,6 +1223,7 @@ fn wifi_wpa_state(output: &str) -> Option<&str> {
     })
 }
 
+#[allow(dead_code)]
 fn wifi_status_readable() -> bool {
     if !wifi_adapter_present() {
         return wifi_net_class_readable();
@@ -2327,11 +2328,9 @@ fn wifi_connected_ssid() -> Option<String> {
     }
 }
 
+#[allow(dead_code)]
 fn wifi_status_line() -> String {
-    match wifi_connected_ssid() {
-        Some(ssid) => format!("Подключено: {ssid}"),
-        None => "Не подключено".to_string(),
-    }
+    wifi_status_from_cli().0
 }
 
 fn wifi_setting_row(facts: &MeFacts) -> DataRow {
@@ -9150,8 +9149,54 @@ fn me_facts_for_first_paint(mut facts: MeFacts, obs_ready: bool) -> (MeFacts, bo
     (facts, pending)
 }
 
-fn me_fill_blocks_idle(facts_pending: bool, full_pending: bool, obs_pending: bool) -> bool {
-    facts_pending || full_pending || obs_pending
+fn me_fill_blocks_idle(
+    facts_pending: bool,
+    full_pending: bool,
+    net_pending: bool,
+    obs_pending: bool,
+) -> bool {
+    facts_pending || full_pending || net_pending || obs_pending
+}
+
+fn apply_me_net_values(
+    facts: &mut MeFacts,
+    storage: String,
+    wifi_status: String,
+    wifi_status_readable: bool,
+) {
+    facts.storage = storage;
+    facts.wifi_status = wifi_status;
+    facts.wifi_status_readable = wifi_status_readable;
+}
+
+fn wifi_status_from_cli() -> (String, bool) {
+    if !wifi_adapter_present() {
+        return (String::new(), wifi_net_class_readable());
+    }
+    let output = wpa_cli(&["status"]);
+    let readable = wifi_wpa_state(&output).is_some();
+    let mut ssid = String::new();
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("ssid=") {
+            ssid = value.trim().to_string();
+        }
+    }
+    let status = if wifi_wpa_state(&output) == Some("COMPLETED") && !ssid.is_empty() {
+        format!("Подключено: {ssid}")
+    } else {
+        "Не подключено".to_string()
+    };
+    (status, readable)
+}
+
+fn apply_me_net_probes(facts: &mut MeFacts) {
+    let (wifi_status, wifi_status_readable) = wifi_status_from_cli();
+    apply_me_net_values(facts, storage_string(), wifi_status, wifi_status_readable);
+}
+
+fn me_facts_without_net_probes(mut facts: MeFacts) -> MeFacts {
+    apply_me_net_values(&mut facts, "неизвестно".into(), String::new(), false);
+    facts
 }
 
 fn me_facts_without_live_probes(mut facts: MeFacts) -> MeFacts {
@@ -10212,6 +10257,8 @@ fn main() {
         me_obs_pending: false,
         me_full_ready: false,
         me_full_pending: false,
+        me_net_ready: false,
+        me_net_pending: false,
         me_facts_held: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
@@ -10294,6 +10341,18 @@ fn main() {
         } else if shell.me_full_pending {
             shell.me_full_pending = false;
             shell.me_full_ready = true;
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_net_pending {
+            shell.me_net_pending = false;
+            shell.me_net_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_net_probes(&mut facts);
+                shell.me_facts_held = Some(facts);
+            }
             shell.invalidate_me_rows();
             shell.capture_me_rows();
             if !shell.locked && shell.current_page == RootPage::Me {
@@ -10601,11 +10660,16 @@ struct Shell {
     me_obs_ready: bool,
     me_obs_pending: bool,
     /// First flatten is settings + sysfs. The next turn runs the live
-    /// `me_facts()` probes (`wpa_cli` / `df` / `/proc` / runtime).
+    /// `me_facts()` camp / `/proc` / runtime probes. `wpa_cli` / `df`
+    /// wait for `me_net_ready`.
     me_full_ready: bool,
     me_full_pending: bool,
-    /// First `me_facts()` kept for the observation turn so the second
-    /// flatten does not shell out again.
+    /// Live camp facts keep Wi-Fi «Нет статуса» and storage
+    /// «неизвестно» until this turn runs one `wpa_cli status` and `df`.
+    me_net_ready: bool,
+    me_net_pending: bool,
+    /// First `me_facts()` kept for the net and observation turns so
+    /// later flattens do not shell out again.
     me_facts_held: Option<MeFacts>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
@@ -13784,7 +13848,11 @@ impl Shell {
         if self.me_row_cache.is_none() {
             let raw = self.me_facts_held.take().unwrap_or_else(|| {
                 if self.me_full_ready {
-                    self.me_facts()
+                    let mut facts = self.me_facts();
+                    if self.me_net_ready {
+                        apply_me_net_probes(&mut facts);
+                    }
+                    facts
                 } else {
                     self.me_facts_chrome()
                 }
@@ -13792,7 +13860,12 @@ impl Shell {
             if !self.me_full_ready {
                 self.me_full_pending = true;
             }
-            let hold = if !self.me_obs_ready && !raw.observations.is_empty() {
+            if self.me_full_ready && !self.me_net_ready {
+                self.me_net_pending = true;
+            }
+            let hold = if !self.me_net_ready
+                || (!self.me_obs_ready && !raw.observations.is_empty())
+            {
                 Some(raw.clone())
             } else {
                 None
@@ -14809,7 +14882,7 @@ impl Shell {
             node_arch: node_arch.to_string(),
             kernel: kernel_release(),
             uptime: uptime_string(),
-            storage: storage_string(),
+            storage: "неизвестно".into(),
             brightness_pct: self.settings.brightness_pct,
             idle_timeout_secs: self.settings.idle_timeout_secs,
             deep_idle_timeout_secs: self.settings.deep_idle_timeout_secs,
@@ -14818,9 +14891,9 @@ impl Shell {
             boot_attempts: boot_attempts(),
             volume_pct: self.settings.volume_pct,
             playback_ready: playback_ready(),
-            wifi_status: wifi_status_line(),
+            wifi_status: String::new(),
             wifi_present: wifi_adapter_present(),
-            wifi_status_readable: wifi_status_readable(),
+            wifi_status_readable: false,
             bluetooth_paired: bluetooth_paired_count(),
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
@@ -15701,6 +15774,7 @@ impl Shell {
             || me_fill_blocks_idle(
                 self.me_facts_pending,
                 self.me_full_pending,
+                self.me_net_pending,
                 self.me_obs_pending,
             )
         {
@@ -27514,10 +27588,36 @@ mod tests {
 
     #[test]
     fn me_fill_blocks_idle_while_pending() {
-        assert!(super::me_fill_blocks_idle(true, false, false));
-        assert!(super::me_fill_blocks_idle(false, true, false));
-        assert!(super::me_fill_blocks_idle(false, false, true));
-        assert!(!super::me_fill_blocks_idle(false, false, false));
+        assert!(super::me_fill_blocks_idle(true, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, true, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, true, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, true));
+        assert!(!super::me_fill_blocks_idle(false, false, false, false));
+    }
+
+    #[test]
+    fn me_facts_without_net_probes_keep_camp() {
+        let mut src = me_fixture_facts();
+        src.storage = "1.0 ГБ из 2.0 ГБ занято".into();
+        src.wifi_status = "Подключено: test".into();
+        src.wifi_status_readable = true;
+        src.cellular_cp = Some("ONLINE".into());
+        let stripped = super::me_facts_without_net_probes(src);
+        assert_eq!(stripped.storage, "неизвестно");
+        assert!(stripped.wifi_status.is_empty());
+        assert!(!stripped.wifi_status_readable);
+        assert_eq!(stripped.cellular_cp.as_deref(), Some("ONLINE"));
+        let mut filled = stripped;
+        super::apply_me_net_values(
+            &mut filled,
+            "1.0 ГБ из 2.0 ГБ занято".into(),
+            "Не подключено".into(),
+            true,
+        );
+        assert_eq!(filled.storage, "1.0 ГБ из 2.0 ГБ занято");
+        assert_eq!(filled.wifi_status, "Не подключено");
+        assert!(filled.wifi_status_readable);
+        assert_eq!(filled.cellular_cp.as_deref(), Some("ONLINE"));
     }
 
     #[test]
