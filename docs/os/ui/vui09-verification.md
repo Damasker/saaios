@@ -436,6 +436,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   One `/proc` camp walk (ADR-680; host). dest-no-lock stays off.
   One `/proc` walk on `/data` (ADR-681; `ce4c374b…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  One camp-log read (ADR-682; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

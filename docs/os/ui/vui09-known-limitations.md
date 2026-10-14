@@ -252,6 +252,7 @@ The verification ledger stays in
 | Wi-Fi cli flash | ADR-679; `60fe8f16…` on `/data`; unlock slept; do not type PSK; dest-no-lock stays off |
 | proc camp one pass | ADR-680; host; one `/proc` walk for owner/endpoint/status; dest-no-lock stays off |
 | proc camp flash | ADR-681; `ce4c374b…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| camp log one read | ADR-682; host; one owner-log read for all Sistema camp fields; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

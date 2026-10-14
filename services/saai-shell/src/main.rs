@@ -1513,172 +1513,172 @@ fn read_camp_owner_log() -> Option<String> {
     Some(saai_observation::owner_fact_lines(&text))
 }
 
-fn read_data_registration_raw() -> Option<u32> {
-    last_field_registration_raw(&read_camp_owner_log()?, "data")
+fn read_data_registration_raw(log: &str) -> Option<u32> {
+    last_field_registration_raw(log, "data")
 }
 
-fn read_voice_registration_raw() -> Option<u32> {
-    saai_observation::last_voice_registration_raw(&read_camp_owner_log()?)
+fn read_voice_registration_raw(log: &str) -> Option<u32> {
+    saai_observation::last_voice_registration_raw(log)
 }
 
-fn read_selection_mode() -> Option<String> {
-    saai_observation::last_selection_mode(&read_camp_owner_log()?).map(str::to_string)
+fn read_selection_mode(log: &str) -> Option<String> {
+    saai_observation::last_selection_mode(log).map(str::to_string)
 }
 
-fn read_stack_mode() -> Option<String> {
-    saai_observation::last_stack_mode(&read_camp_owner_log()?).map(str::to_string)
+fn read_stack_mode(log: &str) -> Option<String> {
+    saai_observation::last_stack_mode(log).map(str::to_string)
 }
 
-fn read_device_service() -> Option<String> {
-    saai_observation::last_device_service(&read_camp_owner_log()?).map(str::to_string)
+fn read_device_service(log: &str) -> Option<String> {
+    saai_observation::last_device_service(log).map(str::to_string)
 }
 
-fn read_voice_operation() -> Option<String> {
-    saai_observation::last_voice_operation(&read_camp_owner_log()?).map(str::to_string)
+fn read_voice_operation(log: &str) -> Option<String> {
+    saai_observation::last_voice_operation(log).map(str::to_string)
 }
 
-fn read_allow_data() -> Option<String> {
-    saai_observation::last_allow_data(&read_camp_owner_log()?).map(str::to_string)
+fn read_allow_data(log: &str) -> Option<String> {
+    saai_observation::last_allow_data(log).map(str::to_string)
 }
 
-fn read_initial_attach() -> Option<String> {
-    saai_observation::last_initial_attach(&read_camp_owner_log()?).map(str::to_string)
+fn read_initial_attach(log: &str) -> Option<String> {
+    saai_observation::last_initial_attach(log).map(str::to_string)
 }
 
-fn read_dns() -> Option<String> {
-    saai_observation::last_dns(&read_camp_owner_log()?).map(str::to_string)
+fn read_dns(log: &str) -> Option<String> {
+    saai_observation::last_dns(log).map(str::to_string)
 }
 
-fn read_dns6() -> Option<String> {
-    saai_observation::last_dns6(&read_camp_owner_log()?).map(str::to_string)
+fn read_dns6(log: &str) -> Option<String> {
+    saai_observation::last_dns6(log).map(str::to_string)
 }
 
-fn read_modem_config() -> Option<String> {
-    saai_observation::last_modem_config(&read_camp_owner_log()?).map(str::to_string)
+fn read_modem_config(log: &str) -> Option<String> {
+    saai_observation::last_modem_config(log).map(str::to_string)
 }
 
-fn read_sgc() -> Option<String> {
-    saai_observation::last_sgc(&read_camp_owner_log()?).map(str::to_string)
+fn read_sgc(log: &str) -> Option<String> {
+    saai_observation::last_sgc(log).map(str::to_string)
 }
 
-fn read_radio_power() -> Option<String> {
-    saai_observation::last_radio_power(&read_camp_owner_log()?).map(str::to_string)
+fn read_radio_power(log: &str) -> Option<String> {
+    saai_observation::last_radio_power(log).map(str::to_string)
 }
 
-fn read_voice_set() -> Option<String> {
-    saai_observation::last_voice_set(&read_camp_owner_log()?).map(str::to_string)
+fn read_voice_set(log: &str) -> Option<String> {
+    saai_observation::last_voice_set(log).map(str::to_string)
 }
 
-fn read_ipv4() -> Option<String> {
-    saai_observation::last_ipv4(&read_camp_owner_log()?).map(str::to_string)
+fn read_ipv4(log: &str) -> Option<String> {
+    saai_observation::last_ipv4(log).map(str::to_string)
 }
 
-fn read_ipv6() -> Option<String> {
-    saai_observation::last_ipv6(&read_camp_owner_log()?).map(str::to_string)
+fn read_ipv6(log: &str) -> Option<String> {
+    saai_observation::last_ipv6(log).map(str::to_string)
 }
 
-fn read_setup() -> Option<String> {
-    saai_observation::last_data_setup(&read_camp_owner_log()?).map(str::to_string)
+fn read_setup(log: &str) -> Option<String> {
+    saai_observation::last_data_setup(log).map(str::to_string)
 }
 
-fn read_profile() -> Option<String> {
-    saai_observation::last_data_profile(&read_camp_owner_log()?).map(str::to_string)
+fn read_profile(log: &str) -> Option<String> {
+    saai_observation::last_data_profile(log).map(str::to_string)
 }
 
-fn read_activity() -> Option<String> {
-    saai_observation::last_activity(&read_camp_owner_log()?).map(str::to_string)
+fn read_activity(log: &str) -> Option<String> {
+    saai_observation::last_activity(log).map(str::to_string)
 }
 
-fn read_fastdorm() -> Option<String> {
-    saai_observation::last_fastdorm(&read_camp_owner_log()?).map(str::to_string)
+fn read_fastdorm(log: &str) -> Option<String> {
+    saai_observation::last_fastdorm(log).map(str::to_string)
 }
 
-fn read_endc() -> Option<String> {
-    saai_observation::last_endc(&read_camp_owner_log()?).map(str::to_string)
+fn read_endc(log: &str) -> Option<String> {
+    saai_observation::last_endc(log).map(str::to_string)
 }
 
-fn read_throttle() -> Option<String> {
-    saai_observation::last_throttle(&read_camp_owner_log()?).map(str::to_string)
+fn read_throttle(log: &str) -> Option<String> {
+    saai_observation::last_throttle(log).map(str::to_string)
 }
 
-fn read_unsolff() -> Option<String> {
-    saai_observation::last_unsolff(&read_camp_owner_log()?).map(str::to_string)
+fn read_unsolff(log: &str) -> Option<String> {
+    saai_observation::last_unsolff(log).map(str::to_string)
 }
 
-fn read_unsol() -> Option<String> {
-    saai_observation::last_unsol(&read_camp_owner_log()?).map(str::to_string)
+fn read_unsol(log: &str) -> Option<String> {
+    saai_observation::last_unsol(log).map(str::to_string)
 }
 
-fn read_screen() -> Option<String> {
-    saai_observation::last_screen(&read_camp_owner_log()?).map(str::to_string)
+fn read_screen(log: &str) -> Option<String> {
+    saai_observation::last_screen(log).map(str::to_string)
 }
 
-fn read_cellinfo() -> Option<String> {
-    saai_observation::last_cellinfo(&read_camp_owner_log()?).map(str::to_string)
+fn read_cellinfo(log: &str) -> Option<String> {
+    saai_observation::last_cellinfo(log).map(str::to_string)
 }
 
-fn read_smsc() -> Option<String> {
-    saai_observation::last_smsc(&read_camp_owner_log()?).map(str::to_string)
+fn read_smsc(log: &str) -> Option<String> {
+    saai_observation::last_smsc(log).map(str::to_string)
 }
 
-fn read_vonrget() -> Option<String> {
-    saai_observation::last_vonrget(&read_camp_owner_log()?).map(str::to_string)
+fn read_vonrget(log: &str) -> Option<String> {
+    saai_observation::last_vonrget(log).map(str::to_string)
 }
 
-fn read_aptime() -> Option<String> {
-    saai_observation::last_aptime(&read_camp_owner_log()?).map(str::to_string)
+fn read_aptime(log: &str) -> Option<String> {
+    saai_observation::last_aptime(log).map(str::to_string)
 }
 
-fn read_dbgtrace() -> Option<String> {
-    saai_observation::last_dbgtrace(&read_camp_owner_log()?).map(str::to_string)
+fn read_dbgtrace(log: &str) -> Option<String> {
+    saai_observation::last_dbgtrace(log).map(str::to_string)
 }
 
-fn read_tty() -> Option<String> {
-    saai_observation::last_tty(&read_camp_owner_log()?).map(str::to_string)
+fn read_tty(log: &str) -> Option<String> {
+    saai_observation::last_tty(log).map(str::to_string)
 }
 
-fn read_pssvc() -> Option<String> {
-    saai_observation::last_pssvc(&read_camp_owner_log()?).map(str::to_string)
+fn read_pssvc(log: &str) -> Option<String> {
+    saai_observation::last_pssvc(log).map(str::to_string)
 }
 
-fn read_prefmodem() -> Option<String> {
-    saai_observation::last_prefmodem(&read_camp_owner_log()?).map(str::to_string)
+fn read_prefmodem(log: &str) -> Option<String> {
+    saai_observation::last_prefmodem(log).map(str::to_string)
 }
 
-fn read_slot() -> Option<String> {
-    saai_observation::last_slot(&read_camp_owner_log()?).map(str::to_string)
+fn read_slot(log: &str) -> Option<String> {
+    saai_observation::last_slot(log).map(str::to_string)
 }
 
-fn read_sigcrit() -> Option<String> {
-    saai_observation::last_sigcrit(&read_camp_owner_log()?).map(str::to_string)
+fn read_sigcrit(log: &str) -> Option<String> {
+    saai_observation::last_sigcrit(log).map(str::to_string)
 }
 
-fn read_smsact() -> Option<String> {
-    saai_observation::last_smsact(&read_camp_owner_log()?).map(str::to_string)
+fn read_smsact(log: &str) -> Option<String> {
+    saai_observation::last_smsact(log).map(str::to_string)
 }
 
-fn read_linkcrit() -> Option<String> {
-    saai_observation::last_linkcrit(&read_camp_owner_log()?).map(str::to_string)
+fn read_linkcrit(log: &str) -> Option<String> {
+    saai_observation::last_linkcrit(log).map(str::to_string)
 }
 
-fn read_smscb() -> Option<String> {
-    saai_observation::last_smscb(&read_camp_owner_log()?).map(str::to_string)
+fn read_smscb(log: &str) -> Option<String> {
+    saai_observation::last_smscb(log).map(str::to_string)
 }
 
-fn read_calllist() -> Option<String> {
-    saai_observation::last_calllist(&read_camp_owner_log()?).map(str::to_string)
+fn read_calllist(log: &str) -> Option<String> {
+    saai_observation::last_calllist(log).map(str::to_string)
 }
 
-fn read_gpslock() -> Option<String> {
-    saai_observation::last_gpslock(&read_camp_owner_log()?).map(str::to_string)
+fn read_gpslock(log: &str) -> Option<String> {
+    saai_observation::last_gpslock(log).map(str::to_string)
 }
 
-fn read_gpsnfw() -> Option<String> {
-    saai_observation::last_gpsnfw(&read_camp_owner_log()?).map(str::to_string)
+fn read_gpsnfw(log: &str) -> Option<String> {
+    saai_observation::last_gpsnfw(log).map(str::to_string)
 }
 
-fn read_samode() -> Option<String> {
-    saai_observation::last_samode(&read_camp_owner_log()?).map(str::to_string)
+fn read_samode(log: &str) -> Option<String> {
+    saai_observation::last_samode(log).map(str::to_string)
 }
 
 fn selection_phrase(token: &str) -> Option<&'static str> {
@@ -1804,26 +1804,26 @@ fn live_traffic_token() -> Option<&'static str> {
     saai_observation::traffic_token(rx_any, tx_any)
 }
 
-fn read_data_call() -> Option<saai_observation::DataCallList> {
-    saai_observation::last_data_call(&read_camp_owner_log()?)
+fn read_data_call(log: &str) -> Option<saai_observation::DataCallList> {
+    saai_observation::last_data_call(log)
 }
 
-fn read_signal_token() -> Option<&'static str> {
-    let mask = saai_observation::last_signal_mask(&read_camp_owner_log()?)?;
+fn read_signal_token(log: &str) -> Option<&'static str> {
+    let mask = saai_observation::last_signal_mask(log)?;
     (mask > 0).then_some("yes")
 }
 
-fn read_link_estimate() -> Option<(u32, u32)> {
-    let link = saai_observation::last_link_estimate(&read_camp_owner_log()?)?;
+fn read_link_estimate(log: &str) -> Option<(u32, u32)> {
+    let link = saai_observation::last_link_estimate(log)?;
     Some((link.down_kbps, link.up_kbps))
 }
 
-fn read_phy_channel() -> Option<saai_observation::PhyChannel> {
-    saai_observation::last_phy_channel(&read_camp_owner_log()?)
+fn read_phy_channel(log: &str) -> Option<saai_observation::PhyChannel> {
+    saai_observation::last_phy_channel(log)
 }
 
-fn read_barring() -> Option<&'static str> {
-    saai_observation::last_barring(&read_camp_owner_log()?)
+fn read_barring(log: &str) -> Option<&'static str> {
+    saai_observation::last_barring(log)
 }
 
 fn barring_phrase(token: Option<&str>) -> Option<&'static str> {
@@ -1852,12 +1852,12 @@ fn radio_suffix(phy: Option<&saai_observation::PhyChannel>) -> String {
     parts.join(" · ")
 }
 
-fn read_radio_token() -> Option<String> {
-    saai_observation::last_radio_token(&read_camp_owner_log()?).map(str::to_string)
+fn read_radio_token(log: &str) -> Option<String> {
+    saai_observation::last_radio_token(log).map(str::to_string)
 }
 
-fn read_sim_presence() -> Option<String> {
-    saai_observation::last_sim_presence(&read_camp_owner_log()?).map(str::to_string)
+fn read_sim_presence(log: &str) -> Option<String> {
+    saai_observation::last_sim_presence(log).map(str::to_string)
 }
 
 fn iface_counter(name: &str, which: &str) -> u64 {
@@ -2145,15 +2145,21 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
         facts.cellular_owner.as_deref() == Some("running"),
         facts.cellular_cp.as_deref(),
     );
+    let camp_log = if camp_current {
+        read_camp_owner_log()
+    } else {
+        None
+    };
+    let log = camp_log.as_deref();
     let suffix = data_session_suffix(
-        camp_current.then(read_data_call).flatten(),
+        log.and_then(read_data_call),
         live_traffic_token(),
-        camp_current.then(read_signal_token).flatten(),
-        camp_current.then(read_link_estimate).flatten(),
+        log.and_then(read_signal_token),
+        log.and_then(read_link_estimate),
     );
-    let phy = camp_current.then(read_phy_channel).flatten();
+    let phy = log.and_then(read_phy_channel);
     let radio = radio_suffix(phy.as_ref());
-    let barring = barring_phrase(camp_current.then(read_barring).flatten().as_deref());
+    let barring = barring_phrase(log.and_then(read_barring));
     let suffix = [suffix, radio, barring.unwrap_or("").to_string()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -14780,6 +14786,12 @@ impl Shell {
         let camp_owner = camp.owner;
         let cellular_cp = read_cp_state();
         let camp_current = camp_log_current_from(camp_owner, cellular_cp.as_deref());
+        let camp_log = if camp_current {
+            read_camp_owner_log()
+        } else {
+            None
+        };
+        let log = camp_log.as_deref();
         let cellular_endpoint = camp.endpoint;
         let status_query = camp.status_query;
         MeFacts {
@@ -14808,50 +14820,50 @@ impl Shell {
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: cellular_ifaces(),
             cellular_cp: cellular_cp.clone(),
-            cellular_registration_raw: camp_current.then(read_data_registration_raw).flatten(),
-            cellular_voice_raw: camp_current.then(read_voice_registration_raw).flatten(),
-            cellular_radio: camp_current.then(read_radio_token).flatten(),
-            cellular_selection: camp_current.then(read_selection_mode).flatten(),
-            cellular_stack: camp_current.then(read_stack_mode).flatten(),
-            cellular_device_service: camp_current.then(read_device_service).flatten(),
-            cellular_voice_operation: camp_current.then(read_voice_operation).flatten(),
-            cellular_allow_data: camp_current.then(read_allow_data).flatten(),
-            cellular_initial_attach: camp_current.then(read_initial_attach).flatten(),
-            cellular_dns: camp_current.then(read_dns).flatten(),
-            cellular_dns6: camp_current.then(read_dns6).flatten(),
-            cellular_config: camp_current.then(read_modem_config).flatten(),
-            cellular_sgc: camp_current.then(read_sgc).flatten(),
-            cellular_power: camp_current.then(read_radio_power).flatten(),
-            cellular_voice_set: camp_current.then(read_voice_set).flatten(),
-            cellular_ipv4: camp_current.then(read_ipv4).flatten(),
-            cellular_ipv6: camp_current.then(read_ipv6).flatten(),
-            cellular_setup: camp_current.then(read_setup).flatten(),
-            cellular_profile: camp_current.then(read_profile).flatten(),
-            cellular_activity: camp_current.then(read_activity).flatten(),
-            cellular_fastdorm: camp_current.then(read_fastdorm).flatten(),
-            cellular_endc: camp_current.then(read_endc).flatten(),
-            cellular_throttle: camp_current.then(read_throttle).flatten(),
-            cellular_unsolff: camp_current.then(read_unsolff).flatten(),
-            cellular_unsol: camp_current.then(read_unsol).flatten(),
-            cellular_screen: camp_current.then(read_screen).flatten(),
-            cellular_cellinfo: camp_current.then(read_cellinfo).flatten(),
-            cellular_smsc: camp_current.then(read_smsc).flatten(),
-            cellular_vonrget: camp_current.then(read_vonrget).flatten(),
-            cellular_aptime: camp_current.then(read_aptime).flatten(),
-            cellular_dbgtrace: camp_current.then(read_dbgtrace).flatten(),
-            cellular_tty: camp_current.then(read_tty).flatten(),
-            cellular_pssvc: camp_current.then(read_pssvc).flatten(),
-            cellular_prefmodem: camp_current.then(read_prefmodem).flatten(),
-            cellular_slot: camp_current.then(read_slot).flatten(),
-            cellular_sigcrit: camp_current.then(read_sigcrit).flatten(),
-            cellular_smsact: camp_current.then(read_smsact).flatten(),
-            cellular_linkcrit: camp_current.then(read_linkcrit).flatten(),
-            cellular_smscb: camp_current.then(read_smscb).flatten(),
-            cellular_calllist: camp_current.then(read_calllist).flatten(),
-            cellular_gpslock: camp_current.then(read_gpslock).flatten(),
-            cellular_gpsnfw: camp_current.then(read_gpsnfw).flatten(),
-            cellular_samode: camp_current.then(read_samode).flatten(),
-            cellular_sim: camp_current.then(read_sim_presence).flatten(),
+            cellular_registration_raw: log.and_then(read_data_registration_raw),
+            cellular_voice_raw: log.and_then(read_voice_registration_raw),
+            cellular_radio: log.and_then(read_radio_token),
+            cellular_selection: log.and_then(read_selection_mode),
+            cellular_stack: log.and_then(read_stack_mode),
+            cellular_device_service: log.and_then(read_device_service),
+            cellular_voice_operation: log.and_then(read_voice_operation),
+            cellular_allow_data: log.and_then(read_allow_data),
+            cellular_initial_attach: log.and_then(read_initial_attach),
+            cellular_dns: log.and_then(read_dns),
+            cellular_dns6: log.and_then(read_dns6),
+            cellular_config: log.and_then(read_modem_config),
+            cellular_sgc: log.and_then(read_sgc),
+            cellular_power: log.and_then(read_radio_power),
+            cellular_voice_set: log.and_then(read_voice_set),
+            cellular_ipv4: log.and_then(read_ipv4),
+            cellular_ipv6: log.and_then(read_ipv6),
+            cellular_setup: log.and_then(read_setup),
+            cellular_profile: log.and_then(read_profile),
+            cellular_activity: log.and_then(read_activity),
+            cellular_fastdorm: log.and_then(read_fastdorm),
+            cellular_endc: log.and_then(read_endc),
+            cellular_throttle: log.and_then(read_throttle),
+            cellular_unsolff: log.and_then(read_unsolff),
+            cellular_unsol: log.and_then(read_unsol),
+            cellular_screen: log.and_then(read_screen),
+            cellular_cellinfo: log.and_then(read_cellinfo),
+            cellular_smsc: log.and_then(read_smsc),
+            cellular_vonrget: log.and_then(read_vonrget),
+            cellular_aptime: log.and_then(read_aptime),
+            cellular_dbgtrace: log.and_then(read_dbgtrace),
+            cellular_tty: log.and_then(read_tty),
+            cellular_pssvc: log.and_then(read_pssvc),
+            cellular_prefmodem: log.and_then(read_prefmodem),
+            cellular_slot: log.and_then(read_slot),
+            cellular_sigcrit: log.and_then(read_sigcrit),
+            cellular_smsact: log.and_then(read_smsact),
+            cellular_linkcrit: log.and_then(read_linkcrit),
+            cellular_smscb: log.and_then(read_smscb),
+            cellular_calllist: log.and_then(read_calllist),
+            cellular_gpslock: log.and_then(read_gpslock),
+            cellular_gpsnfw: log.and_then(read_gpsnfw),
+            cellular_samode: log.and_then(read_samode),
+            cellular_sim: log.and_then(read_sim_presence),
             cellular_owner: Some(
                 if camp_owner {
                     "running"
@@ -27618,6 +27630,22 @@ mod tests {
         assert!(!empty.owner);
         assert!(!empty.status_query);
         assert!(empty.endpoint.is_none());
+    }
+
+    #[test]
+    fn camp_owner_fields_share_one_log() {
+        let log = "\
+camp_setup dns=yes count=2\n\
+camp_setup dns6=no\n\
+field=data registration_raw=1\n\
+field=radio radio_raw=10\n\
+camp_sim=ready\n";
+        assert_eq!(super::read_dns(log).as_deref(), Some("yes"));
+        assert_eq!(super::read_dns6(log).as_deref(), Some("no"));
+        assert_eq!(super::read_data_registration_raw(log), Some(1));
+        assert_eq!(super::read_radio_token(log).as_deref(), Some("on"));
+        assert_eq!(super::read_sim_presence(log).as_deref(), Some("ready"));
+        assert!(super::read_dns("").is_none());
     }
 
     #[test]
