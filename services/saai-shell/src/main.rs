@@ -78,6 +78,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
 mod appd_client;
@@ -2187,13 +2188,38 @@ fn bluetooth_hci_present_in_listing(listing: &str) -> bool {
 /// call here just reopens the same control socket.
 const WPA_CLI_BIN: &str = "/saaios/wpa_cli";
 const WPA_CLI_ARGS: [&str; 4] = ["-p", "/run/wpa_supplicant", "-i", "wlan0"];
+const WPA_CLI_TIMEOUT: Duration = Duration::from_millis(400);
+const DF_TIMEOUT: Duration = Duration::from_millis(400);
+
+fn command_output_timeout(command: &mut Command, timeout: Duration) -> Option<std::process::Output> {
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
 
 fn wpa_cli(args: &[&str]) -> String {
     let mut full_args = WPA_CLI_ARGS.to_vec();
     full_args.extend_from_slice(args);
-    std::process::Command::new(WPA_CLI_BIN)
-        .args(&full_args)
-        .output()
+    let mut command = Command::new(WPA_CLI_BIN);
+    command.args(&full_args);
+    command_output_timeout(&mut command, WPA_CLI_TIMEOUT)
         .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
         .unwrap_or_default()
 }
@@ -2821,6 +2847,13 @@ struct WifiPasswordState {
     ssid: String,
     buffer: String,
     keyboard: Keyboard,
+}
+
+/// Connect runs on the next event-loop turn so OSK send can close
+/// without waiting on `wpa_cli`. The PSK is not logged.
+struct WifiConnectPending {
+    ssid: String,
+    psk: Option<String>,
 }
 
 /// S24/ADR-149: "Изменить PIN" on "Я" -- digit rows on the same
@@ -4648,10 +4681,9 @@ fn uptime_string() -> String {
 /// occasional read -- `df`'s own `1K-blocks`/`Used` columns are exactly
 /// what's needed, no parsing library required.
 fn storage_usage_kb() -> Option<(u64, u64)> {
-    let output = std::process::Command::new("df")
-        .args(["-k", "/data"])
-        .output()
-        .ok()?;
+    let mut command = Command::new("df");
+    command.args(["-k", "/data"]);
+    let output = command_output_timeout(&mut command, DF_TIMEOUT)?;
     if !output.status.success() {
         return None;
     }
@@ -10124,6 +10156,7 @@ fn main() {
         pending_pair_request: None,
         intent_input: None,
         wifi_password: None,
+        wifi_connect_pending: None,
         wifi_list: None,
         bluetooth_list_open: false,
         trusted_clients_open: false,
@@ -10238,6 +10271,12 @@ fn main() {
             if !shell.locked && shell.current_page == RootPage::Me {
                 shell.draw(&conn, &qh);
             }
+        } else if let Some(pending) = shell.wifi_connect_pending.take() {
+            match pending.psk.as_deref() {
+                Some(psk) => wifi_connect_psk(&pending.ssid, psk),
+                None => wifi_connect_open(&pending.ssid),
+            }
+            println!("saai-shell: connecting to \"{}\"", pending.ssid);
         }
         event_loop
             .dispatch(Duration::from_millis(16), &mut shell)
@@ -10446,6 +10485,9 @@ struct Shell {
     /// `intent_input` -- and reuses the exact same keyboard layout
     /// (see `WifiPasswordState`'s doc comment).
     wifi_password: Option<WifiPasswordState>,
+    /// Set on OSK send / open-network tap. The next loop turn runs
+    /// `wpa_cli` so the keyboard close is not blocked.
+    wifi_connect_pending: Option<WifiConnectPending>,
     /// S19: set while "Wi-Fi сети" is open, populated by
     /// `wifi_scan_results()` when opened and on each "Обновить" tap.
     /// `None` (not merely empty) means the screen itself is closed.
@@ -14011,8 +14053,10 @@ impl Shell {
                 let ssid = state.ssid.clone();
                 let psk = state.buffer.clone();
                 if !psk.is_empty() {
-                    wifi_connect_psk(&ssid, &psk);
-                    println!("saai-shell: connecting to \"{ssid}\" (WPA)");
+                    self.wifi_connect_pending = Some(WifiConnectPending {
+                        ssid,
+                        psk: Some(psk),
+                    });
                 }
                 self.wifi_password = None;
                 self.wifi_scroll_offset = 0;
@@ -14055,8 +14099,7 @@ impl Shell {
                     self.begin_compose_context();
                 } else {
                     let ssid = network.ssid.clone();
-                    wifi_connect_open(&ssid);
-                    println!("saai-shell: connecting to \"{ssid}\" (open)");
+                    self.wifi_connect_pending = Some(WifiConnectPending { ssid, psk: None });
                     self.wifi_scroll_offset = 0;
                     self.wifi_list = None;
                 }
@@ -15611,6 +15654,7 @@ impl Shell {
     /// separate timer source.
     fn check_idle_timeout(&mut self, qh: &QueueHandle<Self>) {
         if self.dev_no_lock
+            || self.wifi_connect_pending.is_some()
             || me_fill_blocks_idle(
                 self.me_facts_pending,
                 self.me_full_pending,
@@ -27450,6 +27494,19 @@ mod tests {
         assert!(me_system_sections(&chrome)
             .iter()
             .all(|section| section.title != "Наблюдения"));
+    }
+
+    #[test]
+    fn command_output_timeout_kills_sleep() {
+        let mut command = super::Command::new("sleep");
+        command.arg("2");
+        assert!(super::command_output_timeout(&mut command, Duration::from_millis(200)).is_none());
+    }
+
+    #[test]
+    fn command_output_timeout_reads_true() {
+        let mut command = super::Command::new("true");
+        assert!(super::command_output_timeout(&mut command, Duration::from_millis(500)).is_some());
     }
 
     #[test]

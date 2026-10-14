@@ -439,7 +439,8 @@ real phone interface consistently.
   idle mid-fill (ADR-674; host). Hold + idle skip on `/data`
   (ADR-675; `4e18d857…`). First flatten skips live
   probes (ADR-676; host). Chrome list on `/data`
-  (ADR-677; `36a07194…`).
+  (ADR-677; `36a07194…`). `wpa_cli` timeout + deferred
+  connect (ADR-678; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2036,6 +2037,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Chrome Sistema list on panther (ADR-677; `36a07194…`).
   dest-no-lock stays off. `switched to Me` then chrome list
   before live probes. Leave Сейчас. Still Experimental.
+- [x] Timeout Wi-Fi `wpa_cli` (ADR-678; host). dest-no-lock
+  stays off. Connect waits one loop. Do not type PSK.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2313,7 +2317,8 @@ next turn (ADR-664; host). Empty Me header dock
 idle mid-fill (ADR-674; host). Hold + idle skip on `/data`
 (ADR-675; `4e18d857…`). First flatten skips live
 probes (ADR-676; host). Chrome list on `/data`
-(ADR-677; `36a07194…`).
+(ADR-677; `36a07194…`). `wpa_cli` timeout + deferred
+connect (ADR-678; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
