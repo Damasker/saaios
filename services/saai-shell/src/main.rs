@@ -6862,10 +6862,6 @@ fn diagnostic_card_from_row(row: &DataRow) -> render::ActionCardView {
 /// `now_items()`, not a second copy of `inbox_rows`. Inbox uses the
 /// same projection via `inbox_source_ids` (ATTN-03). Empty stays
 /// omitted, never a placeholder.
-fn now_attention_section(entities: &[Entity]) -> Option<SystemSection> {
-    now_attention_section_with(entities, None, None)
-}
-
 fn now_attention_section_with(
     entities: &[Entity],
     health: Option<&HealthReport>,
@@ -24704,8 +24700,12 @@ mod tests {
         let mut gone = notification_entity("Gone", "old");
         gone.properties
             .insert("dismissed".into(), serde_json::Value::Bool(true));
-        let section = super::now_attention_section(&[running.clone(), waiting, gone, note])
-            .expect("real attention rows");
+        let section = super::now_attention_section_with(
+            &[running.clone(), waiting, gone, note],
+            None,
+            None,
+        )
+        .expect("real attention rows");
         assert_eq!(section.title, "Требует внимания");
         assert_eq!(section.rows.len(), 2);
         match &section.rows[0] {
@@ -24723,7 +24723,10 @@ mod tests {
             }
             other => panic!("expected status row, got {other:?}"),
         }
-        assert!(super::now_attention_section(&[running]).is_none());
+        assert!(super::now_attention_section_with(&[running], None, None).is_none());
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_attention_section", "(")));
+        assert!(src.contains("fn now_attention_section_with("));
     }
 
     #[test]
@@ -25265,7 +25268,7 @@ mod tests {
         let mut projection = super::project_from_entities(std::slice::from_ref(&waiting));
         projection.items[0].surfaces.now = false;
         assert!(super::attention_section_from_projection(&projection).is_none());
-        assert!(super::now_attention_section(&[waiting]).is_some());
+        assert!(super::now_attention_section_with(&[waiting], None, None).is_some());
     }
 
     #[test]
