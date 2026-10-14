@@ -374,7 +374,8 @@ real phone interface consistently.
   Sistema Task paint uses `title_lines` (ADR-608). Live
   Sistema Intent paint uses `title_lines` (ADR-609). Live
   Sistema Metric paint uses `label_lines` (ADR-610). Live
-  Object View overlay buttons use `label_lines` (ADR-611). Wrap
+  Object View overlay buttons use `label_lines` (ADR-611). Live
+  Object View overlay facts paint as Body (ADR-612). Wrap
   Acceptance stays unchecked: host only; font compare and
   panther evidence still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
@@ -1773,6 +1774,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Live Object View DecisionOverlay buttons wrap
   (ADR-611; host). dest-no-lock stays off. `heading()`
   stays unpainted. Leave Сейчас. Still Experimental.
+- [x] Live Object View DecisionOverlay facts paint as Body
+  (ADR-612; host). dest-no-lock stays off. Other facts
+  stay Caption. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1986,7 +1990,8 @@ wraps (ADR-594). Gallery Field paint wraps
 (ADR-608). Live Sistema Intent paint wraps
 (ADR-609). Live Sistema Metric paint wraps
 (ADR-610). Live Object View overlay
-buttons wrap (ADR-611). dest-no-lock stays off.
+buttons wrap (ADR-611). Live Object View overlay
+facts paint as Body (ADR-612). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

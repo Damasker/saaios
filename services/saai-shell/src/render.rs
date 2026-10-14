@@ -424,6 +424,17 @@ pub fn draw_wifi_password(
 /// ADR-157: `waiting_confirmation` paints `DecisionOverlay` facts as
 /// Body, not the same Caption dump as activity/OAM. Identity stays
 /// `ObjectSummary`; overlay `heading()` is not painted.
+fn object_view_fact_paint(
+    text: &str,
+    decision: Option<&DecisionOverlay>,
+) -> (TextRole, ColorRole) {
+    if decision.is_some_and(|overlay| overlay.fact_lines().iter().any(|line| line == text)) {
+        (TextRole::Body, ColorRole::TextPrimary)
+    } else {
+        (TextRole::Caption, ColorRole::TextSecondary)
+    }
+}
+
 fn draw_object_summary(
     canvas: &mut Canvas<'_>,
     fonts: &Fonts,
@@ -511,14 +522,16 @@ pub fn draw_object_view(
         summary_rect.width,
     );
     for (rect, text) in facts {
+        let (role, color) = object_view_fact_paint(text, decision);
+        let (font, size) = fonts.resolve(role);
         draw_text(
             canvas,
-            &fonts.regular,
+            font,
             text,
-            role_px(TextRole::Caption),
+            size,
             rect.x,
             rect.y,
-            theme_color(ColorRole::TextSecondary),
+            theme_color(color),
         );
     }
     if let (Some(pattern), Some(rect)) = (permission, permission_rect) {
@@ -3524,7 +3537,7 @@ mod tests {
         gallery_task_paint,
         gallery_metric_paint, gallery_status_paint,
         gallery_row_positions,
-        now_empty_pattern, physical,
+        now_empty_pattern, object_view_fact_paint, physical,
         physical_line_height, role_px, scaled_line_height, set_text_scale, state_color,
         text_scale, theme_color, ActionCardView, Canvas,
     };
@@ -3921,6 +3934,34 @@ mod tests {
             button.accessibility().name.as_deref(),
             Some("Сохранить изменения и выйти")
         );
+    }
+
+    #[test]
+    fn object_view_overlay_facts_use_body_not_caption() {
+        let overlay = DecisionOverlay::new("Задача")
+            .with_actor("Система")
+            .with_action("files.delete");
+        let (role, color) = object_view_fact_paint("Актёр: Система", Some(&overlay));
+        assert_eq!(role, TextRole::Body);
+        assert_eq!(color, ColorRole::TextPrimary);
+        let (other_role, other_color) =
+            object_view_fact_paint("saaios.document · версия 3", Some(&overlay));
+        assert_eq!(other_role, TextRole::Caption);
+        assert_eq!(other_color, ColorRole::TextSecondary);
+        assert_eq!(
+            overlay.fact_lines()[1],
+            "Действие: files.delete".to_string()
+        );
+        let src = include_str!("render.rs");
+        let painter = src
+            .split("pub fn draw_object_view(")
+            .nth(1)
+            .expect("object view")
+            .split("/// HIA-04b:")
+            .next()
+            .expect("orb");
+        assert!(painter.contains("object_view_fact_paint"));
+        assert!(!painter.contains(concat!("heading", "()")));
     }
 
     #[test]
