@@ -422,6 +422,8 @@ real phone interface consistently.
   Host 615–655 leftover helpers are on `/data` (ADR-656; `eb3197c9…`).
   Panther frames after that flash: unlock + Now/Spaces/Search
   (ADR-657). Four root tabs after respawn (ADR-658).
+  Me motion hang respawned (ADR-659). Me row cache across
+  motion ticks (ADR-660; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1963,6 +1965,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Me motion hang respawned (ADR-659; `eb3197c9…`). dest-no-lock
   stays off. Kill 12671; new lock 3916. Leave Сейчас. Still
   Experimental.
+- [x] Me row cache across motion ticks (ADR-660; host). dest-no-lock
+  stays off. `me_all_rows` reuses `me_row_cache`. Leave Сейчас.
+  Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2223,6 +2228,8 @@ build/kernel paint MonoBody (ADR-617). Live Sistema
 `related_object_first_peer` is gone (ADR-655). Host 615–655 leftover
 helpers on `/data` (ADR-656; `eb3197c9…`). Panther frames after
 that flash (ADR-657). Four root tabs after respawn (ADR-658).
+Me motion hang respawned (ADR-659). Me row cache across
+motion ticks (ADR-660; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

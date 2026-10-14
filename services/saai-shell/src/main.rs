@@ -8946,6 +8946,13 @@ struct MeRow {
 
 /// Hold the flattened `Я` list across a drag so motion/draw do not
 /// spawn `wpa_cli`/`df` on every event. Rebuilds only when empty.
+fn cached_me_rows(cache: &Option<Vec<MeRow>>, build: impl FnOnce() -> Vec<MeRow>) -> Vec<MeRow> {
+    match cache {
+        Some(rows) => rows.clone(),
+        None => build(),
+    }
+}
+
 fn ensure_me_row_cache(
     cache: &mut Option<Vec<MeRow>>,
     build: impl FnOnce() -> Vec<MeRow>,
@@ -11938,9 +11945,6 @@ impl Shell {
         self.scroll_content_only = true;
         self.draw(conn, qh);
         self.me_scroll_dirty = false;
-        if self.me_drag.is_none() {
-            self.me_row_cache = None;
-        }
     }
 
     /// ADR-169: entering a compose overlay is a Context transition.
@@ -12584,6 +12588,7 @@ impl Shell {
                 }
             }
         } else if self.current_page == RootPage::Me {
+            self.capture_me_rows();
             let all = self.me_all_rows();
             let content_rect = root_view(width, height).children[0].rect;
             let offset = self.me_scroll_offset.clamp(
@@ -14420,12 +14425,9 @@ impl Shell {
     }
 
     fn me_all_rows(&self) -> Vec<MeRow> {
-        if self.me_drag.is_some() || self.me_scroll_dirty {
-            if let Some(rows) = &self.me_row_cache {
-                return rows.clone();
-            }
-        }
-        flatten_me_rows(&me_system_sections(&self.me_facts()))
+        cached_me_rows(&self.me_row_cache, || {
+            flatten_me_rows(&me_system_sections(&self.me_facts()))
+        })
     }
 
     /// HIA-20: the hidden diagnostic screen's own content -- real,
@@ -26965,6 +26967,10 @@ mod tests {
             panic!("Я scroll must not respawn wpa_cli/df")
         });
         assert_eq!(again, len);
+        let reused = super::cached_me_rows(&cache, || {
+            panic!("Я motion must not respawn wpa_cli/df")
+        });
+        assert_eq!(reused.len(), len);
     }
 
     #[test]
