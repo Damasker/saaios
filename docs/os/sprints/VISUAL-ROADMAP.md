@@ -376,9 +376,9 @@ real phone interface consistently.
   Sistema Metric paint uses `label_lines` (ADR-610). Live
   Object View overlay buttons use `label_lines` (ADR-611). Live
   Object View overlay facts paint as Body (ADR-612). Live
-  Sistema DataRow advances by wrap height (ADR-613). Wrap
-  Acceptance stays unchecked: host only; font compare and
-  panther evidence still open.
+  Sistema DataRow advances by wrap height (ADR-613). Host
+  594–613 wrap paint is on `/data` (ADR-614; `f09b83e0…`).
+  Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
   requires running `build-native-c-image.sh`, which needs a real
@@ -1781,6 +1781,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Live Sistema DataRow advances by wrap height
   (ADR-613; host). dest-no-lock stays off. NOW rows stay
   on `layout_v2`. Leave Сейчас. Still Experimental.
+- [x] Host 594–613 wrap paint on panther (ADR-614;
+  `f09b83e0…`). dest-no-lock stays off. Lock surface up.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -1996,7 +1999,8 @@ wraps (ADR-594). Gallery Field paint wraps
 (ADR-610). Live Object View overlay
 buttons wrap (ADR-611). Live Object View overlay
 facts paint as Body (ADR-612). Live Sistema DataRow
-advances by wrap height (ADR-613). dest-no-lock stays off.
+advances by wrap height (ADR-613). Host 594–613 wrap
+paint on `/data` (ADR-614; `f09b83e0…`). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until

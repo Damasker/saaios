@@ -306,6 +306,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   live Sistema DataRow advances by wrap height (ADR-613).
   dest-no-lock stays off.
+  host 594–613 wrap paint on `/data` (ADR-614; `f09b83e0…`).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
