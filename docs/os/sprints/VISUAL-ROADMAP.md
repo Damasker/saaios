@@ -448,7 +448,8 @@ real phone interface consistently.
   (ADR-683; `bb350461…`). 8 KiB supervisor tail
   (ADR-684; host). 8 KiB supervisor tail on `/data`
   (ADR-685; `f29eb476…`). Camp facts skip `wpa_cli`/`df`
-  (ADR-686; host).
+  (ADR-686; host). Deferred Wi-Fi/`df` on `/data`
+  (ADR-687; `04308074…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2072,6 +2073,10 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Defer Wi-Fi/`df` off camp facts (ADR-686; host). dest-no-lock
   stays off. Storage and Wi-Fi wait one loop. Do not type PSK.
   Leave Сейчас. Still Experimental.
+- [x] Deferred Wi-Fi/`df` on panther (ADR-687; `04308074…`).
+  dest-no-lock stays off. `switched to Me` + `surface=me`
+  then process `S`. Do not type PSK. Leave Сейчас. Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2358,7 +2363,8 @@ connect (ADR-678; host). Timeout on `/data`
 (ADR-683; `bb350461…`). 8 KiB supervisor tail
 (ADR-684; host). 8 KiB supervisor tail on `/data`
 (ADR-685; `f29eb476…`). Camp facts skip `wpa_cli`/`df`
-(ADR-686; host).
+(ADR-686; host). Deferred Wi-Fi/`df` on `/data`
+(ADR-687; `04308074…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

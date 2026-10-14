@@ -444,6 +444,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   stays off. `surface=me` then process `S`.
   Defer Wi-Fi/`df` (ADR-686; host). dest-no-lock stays off.
   Do not type PSK.
+  Deferred Wi-Fi/`df` on `/data` (ADR-687; `04308074…`). dest-no-lock
+  stays off. `surface=me` then process `S`. Do not type PSK.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

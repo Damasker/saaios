@@ -9194,6 +9194,7 @@ fn apply_me_net_probes(facts: &mut MeFacts) {
     apply_me_net_values(facts, storage_string(), wifi_status, wifi_status_readable);
 }
 
+#[allow(dead_code)]
 fn me_facts_without_net_probes(mut facts: MeFacts) -> MeFacts {
     apply_me_net_values(&mut facts, "неизвестно".into(), String::new(), false);
     facts
