@@ -8258,6 +8258,7 @@ const DEV_SURFACE_TAP_THRESHOLD: u32 = 7;
 
 /// ADR-126: one installed app on `Я`, already labelled. Owned strings
 /// so `me_system_sections` is host-testable without a live `Shell`.
+#[derive(Clone)]
 struct MeAppFact {
     name: String,
     state: String,
@@ -8843,6 +8844,7 @@ fn read_runtime_live_facts() -> RuntimeLiveFacts {
 /// Battery-as-a-page-gauge stays absent (ADR-126).
 /// Memory review is status `memory_records` only (ADR-268), never JSONL.
 #[allow(dead_code)] // kernel/uptime/counts/boot attempts belong on DevSurface
+#[derive(Clone)]
 struct MeFacts {
     space_count: usize,
     entity_count: usize,
@@ -9078,6 +9080,10 @@ fn me_facts_for_first_paint(mut facts: MeFacts, obs_ready: bool) -> (MeFacts, bo
     let pending = !facts.observations.is_empty();
     facts.observations.clear();
     (facts, pending)
+}
+
+fn me_fill_blocks_idle(facts_pending: bool, obs_pending: bool) -> bool {
+    facts_pending || obs_pending
 }
 
 fn ensure_me_row_cache(
@@ -10075,6 +10081,7 @@ fn main() {
         me_facts_pending: false,
         me_obs_ready: false,
         me_obs_pending: false,
+        me_facts_held: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -10445,6 +10452,9 @@ struct Shell {
     /// live observation rows so the first Sistema list can commit.
     me_obs_ready: bool,
     me_obs_pending: bool,
+    /// First `me_facts()` kept for the observation turn so the second
+    /// flatten does not shell out again.
+    me_facts_held: Option<MeFacts>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -13620,12 +13630,21 @@ impl Shell {
 
     fn capture_me_rows(&mut self) -> usize {
         if self.me_row_cache.is_none() {
-            let (facts, pending) =
-                me_facts_for_first_paint(self.me_facts(), self.me_obs_ready);
+            let raw = self.me_facts_held.take().unwrap_or_else(|| self.me_facts());
+            let hold = if !self.me_obs_ready && !raw.observations.is_empty() {
+                Some(raw.clone())
+            } else {
+                None
+            };
+            let (facts, pending) = me_facts_for_first_paint(raw, self.me_obs_ready);
             self.me_obs_pending |= pending;
+            if pending {
+                self.me_facts_held = hold;
+            }
             let rows = flatten_me_rows(&me_system_sections(&facts));
             self.me_row_cache = Some(rows);
             self.me_paint_cache = None;
+            self.last_activity = Instant::now();
         }
         self.me_row_cache
             .as_ref()
@@ -15381,7 +15400,9 @@ impl Shell {
     /// just driven by this event loop's existing 16ms tick instead of a
     /// separate timer source.
     fn check_idle_timeout(&mut self, qh: &QueueHandle<Self>) {
-        if self.dev_no_lock {
+        if self.dev_no_lock
+            || me_fill_blocks_idle(self.me_facts_pending, self.me_obs_pending)
+        {
             return;
         }
         let idle_timeout = Duration::from_secs(self.settings.idle_timeout_secs);
@@ -27166,6 +27187,35 @@ mod tests {
         let (full, again) = super::me_facts_for_first_paint(full_src, true);
         assert!(!again);
         assert_eq!(full.observations.len(), 1);
+    }
+
+    #[test]
+    fn me_held_facts_keep_observations_for_second_flatten() {
+        let cpu = super::LiveObservationFact {
+            key: "cpu.percent".into(),
+            label: "CPU".into(),
+            value: "1".into(),
+            source: "procfs".into(),
+        };
+        let mut src = me_fixture_facts();
+        src.observations = vec![cpu];
+        let hold = src.clone();
+        let (light, pending) = super::me_facts_for_first_paint(src, false);
+        assert!(pending);
+        assert!(light.observations.is_empty());
+        assert_eq!(hold.observations.len(), 1);
+        let (full, again) = super::me_facts_for_first_paint(hold, true);
+        assert!(!again);
+        assert!(me_system_sections(&full)
+            .iter()
+            .any(|section| section.title == "Наблюдения"));
+    }
+
+    #[test]
+    fn me_fill_blocks_idle_while_pending() {
+        assert!(super::me_fill_blocks_idle(true, false));
+        assert!(super::me_fill_blocks_idle(false, true));
+        assert!(!super::me_fill_blocks_idle(false, false));
     }
 
     #[test]
