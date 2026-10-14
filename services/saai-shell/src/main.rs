@@ -4757,20 +4757,16 @@ const NOW_FOOTER_OPEN_APPS_ACTION: &str = "open_apps";
 fn now_footer_action_views_from(view: &LayoutNode) -> Vec<(Rect, DataRow)> {
     vec![
         (
-            now_node_rect(view, "apps"),
+            v2_named_rect(view, "apps", "now.sui"),
             DataRow::new("Приложения", DataRowVariant::Navigation)
                 .with_action(NOW_FOOTER_OPEN_APPS_ACTION),
         ),
         (
-            now_node_rect(view, "intent"),
+            v2_named_rect(view, "intent", "now.sui"),
             DataRow::new("Новое намерение", DataRowVariant::Navigation)
                 .with_action("open_intent_input"),
         ),
     ]
-}
-
-fn now_node_rect(view: &LayoutNode, id: &str) -> Rect {
-    v2_named_rect(view, id, "now.sui")
 }
 
 fn v2_named_rect(tree: &LayoutNode, id: &str, why: &str) -> Rect {
@@ -4866,9 +4862,9 @@ fn diagnostic_paint_cards(
 
 fn now_paint_chrome_from(view: &LayoutNode) -> render::NowPaintChrome {
     render::NowPaintChrome {
-        header: now_node_rect(view, "ContextHeader"),
-        object: now_node_rect(view, "ObjectSummary"),
-        empty: now_node_rect(view, "now.empty"),
+        header: v2_named_rect(view, "ContextHeader", "now.sui"),
+        object: v2_named_rect(view, "ObjectSummary", "now.sui"),
+        empty: v2_named_rect(view, "now.empty", "now.sui"),
     }
 }
 
@@ -17752,9 +17748,11 @@ mod tests {
             assert_eq!(now_tab.rect, root_tab.rect);
         }
         let footer = super::now_footer_action_views_from(&view);
-        assert_eq!(footer[0].0, super::now_node_rect(&view, "apps"));
-        assert_eq!(footer[1].0, super::now_node_rect(&view, "intent"));
+        assert_eq!(footer[0].0, super::v2_named_rect(&view, "apps", "now.sui"));
+        assert_eq!(footer[1].0, super::v2_named_rect(&view, "intent", "now.sui"));
         let main = include_str!("main.rs");
+        assert!(!main.contains(concat!("fn now_node_rect", "(")));
+        assert!(main.contains("fn v2_named_rect("));
         assert!(main.contains("now_paint_chrome_from"));
         assert!(main.contains("now.empty"));
         assert!(main.contains("navigation_items_from"));
