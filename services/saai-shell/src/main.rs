@@ -4754,10 +4754,6 @@ fn now_footer_action_rect(index: usize, width: u32, height: u32) -> Rect {
 
 const NOW_FOOTER_OPEN_APPS_ACTION: &str = "open_apps";
 
-fn now_footer_action_views(width: u32, height: u32) -> Vec<(Rect, DataRow)> {
-    now_footer_action_views_from(&now_view(width, height))
-}
-
 fn now_footer_action_views_from(view: &LayoutNode) -> Vec<(Rect, DataRow)> {
     vec![
         (
@@ -22116,12 +22112,15 @@ mod tests {
 
     #[test]
     fn now_footer_keeps_apps_as_a_manual_path() {
-        let rows = super::now_footer_action_views(1080, 2400);
+        let rows = super::now_footer_action_views_from(&super::now_view(1080, 2400));
         assert_eq!(
             rows[0].1.action.as_deref(),
             Some(super::NOW_FOOTER_OPEN_APPS_ACTION)
         );
         assert_eq!(rows[1].1.action.as_deref(), Some("open_intent_input"));
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn now_footer_action_views", "(")));
+        assert!(src.contains("fn now_footer_action_views_from("));
     }
 
     #[test]

@@ -413,6 +413,7 @@ real phone interface consistently.
   Leftover `orb_visual_state` is gone (ADR-647).
   Leftover `orb_attention_from_entities` is gone (ADR-648).
   Leftover `now_attention_v2_source` is gone (ADR-649).
+  Leftover `now_footer_action_views` is gone (ADR-650).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -1924,6 +1925,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Leftover `now_attention_v2_source` is gone (ADR-649; host).
   dest-no-lock stays off. Attention trees stay on
   `now_body_v2_source`. Leave Сейчас. Still Experimental.
+- [x] Leftover `now_footer_action_views` is gone (ADR-650; host).
+  dest-no-lock stays off. Footer paint stays on
+  `now_footer_action_views_from`. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2175,7 +2179,8 @@ build/kernel paint MonoBody (ADR-617). Live Sistema
 `now_workflow_sections` is gone (ADR-646). Leftover
 `orb_visual_state` is gone (ADR-647). Leftover
 `orb_attention_from_entities` is gone (ADR-648). Leftover
-`now_attention_v2_source` is gone (ADR-649). dest-no-lock stays off.
+`now_attention_v2_source` is gone (ADR-649). Leftover
+`now_footer_action_views` is gone (ADR-650). dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
 subset stays Experimental. Acceptance stays unchecked until
