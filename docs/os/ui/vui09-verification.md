@@ -412,6 +412,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   stays off. `surface=me` `idle_ok=1`.
   One camp snapshot per Me facts (ADR-667; host). dest-no-lock
   stays off.
+  Camp snapshot on `/data` (ADR-668; `1bb214c6…`). dest-no-lock
+  stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
