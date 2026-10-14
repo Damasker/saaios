@@ -3249,36 +3249,14 @@ pub fn draw_now(
                             );
                         }
                         SystemSectionRow::Intent(intent) => {
-                            draw_semantic_text(
+                            cursor_y += draw_gallery_intent(
                                 canvas,
                                 fonts,
-                                &intent.heading(),
+                                intent,
                                 left,
                                 cursor_y,
                                 content_width,
                             );
-                            cursor_y += scaled_line_height(TextRole::Body);
-                            if let Some(task) = &intent.task {
-                                let status = task.status();
-                                cursor_y += draw_status_indicator(
-                                    canvas,
-                                    fonts,
-                                    &status,
-                                    left,
-                                    cursor_y,
-                                    content_width,
-                                );
-                            } else if let Some(missing) = intent.missing_task_text() {
-                                draw_semantic_text(
-                                    canvas,
-                                    fonts,
-                                    &missing,
-                                    left,
-                                    cursor_y,
-                                    content_width,
-                                );
-                                cursor_y += scaled_line_height(TextRole::Caption);
-                            }
                         }
                         SystemSectionRow::Metric(metric) => {
                             let (label_font, label_size) = fonts.resolve(TextRole::Caption);
@@ -4173,6 +4151,31 @@ mod tests {
         );
         assert_eq!(
             short.missing_task_text().map(|text| text.content),
+            Some("Нет задачи".into())
+        );
+    }
+
+    #[test]
+    fn sistema_intent_live_paint_uses_title_lines() {
+        let src = include_str!("render.rs");
+        let intent_arm = src
+            .split("SystemSectionRow::Intent(intent) => {")
+            .nth(1)
+            .expect("intent arm")
+            .split("SystemSectionRow::Metric")
+            .next()
+            .expect("metric arm");
+        assert!(intent_arm.contains("draw_gallery_intent"));
+        assert!(!intent_arm.contains(concat!("intent.", "heading()")));
+        let intent = IntentSummary::new("Подготовить демо на этом телефоне");
+        let (lines, height) = gallery_intent_paint(&intent, |text| text.chars().count() <= 12);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            height,
+            scaled_line_height(TextRole::Body) * 2 + scaled_line_height(TextRole::Caption)
+        );
+        assert_eq!(
+            intent.missing_task_text().map(|text| text.content),
             Some("Нет задачи".into())
         );
     }

@@ -296,6 +296,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   dest-no-lock stays off.
   live Sistema Task paint wraps (ADR-608).
   dest-no-lock stays off.
+  live Sistema Intent paint wraps (ADR-609).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
