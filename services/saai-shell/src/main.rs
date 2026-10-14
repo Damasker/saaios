@@ -7950,15 +7950,6 @@ fn space_detail_action_at_scrolled(
     }
 }
 
-fn space_focus_paint_row(
-    entities: &[Entity],
-    store_connected: bool,
-    width: u32,
-    height: u32,
-) -> Option<(Rect, DataRow)> {
-    space_focus_paint_row_scrolled(entities, store_connected, width, height, 0)
-}
-
 fn space_focus_paint_row_scrolled(
     entities: &[Entity],
     store_connected: bool,
@@ -16038,7 +16029,7 @@ mod tests {
         remove_context_source, retain_pressed_while_clock, search_header, search_paint_rows_scrolled,
         search_row_at_scrolled,
         search_rows, space_color, space_color_entity, space_detail_action_at_scrolled,
-        space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row,
+        space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row_scrolled,
         space_focus_task, space_for_wifi_ssid, space_member_paint_rows,
         space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
         space_relation_targets, space_row_at_scrolled, spaces_header, stacked_control_rect,
@@ -22500,13 +22491,16 @@ mod tests {
             space_detail_action_at_scrolled(member_point, 1080, 2400, &entities, true, 0),
             Some(SpaceDetailTap::Member(intent.id))
         );
-        let rows = space_focus_paint_row(&entities, true, 1080, 2400).expect("focus");
+        let rows = space_focus_paint_row_scrolled(&entities, true, 1080, 2400, 0).expect("focus");
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn space_focus_paint_row", "(")));
+        assert!(src.contains("fn space_focus_paint_row_scrolled("));
         assert_eq!(rows.1.primary, "Собрать слайды");
         assert_eq!(rows.1.secondary.as_deref(), Some("Выполняется"));
         assert_eq!(rows.1.action.as_deref(), Some("spaces.focus"));
         assert_eq!(rows.0, saai_ui_core::Rect::new(49, 430, 982, 190));
         assert!(space_focus_task(&[intent]).is_none());
-        assert!(space_focus_paint_row(&entities, false, 1080, 2400).is_none());
+        assert!(space_focus_paint_row_scrolled(&entities, false, 1080, 2400, 0).is_none());
     }
 
     #[test]
