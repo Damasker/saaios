@@ -7978,15 +7978,6 @@ fn space_focus_paint_row_scrolled(
     })
 }
 
-fn space_member_paint_rows(
-    entities: &[Entity],
-    store_connected: bool,
-    width: u32,
-    height: u32,
-) -> Vec<(Rect, DataRow)> {
-    space_member_paint_rows_scrolled(entities, store_connected, width, height, 0)
-}
-
 fn space_member_paint_rows_scrolled(
     entities: &[Entity],
     store_connected: bool,
@@ -16030,7 +16021,7 @@ mod tests {
         search_row_at_scrolled,
         search_rows, space_color, space_color_entity, space_detail_action_at_scrolled,
         space_detail_empty_card, space_detail_header, space_display_name, space_focus_paint_row_scrolled,
-        space_focus_task, space_for_wifi_ssid, space_member_paint_rows,
+        space_focus_task, space_for_wifi_ssid, space_member_paint_rows_scrolled,
         space_lifecycle, space_list_rows, space_member_kind_label, space_member_rows,
         space_relation_targets, space_row_at_scrolled, spaces_header, stacked_control_rect,
         stacked_row_rect, tab_at, task_confirm_action_at, today_schedules,
@@ -22507,7 +22498,10 @@ mod tests {
     fn space_member_rows_hit_live_som_peers() {
         let intent = intent_entity("Подготовить демо");
         let entities = vec![intent.clone()];
-        let rows = space_member_paint_rows(&entities, true, 1080, 2400);
+        let rows = space_member_paint_rows_scrolled(&entities, true, 1080, 2400, 0);
+        let src = include_str!("main.rs");
+        assert!(!src.contains(concat!("fn space_member_paint_rows", "(")));
+        assert!(src.contains("fn space_member_paint_rows_scrolled("));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.primary, "Подготовить демо");
         assert_eq!(rows[0].1.secondary.as_deref(), Some("Намерение"));
@@ -22522,11 +22516,11 @@ mod tests {
             space_detail_action_at_scrolled(point, 1080, 2400, &entities, true, 0),
             Some(SpaceDetailTap::Member(intent.id))
         );
-        let empty = space_member_paint_rows(&[], true, 1080, 2400);
+        let empty = space_member_paint_rows_scrolled(&[], true, 1080, 2400, 0);
         assert_eq!(empty.len(), 1);
         assert_eq!(empty[0].1.primary, "Нет объектов");
         assert!(!empty[0].1.is_actionable());
-        let offline = space_member_paint_rows(&entities, false, 1080, 2400);
+        let offline = space_member_paint_rows_scrolled(&entities, false, 1080, 2400, 0);
         assert_eq!(offline.len(), 1);
         assert_eq!(offline[0].1.primary, "Нет связи");
         assert!(!offline[0].1.is_actionable());
@@ -22605,7 +22599,7 @@ mod tests {
         assert!(painted
             .iter()
             .any(|(rect, row)| row.primary == last_title && *rect == last.rect));
-        assert!(super::space_member_paint_rows(&entities, true, 1080, 2400)
+        assert!(super::space_member_paint_rows_scrolled(&entities, true, 1080, 2400, 0)
             .iter()
             .all(|(_, row)| row.primary != last_title));
     }
