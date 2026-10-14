@@ -7425,29 +7425,6 @@ fn now_task_paint_rows_scrolled(
         .collect()
 }
 
-fn now_next_hit(
-    pos: (f64, f64),
-    width: u32,
-    height: u32,
-    follow: &[bool],
-    empty_attention: bool,
-    task_count: usize,
-    empty_tasks: bool,
-    next_count: usize,
-) -> Option<usize> {
-    now_next_hit_scrolled(
-        pos,
-        width,
-        height,
-        follow,
-        empty_attention,
-        task_count,
-        empty_tasks,
-        next_count,
-        0,
-    )
-}
-
 fn now_next_hit_scrolled(
     pos: (f64, f64),
     width: u32,
@@ -16145,7 +16122,7 @@ mod tests {
         lock_sleep_view, lock_wake_tap, logical_surface_size, me_fixture_facts, me_header,
         me_system_sections, motion_clock_for, next_in_cycle, next_pending_action,
         now_action_at_scrolled,
-        now_attention_hit_scrolled, now_next_hit, now_next_paint_rows_scrolled, now_object_tapped, now_task_hit_scrolled,
+        now_attention_hit_scrolled, now_next_hit_scrolled, now_next_paint_rows_scrolled, now_object_tapped, now_task_hit_scrolled,
         now_task_paint_rows_scrolled, now_weather_hit_scrolled, now_weather_paint_row_scrolled,
         now_workflow_sections,
         object_view_action_at,
@@ -25225,23 +25202,23 @@ mod tests {
     #[test]
     fn now_next_rows_hit_live_pending_action() {
         assert_eq!(
-            now_next_hit((540.0, 658.0), 1080, 2400, &[], false, 0, false, 1),
+            now_next_hit_scrolled((540.0, 658.0), 1080, 2400, &[], false, 0, false, 1, 0),
             Some(0)
         );
         assert_eq!(
-            now_next_hit((540.0, 878.0), 1080, 2400, &[true], false, 0, false, 1),
+            now_next_hit_scrolled((540.0, 878.0), 1080, 2400, &[true], false, 0, false, 1, 0),
             Some(0)
         );
         assert_eq!(
-            now_next_hit((540.0, 1098.0), 1080, 2400, &[true], false, 1, false, 1),
+            now_next_hit_scrolled((540.0, 1098.0), 1080, 2400, &[true], false, 1, false, 1, 0),
             Some(0)
         );
         assert_eq!(
-            now_next_hit((540.0, 438.0), 1080, 2400, &[], false, 0, false, 1),
+            now_next_hit_scrolled((540.0, 438.0), 1080, 2400, &[], false, 0, false, 1, 0),
             None
         );
         assert_eq!(
-            now_next_hit((540.0, 658.0), 1080, 2400, &[], false, 0, false, 0),
+            now_next_hit_scrolled((540.0, 658.0), 1080, 2400, &[], false, 0, false, 0, 0),
             None
         );
         let action = action_entity("Экспорт PDF", uuid::Uuid::new_v4(), "pending");
@@ -25260,6 +25237,8 @@ mod tests {
         let src = include_str!("main.rs");
         assert!(!src.contains(concat!("fn now_next_paint_rows", "(")));
         assert!(src.contains("fn now_next_paint_rows_scrolled("));
+        assert!(!src.contains(concat!("fn now_next_hit", "(")));
+        assert!(src.contains("fn now_next_hit_scrolled("));
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].1.primary, "Экспорт PDF");
         assert_eq!(rows[0].1.secondary.as_deref(), Some("Ожидает запуска"));
