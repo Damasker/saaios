@@ -16334,7 +16334,7 @@ impl Shell {
             })
             .collect();
         let (node_class, node_target, node_arch) =
-            node_identity_resolved(None, phone_gate_surface());
+            node_identity_resolved(None, cfg!(target_arch = "aarch64"));
         let mut facts = MeFacts {
             space_count: self.spaces.len(),
             entity_count: total_entities,
@@ -30159,6 +30159,40 @@ mod tests {
             .unwrap();
         assert!(idle.contains("kernel_pending"));
         assert!(!idle.contains("chrome_pending"));
+    }
+
+    #[test]
+    fn me_facts_chrome_skip_phone_gate_surface() {
+        let src = include_str!("main.rs");
+        let chrome = src
+            .split("fn me_facts_chrome")
+            .nth(1)
+            .unwrap()
+            .split("fn me_facts(")
+            .next()
+            .unwrap();
+        assert!(chrome.contains("node_identity_resolved"));
+        assert!(chrome.contains("target_arch"));
+        assert!(!chrome.contains(concat!("phone_gate_surface", "()")));
+        assert!(!chrome.contains(concat!("hardware_model", "()")));
+        assert!(!chrome.contains("/data/saaios"));
+        let runtime = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!runtime.contains(concat!("phone_gate_surface", "()")));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
     }
 
     #[test]
