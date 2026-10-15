@@ -493,6 +493,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Grouped Связь on `/data` (ADR-713; `daef927d…`). dest-no-lock stays
   off. `surface=me` then process `S`.
   Reuse runtime JSON (ADR-714; host). dest-no-lock stays off.
+  Held identity / «Наблюдения» on `/data` (ADR-715; `b77c623c…`).
+  dest-no-lock stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
