@@ -494,6 +494,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 Me storage group flash | ADR-720 grouped `Хранилище` on `/data` **на panther** (ADR-721; `7a127ccc…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 locality reuse | recapture uses held «Местность»; skip widget JSON **host** (ADR-722; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 locality reuse flash | ADR-722 held «Местность» on `/data` **на panther** (ADR-723; `cfe15b55…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
+| VUI-09 locality next turn | chrome skip widget JSON; fill on the camp turn **host** (ADR-724; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -785,6 +786,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 Me storage group flash: ADR-720 grouped `Хранилище` on `/data` (ADR-721; `7a127ccc…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 locality reuse: recapture uses held «Местность»; skip widget JSON (ADR-722; host; dest-no-lock stays off)
 - VUI-09 locality reuse flash: ADR-722 held «Местность» on `/data` (ADR-723; `cfe15b55…`; dest-no-lock stays off; `surface=me`)
+- VUI-09 locality next turn: chrome skip widget JSON; fill on the camp turn (ADR-724; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

@@ -9708,9 +9708,6 @@ fn apply_me_chrome_hold(facts: &mut MeFacts, hold: &MeChromeHold) {
 
 fn apply_me_chrome_probes(facts: &mut MeFacts) {
     if me_chrome_values_held(facts) {
-        if facts.locality.is_empty() {
-            facts.locality = locality_me_status();
-        }
         return;
     }
     facts.model = node_model_resolved(None, hardware_model());
@@ -9721,6 +9718,12 @@ fn apply_me_chrome_probes(facts: &mut MeFacts) {
     facts.playback_ready = playback_ready();
     facts.wifi_present = wifi_adapter_present();
     facts.bluetooth_present = bluetooth_adapter_present();
+}
+
+fn apply_me_locality_probes(facts: &mut MeFacts) {
+    if !facts.locality.is_empty() {
+        return;
+    }
     facts.locality = locality_me_status();
 }
 
@@ -11010,6 +11013,7 @@ fn main() {
             shell.me_full_ready = true;
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_camp_probes(&mut facts);
+                apply_me_locality_probes(&mut facts);
                 shell.me_camp_presence = Some(MeCampPresenceHold {
                     cp: facts.cellular_cp.clone(),
                     owner: facts.cellular_owner.clone(),
@@ -11017,6 +11021,9 @@ fn main() {
                     action: facts.cellular_action.clone(),
                     open: facts.cellular_open.clone(),
                 });
+                if let Some(hold) = &mut shell.me_chrome_hold {
+                    hold.locality = facts.locality.clone();
+                }
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -15731,6 +15738,7 @@ impl Shell {
             apply_me_chrome_hold(&mut facts, hold);
         }
         apply_me_chrome_probes(&mut facts);
+        apply_me_locality_probes(&mut facts);
         if let Some(hold) = &self.me_camp_presence {
             facts.cellular_cp = hold.cp.clone();
             facts.cellular_owner = hold.owner.clone();
@@ -28730,6 +28738,8 @@ mod tests {
         assert_eq!(src.locality, "held-place");
         assert_eq!(src.kernel, "6.1.0-panther");
         assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        super::apply_me_locality_probes(&mut src);
+        assert_eq!(src.locality, "held-place");
         let rows = flatten_me_rows(&me_system_sections(&src));
         let locality = rows
             .iter()
@@ -28738,7 +28748,7 @@ mod tests {
         assert_eq!(locality.card.status, "held-place");
         let src = include_str!("main.rs");
         let body = src
-            .split("fn apply_me_chrome_probes")
+            .split("fn apply_me_locality_probes")
             .nth(1)
             .unwrap()
             .split("\nfn ")
@@ -28764,6 +28774,43 @@ mod tests {
             .unwrap();
         assert!(refresh.contains("locality.clear()"));
         assert!(refresh.contains("invalidate_me_rows"));
+    }
+
+    #[test]
+    fn apply_me_chrome_probes_skip_locality_status() {
+        let src = include_str!("main.rs");
+        let chrome = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("locality_me_status", "()")));
+        let camp = src
+            .split("apply_me_camp_probes(&mut facts)")
+            .nth(1)
+            .unwrap()
+            .split("me_camp_presence")
+            .next()
+            .unwrap();
+        assert!(camp.contains("apply_me_locality_probes"));
+        let facts = src
+            .split("fn me_facts(&self)")
+            .nth(1)
+            .unwrap()
+            .split("fn me_all_rows")
+            .next()
+            .unwrap();
+        assert!(facts.contains("apply_me_locality_probes"));
+        let first = src
+            .split("fn me_facts_chrome")
+            .nth(1)
+            .unwrap()
+            .split("fn me_facts(")
+            .next()
+            .unwrap();
+        assert!(!first.contains("apply_me_locality_probes"));
     }
 
     #[test]
