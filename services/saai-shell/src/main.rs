@@ -2859,6 +2859,7 @@ fn bluetooth_saved_names() -> Vec<String> {
 /// device (S13 Change 1 investigation). Returns `(percent, charging)`;
 /// `None` if the node is missing entirely (host builds, or hardware
 /// this shell has never run on).
+#[allow(dead_code)]
 fn read_battery() -> Option<(u8, bool)> {
     let capacity: u8 = std::fs::read_to_string("/sys/class/power_supply/maxfg/capacity")
         .ok()?
@@ -17876,7 +17877,7 @@ impl Shell {
                 self.settings.lock_widgets,
                 sleeping,
                 pin_code.is_some(),
-                read_battery(),
+                None,
                 self.entityd.is_connected(),
                 orb_attention(
                     &self.selected_entities,
@@ -30098,6 +30099,37 @@ mod tests {
             .nth(1)
             .unwrap()
             .split("/// S21: first real notification")
+            .next()
+            .unwrap();
+        assert!(!body.contains(concat!("read_battery", "()")));
+        assert!(body.contains("read_runtime_live_facts"));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn present_lock_pin_skip_read_battery() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn present_lock_pin_entry")
+            .nth(1)
+            .unwrap()
+            .split("fn check_deep_idle")
             .next()
             .unwrap();
         assert!(!body.contains(concat!("read_battery", "()")));
