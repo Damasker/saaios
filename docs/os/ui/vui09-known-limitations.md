@@ -296,6 +296,7 @@ The verification ledger stays in
 | locality reuse flash | ADR-723; `cfe15b55…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | locality next turn | ADR-724; host; chrome skip widget JSON; fill on the camp turn; dest-no-lock stays off |
 | locality next flash | ADR-725; `e6af707f…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| chrome next turn | ADR-726; host; first paint skip kernel / uptime / boot / adapters; fill next loop; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

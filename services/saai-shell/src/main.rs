@@ -9474,6 +9474,7 @@ fn me_facts_for_first_paint(mut facts: MeFacts, obs_ready: bool) -> (MeFacts, bo
 
 fn me_fill_blocks_idle(
     facts_pending: bool,
+    chrome_pending: bool,
     full_pending: bool,
     camp_log_pending: bool,
     net_pending: bool,
@@ -9481,6 +9482,7 @@ fn me_fill_blocks_idle(
     obs_pending: bool,
 ) -> bool {
     facts_pending
+        || chrome_pending
         || full_pending
         || camp_log_pending
         || net_pending
@@ -10916,6 +10918,8 @@ fn main() {
         me_facts_pending: false,
         me_obs_ready: false,
         me_obs_pending: false,
+        me_chrome_ready: false,
+        me_chrome_pending: false,
         me_full_ready: false,
         me_full_pending: false,
         me_camp_log_ready: false,
@@ -11004,6 +11008,19 @@ fn main() {
     while !shell.exit {
         if shell.me_facts_pending {
             shell.me_facts_pending = false;
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_chrome_pending {
+            shell.me_chrome_pending = false;
+            shell.me_chrome_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_chrome_probes(&mut facts);
+                shell.me_chrome_hold = Some(hold_me_chrome(&facts));
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
             shell.capture_me_rows();
             if !shell.locked && shell.current_page == RootPage::Me {
                 shell.draw(&conn, &qh);
@@ -11374,10 +11391,14 @@ struct Shell {
     /// live observation rows so the first Sistema list can commit.
     me_obs_ready: bool,
     me_obs_pending: bool,
-    /// First flatten is settings + sysfs. The next turn applies camp
-    /// `/proc` onto held chrome facts. The owner log waits for
-    /// `me_camp_log_ready`. `wpa_cli` / `df` wait for `me_net_ready`.
-    /// Runtime JSON waits for `me_runtime_ready`.
+    /// First flatten is settings only. The next turn fills kernel /
+    /// uptime / boot / adapters. Camp `/proc` waits for `me_full_ready`.
+    me_chrome_ready: bool,
+    me_chrome_pending: bool,
+    /// Chrome facts keep radio empty until this turn applies camp
+    /// `/proc`. The owner log waits for `me_camp_log_ready`. `wpa_cli`
+    /// / `df` wait for `me_net_ready`. Runtime JSON waits for
+    /// `me_runtime_ready`.
     me_full_ready: bool,
     me_full_pending: bool,
     /// Camp presence keeps radio tokens empty until this turn streams
@@ -14614,10 +14635,12 @@ impl Shell {
                     self.me_facts_chrome()
                 }
             });
-            if self.me_chrome_hold.is_none() {
+            if self.me_chrome_ready && self.me_chrome_hold.is_none() {
                 self.me_chrome_hold = Some(hold_me_chrome(&raw));
             }
-            if !self.me_full_ready {
+            if !self.me_chrome_ready {
+                self.me_chrome_pending = true;
+            } else if !self.me_full_ready {
                 self.me_full_pending = true;
             }
             if self.me_full_ready && !self.me_camp_log_ready {
@@ -14629,7 +14652,8 @@ impl Shell {
             if self.me_full_ready && self.me_camp_log_ready && !self.me_runtime_ready {
                 self.me_runtime_pending = true;
             }
-            let hold = if !self.me_camp_log_ready
+            let hold = if !self.me_chrome_ready
+                || !self.me_camp_log_ready
                 || !self.me_net_ready
                 || !self.me_runtime_ready
                 || (!self.me_obs_ready && !raw.observations.is_empty())
@@ -15603,7 +15627,6 @@ impl Shell {
         if let Some(hold) = &self.me_chrome_hold {
             apply_me_chrome_hold(&mut facts, hold);
         }
-        apply_me_chrome_probes(&mut facts);
         me_facts_without_live_probes(facts)
     }
 
@@ -16541,6 +16564,7 @@ impl Shell {
             || self.wifi_connect_pending.is_some()
             || me_fill_blocks_idle(
                 self.me_facts_pending,
+                self.me_chrome_pending,
                 self.me_full_pending,
                 self.me_camp_log_pending,
                 self.me_net_pending,
@@ -28443,13 +28467,14 @@ mod tests {
 
     #[test]
     fn me_fill_blocks_idle_while_pending() {
-        assert!(super::me_fill_blocks_idle(true, false, false, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, true, false, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, true, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, true, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, false, true, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, false, false, true));
-        assert!(!super::me_fill_blocks_idle(false, false, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(true, false, false, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, true, false, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, true, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, true, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, false, true, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, false, false, true, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, false, false, false, true));
+        assert!(!super::me_fill_blocks_idle(false, false, false, false, false, false, false));
     }
 
     #[test]
@@ -28811,6 +28836,35 @@ mod tests {
             .next()
             .unwrap();
         assert!(!first.contains("apply_me_locality_probes"));
+    }
+
+    #[test]
+    fn apply_me_chrome_probes_skip_first_paint() {
+        let src = include_str!("main.rs");
+        let first = src
+            .split("fn me_facts_chrome")
+            .nth(1)
+            .unwrap()
+            .split("fn me_facts(")
+            .next()
+            .unwrap();
+        assert!(!first.contains("apply_me_chrome_probes"));
+        let turn = src
+            .split("apply_me_chrome_probes(&mut facts)")
+            .nth(1)
+            .unwrap()
+            .split("me_full_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("hold_me_chrome"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("chrome_pending"));
     }
 
     #[test]
