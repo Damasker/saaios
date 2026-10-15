@@ -1398,10 +1398,14 @@ struct MeCampPresenceHold {
 
 #[derive(Clone, Debug)]
 struct MeNetHold {
-    storage: String,
     wifi_status: String,
     wifi_status_readable: bool,
     cellular_supervisor: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct MeStorageHold {
+    storage: String,
 }
 
 #[derive(Clone, Debug)]
@@ -9483,6 +9487,7 @@ fn me_fill_blocks_idle(
     locality_pending: bool,
     camp_log_pending: bool,
     net_pending: bool,
+    storage_pending: bool,
     local_sysfs_pending: bool,
     runtime_pending: bool,
     obs_pending: bool,
@@ -9493,6 +9498,7 @@ fn me_fill_blocks_idle(
         || locality_pending
         || camp_log_pending
         || net_pending
+        || storage_pending
         || local_sysfs_pending
         || runtime_pending
         || obs_pending
@@ -9778,15 +9784,13 @@ fn wifi_status_from_cli() -> (String, bool) {
 }
 
 fn me_net_values_held(facts: &MeFacts) -> bool {
-    facts.storage != "неизвестно"
-        || facts.wifi_status_readable
+    facts.wifi_status_readable
         || !facts.wifi_status.is_empty()
         || facts.cellular_supervisor.is_some()
 }
 
 fn hold_me_net(facts: &MeFacts) -> MeNetHold {
     MeNetHold {
-        storage: facts.storage.clone(),
         wifi_status: facts.wifi_status.clone(),
         wifi_status_readable: facts.wifi_status_readable,
         cellular_supervisor: facts.cellular_supervisor.clone(),
@@ -9794,13 +9798,9 @@ fn hold_me_net(facts: &MeFacts) -> MeNetHold {
 }
 
 fn apply_me_net_hold(facts: &mut MeFacts, hold: &MeNetHold) {
-    apply_me_net_values(
-        facts,
-        hold.storage.clone(),
-        hold.wifi_status.clone(),
-        hold.wifi_status_readable,
-        hold.cellular_supervisor.clone(),
-    );
+    facts.wifi_status = hold.wifi_status.clone();
+    facts.wifi_status_readable = hold.wifi_status_readable;
+    facts.cellular_supervisor = hold.cellular_supervisor.clone();
 }
 
 fn apply_me_net_probes(facts: &mut MeFacts) {
@@ -9808,13 +9808,30 @@ fn apply_me_net_probes(facts: &mut MeFacts) {
         return;
     }
     let (wifi_status, wifi_status_readable) = wifi_status_from_cli();
-    apply_me_net_values(
-        facts,
-        storage_string(),
-        wifi_status,
-        wifi_status_readable,
-        read_supervisor_token(),
-    );
+    facts.wifi_status = wifi_status;
+    facts.wifi_status_readable = wifi_status_readable;
+    facts.cellular_supervisor = read_supervisor_token();
+}
+
+fn me_storage_values_held(facts: &MeFacts) -> bool {
+    !facts.storage.is_empty() && facts.storage != "неизвестно"
+}
+
+fn hold_me_storage(facts: &MeFacts) -> MeStorageHold {
+    MeStorageHold {
+        storage: facts.storage.clone(),
+    }
+}
+
+fn apply_me_storage_hold(facts: &mut MeFacts, hold: &MeStorageHold) {
+    facts.storage = hold.storage.clone();
+}
+
+fn apply_me_storage_probes(facts: &mut MeFacts) {
+    if me_storage_values_held(facts) {
+        return;
+    }
+    facts.storage = storage_string();
 }
 
 fn apply_me_local_values(
@@ -10953,6 +10970,8 @@ fn main() {
         me_camp_log_pending: false,
         me_net_ready: false,
         me_net_pending: false,
+        me_storage_ready: false,
+        me_storage_pending: false,
         me_local_sysfs_ready: false,
         me_local_sysfs_pending: false,
         me_runtime_ready: false,
@@ -10961,6 +10980,7 @@ fn main() {
         me_camp_fact_log: None,
         me_camp_presence: None,
         me_net_hold: None,
+        me_storage_hold: None,
         me_local_hold: None,
         me_runtime_hold: None,
         me_chrome_hold: None,
@@ -11108,6 +11128,19 @@ fn main() {
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_net_probes(&mut facts);
                 shell.me_net_hold = Some(hold_me_net(&facts));
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_storage_pending {
+            shell.me_storage_pending = false;
+            shell.me_storage_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_storage_probes(&mut facts);
+                shell.me_storage_hold = Some(hold_me_storage(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -11463,11 +11496,14 @@ struct Shell {
     /// the owner log.
     me_camp_log_ready: bool,
     me_camp_log_pending: bool,
-    /// Live camp facts keep Wi-Fi «Нет статуса» and storage
-    /// «неизвестно» until this turn runs one `wpa_cli status` and `df`.
+    /// Live camp facts keep Wi-Fi «Нет статуса» until this turn runs
+    /// one `wpa_cli status`. Storage waits for `me_storage_ready`.
     /// Camera / ifaces / paired / trusted wait for `me_local_sysfs_ready`.
     me_net_ready: bool,
     me_net_pending: bool,
+    /// Wi-Fi facts keep storage «неизвестно» until this turn runs `df`.
+    me_storage_ready: bool,
+    me_storage_pending: bool,
     /// Net facts keep camera / ifaces empty until this turn reads
     /// v4l / net class / paired / trusted clients.
     me_local_sysfs_ready: bool,
@@ -11485,9 +11521,12 @@ struct Shell {
     /// `/proc` + CP from the camp turn. Recapture must not walk `/proc`
     /// again.
     me_camp_presence: Option<MeCampPresenceHold>,
-    /// Wi-Fi / `df` / supervisor from the net turn. Recapture must
-    /// not shell out again. Dropped after a connect.
+    /// Wi-Fi / supervisor from the net turn. Recapture must not
+    /// shell out again. Dropped after a connect.
     me_net_hold: Option<MeNetHold>,
+    /// `df` from the storage turn. Recapture must not run `df` again.
+    /// Kept after a Wi-Fi connect.
+    me_storage_hold: Option<MeStorageHold>,
     /// Camera / ifaces / paired / trusted from the local-sysfs turn.
     /// Recapture must not re-list those nodes. Kept after a Wi-Fi
     /// connect.
@@ -14688,6 +14727,15 @@ impl Shell {
                             self.me_net_hold = Some(hold_me_net(&facts));
                         }
                     }
+                    if self.me_storage_ready {
+                        if let Some(hold) = &self.me_storage_hold {
+                            apply_me_storage_hold(&mut facts, hold);
+                        }
+                        apply_me_storage_probes(&mut facts);
+                        if self.me_storage_hold.is_none() {
+                            self.me_storage_hold = Some(hold_me_storage(&facts));
+                        }
+                    }
                     if self.me_local_sysfs_ready {
                         if let Some(hold) = &self.me_local_hold {
                             apply_me_local_hold(&mut facts, hold);
@@ -14736,6 +14784,15 @@ impl Shell {
                 && self.me_locality_ready
                 && self.me_camp_log_ready
                 && self.me_net_ready
+                && !self.me_storage_ready
+            {
+                self.me_storage_pending = true;
+            }
+            if self.me_full_ready
+                && self.me_locality_ready
+                && self.me_camp_log_ready
+                && self.me_net_ready
+                && self.me_storage_ready
                 && !self.me_local_sysfs_ready
             {
                 self.me_local_sysfs_pending = true;
@@ -14744,6 +14801,7 @@ impl Shell {
                 && self.me_locality_ready
                 && self.me_camp_log_ready
                 && self.me_net_ready
+                && self.me_storage_ready
                 && self.me_local_sysfs_ready
                 && !self.me_runtime_ready
             {
@@ -14753,6 +14811,7 @@ impl Shell {
                 || !self.me_locality_ready
                 || !self.me_camp_log_ready
                 || !self.me_net_ready
+                || !self.me_storage_ready
                 || !self.me_local_sysfs_ready
                 || !self.me_runtime_ready
                 || (!self.me_obs_ready && !raw.observations.is_empty())
@@ -16668,6 +16727,7 @@ impl Shell {
                 self.me_locality_pending,
                 self.me_camp_log_pending,
                 self.me_net_pending,
+                self.me_storage_pending,
                 self.me_local_sysfs_pending,
                 self.me_runtime_pending,
                 self.me_obs_pending,
@@ -28569,34 +28629,37 @@ mod tests {
     #[test]
     fn me_fill_blocks_idle_while_pending() {
         assert!(super::me_fill_blocks_idle(
-            true, false, false, false, false, false, false, false, false
+            true, false, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, true, false, false, false, false, false, false, false
+            false, true, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, true, false, false, false, false, false, false
+            false, false, true, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, true, false, false, false, false, false
+            false, false, false, true, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, true, false, false, false, false
+            false, false, false, false, true, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, true, false, false, false
+            false, false, false, false, false, true, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, true, false, false
+            false, false, false, false, false, false, true, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, true, false
+            false, false, false, false, false, false, false, true, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, true
+            false, false, false, false, false, false, false, false, true, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, false, false, true
         ));
         assert!(!super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false
+            false, false, false, false, false, false, false, false, false, false
         ));
     }
 
@@ -29079,6 +29142,41 @@ mod tests {
         assert!(connect.contains("me_net_hold = None"));
         assert!(connect.contains("invalidate_me_rows"));
         assert!(!connect.contains("me_local_hold = None"));
+        assert!(!connect.contains("me_storage_hold = None"));
+    }
+
+    #[test]
+    fn apply_me_net_probes_skip_storage_string() {
+        let mut src = me_fixture_facts();
+        src.storage = "1.0 ГБ из 2.0 ГБ занято".into();
+        super::apply_me_storage_probes(&mut src);
+        assert_eq!(src.storage, "1.0 ГБ из 2.0 ГБ занято");
+        let src = include_str!("main.rs");
+        let net = src
+            .split("fn apply_me_net_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!net.contains(concat!("storage_string", "()")));
+        let turn = src
+            .split("else if shell.me_storage_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_local_sysfs_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_storage_probes"));
+        assert!(turn.contains("hold_me_storage"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("storage_pending"));
     }
 
     #[test]

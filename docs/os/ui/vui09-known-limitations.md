@@ -302,6 +302,7 @@ The verification ledger stays in
 | locality off camp flash | ADR-729; `4499003c…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | local sysfs next turn | ADR-730; host; net skip v4l / ifaces / paired / trusted; fill next loop; dest-no-lock stays off |
 | local sysfs next flash | ADR-731; `6ff452f7…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| storage next turn | ADR-732; host; net skip `df`; fill «Хранилище» next loop; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
