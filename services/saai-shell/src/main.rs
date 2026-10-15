@@ -5018,6 +5018,7 @@ const PANTHER_LOGICAL_HEIGHT: u32 = 2400;
 const WINDOWED_LOGICAL_WIDTH: u32 = 1280;
 const WINDOWED_LOGICAL_HEIGHT: u32 = 800;
 
+#[allow(dead_code)]
 fn phone_gate_surface() -> bool {
     cfg!(target_arch = "aarch64")
         && (std::path::Path::new("/data/saaios").exists()
@@ -11047,7 +11048,7 @@ fn main() {
     let window = xdg_shell.create_window(surface, WindowDecorations::ServerDefault, &qh);
     window.set_title("SaaiOS");
     window.set_app_id("org.saaios.shell");
-    let phone_gate = phone_gate_surface();
+    let phone_gate = cfg!(target_arch = "aarch64");
     let (logical_width, logical_height) = logical_surface_size(phone_gate);
     window.set_min_size(Some((logical_width, logical_height)));
     if phone_gate {
@@ -18726,6 +18727,32 @@ mod tests {
         assert!(!body.contains(concat!("hardware_model", "()")));
         assert!(!body.contains("/data/saaios"));
         assert!(super::entityd_tcp_addr().is_none());
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn window_setup_skip_phone_gate_surface() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("window.set_title(\"SaaiOS\")")
+            .nth(1)
+            .unwrap()
+            .split("let bar_surface")
+            .next()
+            .unwrap();
+        assert!(body.contains("target_arch"));
+        assert!(body.contains("logical_surface_size"));
+        assert!(!body.contains(concat!("phone_gate_surface", "()")));
+        assert!(!body.contains(concat!("hardware_model", "()")));
+        assert!(!body.contains("/data/saaios"));
         let connect = src
             .split("wifi_connect_pending.take()")
             .nth(1)
