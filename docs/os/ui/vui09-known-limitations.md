@@ -275,6 +275,7 @@ The verification ledger stays in
 | camp log stream | ADR-702; host; stream owner log; flatten uses held fact lines; dest-no-lock stays off |
 | camp log stream flash | ADR-703; `f15c170f…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | camp log next turn | ADR-704; host; camp facts skip owner log; fill on the next turn; dest-no-lock stays off |
+| camp log next flash | ADR-705; `d7afc85b…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

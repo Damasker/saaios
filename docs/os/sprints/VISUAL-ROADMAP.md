@@ -466,7 +466,8 @@ real phone interface consistently.
   (ADR-701; `64d39dde…`). Stream the camp owner log
   (ADR-702; host). Streamed owner log on `/data`
   (ADR-703; `f15c170f…`). Owner log on the next turn
-  (ADR-704; host).
+  (ADR-704; host). Owner log next turn on `/data`
+  (ADR-705; `d7afc85b…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2144,6 +2145,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Leave Сейчас. Still Experimental.
 - [x] Owner log on the next turn (ADR-704; host). dest-no-lock stays off.
   Camp probes skip the file. Leave Сейчас. Still Experimental.
+- [x] Owner log next turn on panther (ADR-705; `d7afc85b…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2448,7 +2452,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-701; `64d39dde…`). Stream the camp owner log
 (ADR-702; host). Streamed owner log on `/data`
 (ADR-703; `f15c170f…`). Owner log on the next turn
-(ADR-704; host).
+(ADR-704; host). Owner log next turn on `/data`
+(ADR-705; `d7afc85b…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
