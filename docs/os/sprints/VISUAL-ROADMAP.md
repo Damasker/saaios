@@ -539,7 +539,8 @@ real phone interface consistently.
   (ADR-774; host). Window skip phone gate on `/data`
   (ADR-775; `ceb55563…`). Boot skip attempts
   (ADR-776; host). Boot skip attempts on `/data`
-  (ADR-777; `5f02c7cc…`).
+  (ADR-777; `5f02c7cc…`). Boot skip cmdline
+  (ADR-778; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2406,6 +2407,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Boot skip attempts on panther (ADR-777; `5f02c7cc…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Boot skip cmdline (ADR-778; host). dest-no-lock stays off. Boot skip
+  `/proc/cmdline` when bootconfig has the slot. Leave Сейчас. Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2783,7 +2787,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-774; host). Window skip phone gate on `/data`
 (ADR-775; `ceb55563…`). Boot skip attempts
 (ADR-776; host). Boot skip attempts on `/data`
-(ADR-777; `5f02c7cc…`).
+(ADR-777; `5f02c7cc…`). Boot skip cmdline
+(ADR-778; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

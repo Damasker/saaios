@@ -5114,17 +5114,23 @@ fn storage_string() -> String {
 /// on-device path was never fixed by S12's manual-CLI scope; both are
 /// honestly out of scope here rather than built on an unverified
 /// assumption about either.
-fn boot_slot() -> String {
-    let bootconfig = std::fs::read_to_string("/proc/bootconfig").unwrap_or_default();
-    let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
-    for source in [&bootconfig, &cmdline] {
-        for token in source.split_whitespace() {
-            if let Some(suffix) = token.strip_prefix("androidboot.slot_suffix=") {
-                return suffix.trim_start_matches('_').to_uppercase();
-            }
+fn boot_slot_from_text(source: &str) -> Option<String> {
+    for token in source.split_whitespace() {
+        if let Some(suffix) = token.strip_prefix("androidboot.slot_suffix=") {
+            return Some(suffix.trim_start_matches('_').to_uppercase());
         }
     }
-    "неизвестно".to_string()
+    None
+}
+
+fn boot_slot() -> String {
+    if let Some(slot) = boot_slot_from_text(
+        &std::fs::read_to_string("/proc/bootconfig").unwrap_or_default(),
+    ) {
+        return slot;
+    }
+    boot_slot_from_text(&std::fs::read_to_string("/proc/cmdline").unwrap_or_default())
+        .unwrap_or_else(|| "неизвестно".to_string())
 }
 
 fn boot_attempts() -> u32 {
@@ -30386,6 +30392,39 @@ mod tests {
             .next()
             .unwrap();
         assert!(!facts.contains("/data/saaios"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_boot_hold = None"));
+    }
+
+    #[test]
+    fn boot_slot_skip_cmdline_when_bootconfig_has_slot() {
+        assert_eq!(
+            super::boot_slot_from_text("androidboot.slot_suffix=_a"),
+            Some("A".into())
+        );
+        assert_eq!(super::boot_slot_from_text("console=tty"), None);
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn boot_slot()")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("/proc/bootconfig"));
+        assert!(body.contains("/proc/cmdline"));
+        assert!(body.contains("boot_slot_from_text"));
+        assert!(body.contains("return slot"));
+        let bootconfig_at = body.find("/proc/bootconfig").unwrap();
+        let cmdline_at = body.find("/proc/cmdline").unwrap();
+        assert!(bootconfig_at < cmdline_at);
         let connect = src
             .split("wifi_connect_pending.take()")
             .nth(1)
