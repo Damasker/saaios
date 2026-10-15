@@ -581,6 +581,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Runtime JSON skip phone gate on `/data` (ADR-771; `b4be60b2…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Entityd skip phone gate (ADR-772; host). dest-no-lock stays off.
+  Entityd skip phone gate on `/data` (ADR-773; `b350cf13…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
