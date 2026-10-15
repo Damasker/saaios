@@ -9958,11 +9958,8 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
         me_section_data(
             "Устройство",
             vec![
-                SettingRow::readout(
-                    "Это устройство",
-                    format!("{} · {}", facts.model, facts.storage),
-                )
-                .row,
+                SettingRow::readout("Это устройство", facts.model.clone()).row,
+                SettingRow::readout("Хранилище", facts.storage.clone()).row,
                 SettingRow::readout(
                     "Узел",
                     node_identity_line(&facts.node_class, &facts.node_target, &facts.node_arch),
@@ -26869,7 +26866,12 @@ mod tests {
             .find(|row| row.card.label == "Это устройство")
             .expect("healthy device summary");
         assert!(device.card.status.contains("panther"));
-        assert!(device.card.status.contains("12 ГБ"));
+        assert!(!device.card.status.contains("12 ГБ"));
+        let storage = rows
+            .iter()
+            .find(|row| row.card.label == "Хранилище")
+            .expect("storage readout");
+        assert!(storage.card.status.contains("12 ГБ"));
         let node = rows
             .iter()
             .find(|row| row.card.label == "Узел")
@@ -26878,7 +26880,6 @@ mod tests {
         assert!(!node.card.status.contains("172."));
         assert!(node.dispatch.is_none());
         assert!(!device.card.status.contains("Пространств"));
-        assert!(!rows.iter().any(|row| row.card.label == "Хранилище"));
         let build = rows
             .iter()
             .find(|row| row.dispatch == Some("tap_build_info"))
@@ -26958,6 +26959,42 @@ mod tests {
         assert!(trace < gps);
         assert!(!labels.contains(&"cellular.dns"));
         assert!(!labels.contains(&"linkcrit"));
+    }
+
+    #[test]
+    fn me_system_sections_group_storage_under_ustroystvo() {
+        let sections = me_system_sections(&me_fixture_facts());
+        assert!(sections.iter().any(|section| section.title == "Устройство"));
+        assert!(sections.iter().any(|section| section.title == "Экран"));
+        let rows = flatten_me_rows(&sections);
+        let device = rows
+            .iter()
+            .find(|row| row.card.label == "Это устройство")
+            .expect("device summary");
+        assert_eq!(device.card.status, "panther");
+        assert!(!device.card.status.contains("ГБ"));
+        let storage = rows
+            .iter()
+            .find(|row| row.card.label == "Хранилище")
+            .expect("storage readout");
+        assert!(storage.card.status.contains("12 ГБ"));
+        let labels: Vec<_> = rows.iter().map(|row| row.card.label.as_str()).collect();
+        let device_section = labels
+            .iter()
+            .position(|label| *label == "Устройство")
+            .unwrap();
+        let device_row = labels
+            .iter()
+            .position(|label| *label == "Это устройство")
+            .unwrap();
+        let storage_row = labels
+            .iter()
+            .position(|label| *label == "Хранилище")
+            .unwrap();
+        let node_row = labels.iter().position(|label| *label == "Узел").unwrap();
+        assert!(device_section < device_row);
+        assert!(device_row < storage_row);
+        assert!(storage_row < node_row);
     }
 
     #[test]

@@ -501,6 +501,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Reuse adapter presence (ADR-718; host). dest-no-lock stays off.
   Held Wi-Fi / Bluetooth presence on `/data` (ADR-719; `90a5c1a6…`).
   dest-no-lock stays off. `surface=me` then process `S`.
+  Storage grouped under Устройство (ADR-720; host). dest-no-lock stays
+  off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

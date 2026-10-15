@@ -290,6 +290,7 @@ The verification ledger stays in
 | chrome reuse flash | ADR-717; `95b17773…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | adapter reuse | ADR-718; host; recapture uses held Wi-Fi / Bluetooth presence; skip sysfs; dest-no-lock stays off |
 | adapter reuse flash | ADR-719; `90a5c1a6…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| Me storage group | ADR-720; host; `Хранилище` under Устройство; `Это устройство` stays the model; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
