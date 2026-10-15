@@ -307,6 +307,7 @@ The verification ledger stays in
 | supervisor next turn | ADR-734; host; net skip boot-log tail; fill next loop; dest-no-lock stays off |
 | supervisor next flash | ADR-735; `8ab3cd44…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | camera next turn | ADR-736; host; local skip v4l; fill `video*` next loop; dest-no-lock stays off |
+| camera next flash | ADR-737; `57db0be8…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
