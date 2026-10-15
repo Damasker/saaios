@@ -628,6 +628,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Lock pin skip runtime facts (ADR-802; host). dest-no-lock stays off.
   Lock pin skip runtime facts on `/data` (ADR-803; `f876ebc3…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Orb skip bluetooth_paired_count (ADR-804; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

@@ -374,6 +374,7 @@ The verification ledger stays in
 | lock idle skip runtime facts flash | ADR-801; `8c29b96e…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | lock pin skip runtime facts | ADR-802; host; lock pin skip `read_runtime_live_facts`; dest-no-lock stays off |
 | lock pin skip runtime facts flash | ADR-803; `f876ebc3…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| orb skip bluetooth_paired_count | ADR-804; host; orb skip `bluetooth_paired_count`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

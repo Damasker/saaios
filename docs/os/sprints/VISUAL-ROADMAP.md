@@ -565,7 +565,8 @@ real phone interface consistently.
   (ADR-800; host). Lock idle skip runtime facts on `/data`
   (ADR-801; `8c29b96e…`). Lock pin skip runtime facts
   (ADR-802; host). Lock pin skip runtime facts on `/data`
-  (ADR-803; `f876ebc3…`).
+  (ADR-803; `f876ebc3…`). Orb skip bluetooth_paired_count
+  (ADR-804; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2499,6 +2500,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Lock pin skip runtime facts on panther (ADR-803; `f876ebc3…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Orb skip bluetooth_paired_count (ADR-804; host). dest-no-lock stays off. Orb
+  skip `bluetooth_paired_count`. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2902,7 +2905,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-800; host). Lock idle skip runtime facts on `/data`
 (ADR-801; `8c29b96e…`). Lock pin skip runtime facts
 (ADR-802; host). Lock pin skip runtime facts on `/data`
-(ADR-803; `f876ebc3…`).
+(ADR-803; `f876ebc3…`). Orb skip bluetooth_paired_count
+(ADR-804; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

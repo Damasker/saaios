@@ -17199,7 +17199,15 @@ impl Shell {
         let menu_actions = if self.orb_menu_open {
             orb_menu_actions(
                 self.selected_space_id == SYSTEM_SPACE_ID,
-                bluetooth_paired_count() > 0,
+                self.me_local_hold
+                    .as_ref()
+                    .map(|hold| hold.bluetooth_paired > 0)
+                    .or_else(|| {
+                        self.me_facts_held
+                            .as_ref()
+                            .map(|facts| facts.bluetooth_paired > 0)
+                    })
+                    .unwrap_or(false),
             )
         } else {
             Vec::new()
@@ -29972,6 +29980,45 @@ mod tests {
             .unwrap();
         assert!(body.contains("orb_visual_state_with"));
         assert!(!body.contains(concat!("read_battery", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn build_orb_frame_skip_bluetooth_paired_count() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn build_orb_frame")
+            .nth(1)
+            .unwrap()
+            .split("fn dismiss_notification")
+            .next()
+            .unwrap();
+        assert!(body.contains("me_local_hold"));
+        assert!(!body.contains(concat!("bluetooth_paired_count", "()")));
+        let local = src
+            .split("fn apply_me_local_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(local.contains("bluetooth_paired_count"));
         let probes = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
