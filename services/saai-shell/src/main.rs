@@ -9222,7 +9222,7 @@ fn entityd_tcp_addr() -> Option<SocketAddr> {
         }
         return raw.parse().ok();
     }
-    if cfg!(test) || phone_gate_surface() || !usb_ncm_present() {
+    if cfg!(test) || cfg!(target_arch = "aarch64") || !usb_ncm_present() {
         return None;
     }
     USB_NCM_ENTITYD.parse().ok()
@@ -18709,6 +18709,32 @@ mod tests {
     #[test]
     fn entityd_tcp_is_off_in_unit_tests() {
         assert!(super::entityd_tcp_addr().is_none());
+    }
+
+    #[test]
+    fn entityd_tcp_addr_skip_phone_gate_surface() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn entityd_tcp_addr()")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("target_arch"));
+        assert!(!body.contains(concat!("phone_gate_surface", "()")));
+        assert!(!body.contains(concat!("hardware_model", "()")));
+        assert!(!body.contains("/data/saaios"));
+        assert!(super::entityd_tcp_addr().is_none());
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
     }
 
     #[test]
