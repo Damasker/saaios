@@ -467,6 +467,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 proc camp early exit | stop `/proc` after owner, `sit-sim-status`, and `saai-modemd` **host** (ADR-694; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 proc camp early-exit flash | ADR-694 `/proc` stop on `/data` **на panther** (ADR-695; `0f93f0d9…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 supervisor with net | camp facts skip supervisor tail; fill on Wi-Fi turn **host** (ADR-696; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 supervisor net flash | ADR-696 supervisor token on `/data` **на panther** (ADR-697; `64c3fc50…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -731,6 +732,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 proc camp early exit: stop `/proc` after owner, `sit-sim-status`, and `saai-modemd` (ADR-694; host; dest-no-lock stays off)
 - VUI-09 proc camp early-exit flash: ADR-694 `/proc` stop on `/data` (ADR-695; `0f93f0d9…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 supervisor with net: camp facts skip supervisor tail; fill on Wi-Fi turn (ADR-696; host; dest-no-lock stays off)
+- VUI-09 supervisor net flash: ADR-696 supervisor token on `/data` (ADR-697; `64c3fc50…`; dest-no-lock stays off; `surface=me`)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

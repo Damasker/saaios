@@ -463,6 +463,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   off. `surface=me` then process `S`.
   Supervisor token on the Wi-Fi turn (ADR-696; host). dest-no-lock
   stays off.
+  Supervisor token on `/data` (ADR-697; `64c3fc50…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
