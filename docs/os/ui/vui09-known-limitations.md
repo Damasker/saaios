@@ -283,6 +283,7 @@ The verification ledger stays in
 | net reuse | ADR-710; host; recapture uses held Wi-Fi/`df`; skip shell-out; dest-no-lock stays off |
 | net reuse flash | ADR-711; `3be0c132…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Me cellular groups | ADR-712; host; camp tokens under Связь; `Сотовая сеть` stays the summary; dest-no-lock stays off |
+| Me cellular groups flash | ADR-713; `daef927d…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

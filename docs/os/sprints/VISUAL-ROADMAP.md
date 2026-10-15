@@ -474,7 +474,8 @@ real phone interface consistently.
   (ADR-709; `412c67bf…`). Reuse net probes
   (ADR-710; host). Held Wi-Fi/`df` on `/data`
   (ADR-711; `3be0c132…`). Cellular facts grouped under Связь
-  (ADR-712; host).
+  (ADR-712; host). Grouped Связь on `/data`
+  (ADR-713; `daef927d…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2173,6 +2174,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Cellular facts grouped under Связь (ADR-712; host). dest-no-lock
   stays off. `Сотовая сеть` stays the summary. Leave Сейчас. Still
   Experimental.
+- [x] Grouped Связь on panther (ADR-713; `daef927d…`). dest-no-lock stays
+  off. `switched to Me` + `surface=me` then process `S`. Leave Сейчас.
+  Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2485,7 +2489,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-709; `412c67bf…`). Reuse net probes
 (ADR-710; host). Held Wi-Fi/`df` on `/data`
 (ADR-711; `3be0c132…`). Cellular facts grouped under Связь
-(ADR-712; host).
+(ADR-712; host). Grouped Связь on `/data`
+(ADR-713; `daef927d…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
