@@ -560,6 +560,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Drop empty chrome on `/data` (ADR-757; `e90fefa1…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Net reuse adapter (ADR-758; host). dest-no-lock stays off.
+  Net reuse adapter on `/data` (ADR-759; `2cd80952…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
