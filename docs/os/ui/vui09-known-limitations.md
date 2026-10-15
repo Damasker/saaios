@@ -327,6 +327,7 @@ The verification ledger stays in
 | kernel next turn | ADR-754; host; chrome skip `/proc/sys/kernel/osrelease`; fill next loop; dest-no-lock stays off |
 | kernel next flash | ADR-755; `03012fd5…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | drop empty chrome | ADR-756; host; settings next loop is kernel, not empty chrome; dest-no-lock stays off |
+| drop empty chrome flash | ADR-757; `e90fefa1…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
