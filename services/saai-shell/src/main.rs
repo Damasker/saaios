@@ -1418,6 +1418,7 @@ struct MeChromeHold {
     playback_ready: bool,
     wifi_present: bool,
     bluetooth_present: bool,
+    locality: String,
 }
 
 #[derive(Clone, Copy)]
@@ -9325,6 +9326,7 @@ struct MeFacts {
     apps: Vec<MeAppFact>,
     observations: Vec<LiveObservationFact>,
     memory_records: Vec<LiveMemoryFact>,
+    locality: String,
 }
 
 #[derive(Clone)]
@@ -9688,6 +9690,7 @@ fn hold_me_chrome(facts: &MeFacts) -> MeChromeHold {
         playback_ready: facts.playback_ready,
         wifi_present: facts.wifi_present,
         bluetooth_present: facts.bluetooth_present,
+        locality: facts.locality.clone(),
     }
 }
 
@@ -9700,10 +9703,14 @@ fn apply_me_chrome_hold(facts: &mut MeFacts, hold: &MeChromeHold) {
     facts.playback_ready = hold.playback_ready;
     facts.wifi_present = hold.wifi_present;
     facts.bluetooth_present = hold.bluetooth_present;
+    facts.locality = hold.locality.clone();
 }
 
 fn apply_me_chrome_probes(facts: &mut MeFacts) {
     if me_chrome_values_held(facts) {
+        if facts.locality.is_empty() {
+            facts.locality = locality_me_status();
+        }
         return;
     }
     facts.model = node_model_resolved(None, hardware_model());
@@ -9714,6 +9721,7 @@ fn apply_me_chrome_probes(facts: &mut MeFacts) {
     facts.playback_ready = playback_ready();
     facts.wifi_present = wifi_adapter_present();
     facts.bluetooth_present = bluetooth_adapter_present();
+    facts.locality = locality_me_status();
 }
 
 #[allow(dead_code)]
@@ -10046,7 +10054,7 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
             rows.extend(cellular_detail_rows(facts));
             rows.push(SettingRow::open(
                 "Местность",
-                locality_me_status(),
+                facts.locality.clone(),
                 "refresh_locality",
             )
             .row);
@@ -10645,6 +10653,7 @@ fn me_fixture_facts() -> MeFacts {
         apps: Vec::new(),
         observations: Vec::new(),
         memory_records: Vec::new(),
+        locality: "Нет наблюдения".into(),
     }
 }
 
@@ -12556,6 +12565,9 @@ impl TouchHandler for Shell {
                     self.now_scroll_offset,
                 ) {
                     let _ = refresh_locality();
+                    if let Some(hold) = &mut self.me_chrome_hold {
+                        hold.locality.clear();
+                    }
                     self.invalidate_me_rows();
                     self.draw(conn, qh);
                 } else if let Some(index) =
@@ -14778,6 +14790,9 @@ impl Shell {
                 // Five fetch attempts, then the widget shows the reason.
                 // Tap starts the cycle again. No settings persist.
                 let _ = refresh_locality();
+                if let Some(hold) = &mut self.me_chrome_hold {
+                    hold.locality.clear();
+                }
                 self.invalidate_me_rows();
                 self.draw(conn, qh);
                 return;
@@ -15576,6 +15591,7 @@ impl Shell {
             apps,
             observations: Vec::new(),
             memory_records: Vec::new(),
+            locality: String::new(),
         };
         if let Some(hold) = &self.me_chrome_hold {
             apply_me_chrome_hold(&mut facts, hold);
@@ -15709,6 +15725,7 @@ impl Shell {
             apps,
             observations: Vec::new(),
             memory_records: Vec::new(),
+            locality: String::new(),
         };
         if let Some(hold) = &self.me_chrome_hold {
             apply_me_chrome_hold(&mut facts, hold);
@@ -28701,6 +28718,52 @@ mod tests {
             .unwrap();
         assert!(!chrome.contains(concat!("wifi_adapter_present", "()")));
         assert!(!chrome.contains(concat!("bluetooth_adapter_present", "()")));
+    }
+
+    #[test]
+    fn apply_me_chrome_probes_skip_when_locality_held() {
+        let mut src = me_fixture_facts();
+        src.kernel = "6.1.0-panther".into();
+        src.locality = "held-place".into();
+        src.cellular_cp = Some("ONLINE".into());
+        super::apply_me_chrome_probes(&mut src);
+        assert_eq!(src.locality, "held-place");
+        assert_eq!(src.kernel, "6.1.0-panther");
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        let rows = flatten_me_rows(&me_system_sections(&src));
+        let locality = rows
+            .iter()
+            .find(|row| row.card.label == "Местность")
+            .expect("locality");
+        assert_eq!(locality.card.status, "held-place");
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("locality_me_status"));
+        assert!(body.contains("return"));
+        let sections = src
+            .split("fn me_system_sections")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(sections.contains("facts.locality"));
+        assert!(!sections.contains(concat!("locality_me_status", "()")));
+        let refresh = src
+            .split("\"refresh_locality\" => {")
+            .nth(1)
+            .unwrap()
+            .split("self.draw")
+            .next()
+            .unwrap();
+        assert!(refresh.contains("locality.clear()"));
+        assert!(refresh.contains("invalidate_me_rows"));
     }
 
     #[test]

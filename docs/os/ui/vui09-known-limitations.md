@@ -292,6 +292,7 @@ The verification ledger stays in
 | adapter reuse flash | ADR-719; `90a5c1a6…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Me storage group | ADR-720; host; `Хранилище` under Устройство; `Это устройство` stays the model; dest-no-lock stays off |
 | Me storage group flash | ADR-721; `7a127ccc…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| locality reuse | ADR-722; host; recapture uses held «Местность»; skip widget JSON; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
