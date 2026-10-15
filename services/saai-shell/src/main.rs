@@ -9942,7 +9942,6 @@ fn apply_me_boot_probes(facts: &mut MeFacts) {
         return;
     }
     facts.boot_slot = boot_slot();
-    facts.boot_attempts = boot_attempts();
 }
 
 fn apply_me_locality_probes(facts: &mut MeFacts) {
@@ -30358,6 +30357,44 @@ mod tests {
             .next()
             .unwrap();
         assert!(idle.contains("boot_pending"));
+    }
+
+    #[test]
+    fn apply_me_boot_probes_skip_boot_attempts() {
+        let mut src = me_fixture_facts();
+        src.boot_slot.clear();
+        src.boot_attempts = 3;
+        src.cellular_cp = Some("ONLINE".into());
+        super::apply_me_boot_probes(&mut src);
+        assert_eq!(src.boot_attempts, 3);
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_boot_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains(concat!("boot_slot", "()")));
+        assert!(!body.contains(concat!("boot_attempts", "()")));
+        let facts = src
+            .split("fn me_facts(&self)")
+            .nth(1)
+            .unwrap()
+            .split("fn me_all_rows")
+            .next()
+            .unwrap();
+        assert!(!facts.contains("/data/saaios"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_boot_hold = None"));
     }
 
     #[test]
