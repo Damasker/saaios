@@ -17630,7 +17630,7 @@ impl Shell {
             return;
         }
 
-        let mut status = SystemStatus::new(
+        let status = SystemStatus::new(
             space_color(&self.system_space_entities, &self.selected_space_id).context(),
             current_time_string(self.settings.utc_offset_minutes),
         )
@@ -17645,9 +17645,6 @@ impl Shell {
                 })
                 .unwrap_or(false),
         );
-        if let Some((percent, charging)) = read_battery() {
-            status = status.with_battery(percent, charging);
-        }
         let snapshot = StatusBarSnapshot { status };
         // ADR-093 follow-up: skip the redraw+commit entirely when nothing
         // visible has changed since the last real paint. `current_time_
@@ -30030,6 +30027,38 @@ mod tests {
         assert!(body.contains("with_network_up"));
         assert!(body.contains("me_net_hold"));
         assert!(!body.contains(concat!("wifi_is_up", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn present_status_bar_skip_read_battery() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn present_status_bar")
+            .nth(1)
+            .unwrap()
+            .split("fn refresh_statusbar_if_due")
+            .next()
+            .unwrap();
+        assert!(body.contains("with_network_up"));
+        assert!(body.contains("me_net_hold"));
+        assert!(!body.contains(concat!("read_battery", "()")));
         let probes = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
