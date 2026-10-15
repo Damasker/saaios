@@ -518,6 +518,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Locality after camp on `/data` (ADR-729; `4499003c…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Local sysfs next turn (ADR-730; host). dest-no-lock stays off.
+  Local sysfs next turn on `/data` (ADR-731; `6ff452f7…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
