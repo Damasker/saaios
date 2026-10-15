@@ -1416,6 +1416,8 @@ struct MeChromeHold {
     boot_slot: String,
     boot_attempts: u32,
     playback_ready: bool,
+    wifi_present: bool,
+    bluetooth_present: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -9684,6 +9686,8 @@ fn hold_me_chrome(facts: &MeFacts) -> MeChromeHold {
         boot_slot: facts.boot_slot.clone(),
         boot_attempts: facts.boot_attempts,
         playback_ready: facts.playback_ready,
+        wifi_present: facts.wifi_present,
+        bluetooth_present: facts.bluetooth_present,
     }
 }
 
@@ -9694,6 +9698,8 @@ fn apply_me_chrome_hold(facts: &mut MeFacts, hold: &MeChromeHold) {
     facts.boot_slot = hold.boot_slot.clone();
     facts.boot_attempts = hold.boot_attempts;
     facts.playback_ready = hold.playback_ready;
+    facts.wifi_present = hold.wifi_present;
+    facts.bluetooth_present = hold.bluetooth_present;
 }
 
 fn apply_me_chrome_probes(facts: &mut MeFacts) {
@@ -9706,6 +9712,8 @@ fn apply_me_chrome_probes(facts: &mut MeFacts) {
     facts.boot_slot = boot_slot();
     facts.boot_attempts = boot_attempts();
     facts.playback_ready = playback_ready();
+    facts.wifi_present = wifi_adapter_present();
+    facts.bluetooth_present = bluetooth_adapter_present();
 }
 
 #[allow(dead_code)]
@@ -15496,10 +15504,10 @@ impl Shell {
             volume_pct: self.settings.volume_pct,
             playback_ready: false,
             wifi_status: String::new(),
-            wifi_present: wifi_adapter_present(),
+            wifi_present: false,
             wifi_status_readable: false,
             bluetooth_paired: 0,
-            bluetooth_present: bluetooth_adapter_present(),
+            bluetooth_present: false,
             cellular_ifaces: Vec::new(),
             cellular_cp: None,
             cellular_registration_raw: None,
@@ -15629,10 +15637,10 @@ impl Shell {
             volume_pct: self.settings.volume_pct,
             playback_ready: false,
             wifi_status: String::new(),
-            wifi_present: wifi_adapter_present(),
+            wifi_present: false,
             wifi_status_readable: false,
             bluetooth_paired: 0,
-            bluetooth_present: bluetooth_adapter_present(),
+            bluetooth_present: false,
             cellular_ifaces: Vec::new(),
             cellular_cp: None,
             cellular_registration_raw: None,
@@ -28622,6 +28630,40 @@ mod tests {
         assert!(body.contains("kernel_release"));
         assert!(body.contains("uptime_string"));
         assert!(body.contains("boot_slot"));
+    }
+
+    #[test]
+    fn apply_me_chrome_probes_skip_when_adapters_held() {
+        let mut src = me_fixture_facts();
+        src.kernel = "6.1.0-panther".into();
+        src.wifi_present = true;
+        src.bluetooth_present = true;
+        src.cellular_cp = Some("ONLINE".into());
+        super::apply_me_chrome_probes(&mut src);
+        assert!(src.wifi_present);
+        assert!(src.bluetooth_present);
+        assert_eq!(src.kernel, "6.1.0-panther");
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("wifi_adapter_present"));
+        assert!(body.contains("bluetooth_adapter_present"));
+        assert!(body.contains("return"));
+        let chrome = src
+            .split("fn me_facts_chrome")
+            .nth(1)
+            .unwrap()
+            .split("fn me_facts(")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("wifi_adapter_present", "()")));
+        assert!(!chrome.contains(concat!("bluetooth_adapter_present", "()")));
     }
 
     #[test]
