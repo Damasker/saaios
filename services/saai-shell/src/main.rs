@@ -9273,7 +9273,7 @@ fn read_runtime_live_facts() -> RuntimeLiveFacts {
     if Path::new("/data/saaios/system/saaios-runtime").exists() {
         return read_runtime_live_facts_from_tcp(USB_NCM_RUNTIME);
     }
-    if cfg!(not(test)) && !phone_gate_surface() && usb_ncm_present() {
+    if cfg!(not(test)) && cfg!(not(target_arch = "aarch64")) && usb_ncm_present() {
         return read_runtime_live_facts_from_tcp(USB_NCM_RUNTIME);
     }
     RuntimeLiveFacts::default()
@@ -29733,6 +29733,41 @@ mod tests {
             .unwrap();
         assert!(!connect.contains("me_runtime_hold = None"));
         assert!(connect.contains("me_net_hold = None"));
+    }
+
+    #[test]
+    fn read_runtime_live_facts_skip_phone_gate_surface() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn read_runtime_live_facts()")
+            .nth(1)
+            .unwrap()
+            .split("struct MeFacts")
+            .next()
+            .unwrap();
+        assert!(body.contains("read_runtime_live_facts_from_unix"));
+        assert!(body.contains("read_runtime_live_facts_from_tcp"));
+        assert!(!body.contains(concat!("phone_gate_surface", "()")));
+        assert!(!body.contains(concat!("hardware_model", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        assert!(!probes.contains("read_runtime_live_facts_from_unix"));
+        assert!(!probes.contains("read_runtime_live_facts_from_tcp"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
     }
 
     #[test]

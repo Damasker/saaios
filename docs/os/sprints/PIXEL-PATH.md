@@ -540,6 +540,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 chrome skip phone gate flash | ADR-766 settings skip `/data/saaios` exists on `/data` **на panther** (ADR-767; `356e19c9…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 recapture skip phone gate | `me_facts` skip `/data/saaios` exists; arch gate only **host** (ADR-768; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 recapture skip phone gate flash | ADR-768 `me_facts` skip `/data/saaios` exists on `/data` **на panther** (ADR-769; `09c2e79d…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
+| VUI-09 runtime JSON skip phone gate | runtime JSON skip `/data/saaios` exists; arch gate only **host** (ADR-770; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -877,6 +878,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 chrome skip phone gate flash: ADR-766 settings skip `/data/saaios` exists on `/data` (ADR-767; `356e19c9…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 recapture skip phone gate: `me_facts` skip `/data/saaios` exists; arch gate only (ADR-768; host; dest-no-lock stays off)
 - VUI-09 recapture skip phone gate flash: ADR-768 `me_facts` skip `/data/saaios` exists on `/data` (ADR-769; `09c2e79d…`; dest-no-lock stays off; `surface=me`)
+- VUI-09 runtime JSON skip phone gate: runtime JSON skip `/data/saaios` exists; arch gate only (ADR-770; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

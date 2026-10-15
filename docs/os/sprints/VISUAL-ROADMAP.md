@@ -531,7 +531,8 @@ real phone interface consistently.
   (ADR-766; host). Chrome skip phone gate on `/data`
   (ADR-767; `356e19c9…`). Recapture skip phone gate
   (ADR-768; host). Recapture skip phone gate on `/data`
-  (ADR-769; `09c2e79d…`).
+  (ADR-769; `09c2e79d…`). Runtime JSON skip phone gate
+  (ADR-770; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2378,6 +2379,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Recapture skip phone gate on panther (ADR-769; `09c2e79d…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Runtime JSON skip phone gate (ADR-770; host). dest-no-lock stays off.
+  Runtime JSON skip `/data/saaios` exists. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2747,7 +2750,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-766; host). Chrome skip phone gate on `/data`
 (ADR-767; `356e19c9…`). Recapture skip phone gate
 (ADR-768; host). Recapture skip phone gate on `/data`
-(ADR-769; `09c2e79d…`).
+(ADR-769; `09c2e79d…`). Runtime JSON skip phone gate
+(ADR-770; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
