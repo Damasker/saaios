@@ -17222,11 +17222,6 @@ impl Shell {
             Some(&context),
         ))
         .with_reduced_motion(self.settings.reduced_motion);
-        let orb_host = if let Some((percent, _)) = read_battery() {
-            orb_host.with_quantity(Progress::determinate(percent))
-        } else {
-            orb_host
-        };
         // Context Light: color still means context (the selected
         // Space's own color) for the two states that are not urgent
         // enough to override it -- `Idle`/`Active` -- matching this
@@ -29962,6 +29957,37 @@ mod tests {
             .unwrap();
         assert!(probes.contains("read_runtime_live_facts"));
         assert!(!probes.contains("read_runtime_live_facts_from_unix"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn build_orb_frame_skip_read_battery() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn build_orb_frame")
+            .nth(1)
+            .unwrap()
+            .split("fn dismiss_notification")
+            .next()
+            .unwrap();
+        assert!(body.contains("orb_visual_state_with"));
+        assert!(!body.contains(concat!("read_battery", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
         let connect = src
             .split("wifi_connect_pending.take()")
             .nth(1)
