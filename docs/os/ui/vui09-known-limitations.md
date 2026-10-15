@@ -354,6 +354,7 @@ The verification ledger stays in
 | runtime skip tmp sock flash | ADR-781; `2602a2af…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | runtime skip sock exists | ADR-782; host; runtime skip unix sock exists; dest-no-lock stays off |
 | runtime skip sock exists flash | ADR-783; `a0faf865…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| orb skip runtime facts | ADR-784; host; Me orb skip `read_runtime_live_facts`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
