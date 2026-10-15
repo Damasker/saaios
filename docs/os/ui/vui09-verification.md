@@ -611,6 +611,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Status skip wifi_is_up on `/data` (ADR-791; `05f63594…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Status skip read_battery (ADR-792; host). dest-no-lock stays off.
+  Status skip read_battery on `/data` (ADR-793; `609702f3…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
