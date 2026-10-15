@@ -553,6 +553,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Model next turn (ADR-752; host). dest-no-lock stays off.
   Model next turn on `/data` (ADR-753; `79e1c0fb…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Kernel next turn (ADR-754; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
