@@ -17818,7 +17818,7 @@ impl Shell {
             self.settings.lock_widgets,
             self.sleeping,
             self.settings.pin_code.is_some(),
-            read_battery(),
+            None,
             self.entityd.is_connected(),
             orb_attention(
                 &self.selected_entities,
@@ -30071,6 +30071,37 @@ mod tests {
             .next()
             .unwrap();
         assert!(!body.contains(concat!("read_battery", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn refresh_lock_idle_skip_read_battery() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn refresh_lock_idle_if_due")
+            .nth(1)
+            .unwrap()
+            .split("/// S21: first real notification")
+            .next()
+            .unwrap();
+        assert!(!body.contains(concat!("read_battery", "()")));
+        assert!(body.contains("read_runtime_live_facts"));
         let probes = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
