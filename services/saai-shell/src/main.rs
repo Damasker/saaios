@@ -9781,7 +9781,7 @@ fn apply_me_runtime_probes(facts: &mut MeFacts) {
         node_identity_resolved(live.identity.as_ref(), phone_gate_surface());
     apply_me_runtime_values(
         facts,
-        node_model_resolved(live.identity.as_ref(), hardware_model()),
+        node_model_resolved(live.identity.as_ref(), facts.model.clone()),
         node_class.to_string(),
         node_target.to_string(),
         node_arch.to_string(),
@@ -29662,6 +29662,40 @@ mod tests {
         assert!(body.contains("me_runtime_values_held"));
         assert!(body.contains("return"));
         assert!(body.contains("read_runtime_live_facts"));
+        assert!(!body.contains(concat!("hardware_model", "()")));
+    }
+
+    #[test]
+    fn apply_me_runtime_probes_skip_hardware_model() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("facts.model"));
+        assert!(body.contains("read_runtime_live_facts"));
+        assert!(!body.contains(concat!("hardware_model", "()")));
+        let model = src
+            .split("else if shell.me_model_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_uptime_pending")
+            .next()
+            .unwrap();
+        assert!(model.contains("apply_me_model_probes"));
+        assert!(model.contains("hold_me_model"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(!connect.contains("me_model_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
     }
 
     #[test]
@@ -30229,6 +30263,7 @@ mod tests {
         assert!(!connect.contains("me_cp_hold = None"));
         assert!(!connect.contains("me_storage_hold = None"));
         assert!(!connect.contains("me_supervisor_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
     }
 
     #[test]
