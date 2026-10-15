@@ -556,6 +556,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Kernel next turn (ADR-754; host). dest-no-lock stays off.
   Kernel next turn on `/data` (ADR-755; `03012fd5…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Drop empty chrome (ADR-756; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
