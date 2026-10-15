@@ -563,6 +563,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Net reuse adapter on `/data` (ADR-759; `2cd80952…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Runtime reuse model (ADR-760; host). dest-no-lock stays off.
+  Runtime reuse model on `/data` (ADR-761; `d4bd42c8…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
