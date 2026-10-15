@@ -1396,6 +1396,18 @@ struct MeCampPresenceHold {
     open: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+struct MeNetHold {
+    storage: String,
+    wifi_status: String,
+    wifi_status_readable: bool,
+    cellular_supervisor: Option<String>,
+    bluetooth_paired: usize,
+    camera_nodes: Vec<String>,
+    cellular_ifaces: Vec<String>,
+    trusted_client_count: usize,
+}
+
 #[derive(Clone, Copy)]
 struct ProcCampRow<'a> {
     cmdline: &'a [u8],
@@ -9418,7 +9430,47 @@ fn wifi_status_from_cli() -> (String, bool) {
     (status, readable)
 }
 
+fn me_net_values_held(facts: &MeFacts) -> bool {
+    facts.storage != "неизвестно"
+        || facts.wifi_status_readable
+        || !facts.wifi_status.is_empty()
+        || facts.cellular_supervisor.is_some()
+}
+
+fn hold_me_net(facts: &MeFacts) -> MeNetHold {
+    MeNetHold {
+        storage: facts.storage.clone(),
+        wifi_status: facts.wifi_status.clone(),
+        wifi_status_readable: facts.wifi_status_readable,
+        cellular_supervisor: facts.cellular_supervisor.clone(),
+        bluetooth_paired: facts.bluetooth_paired,
+        camera_nodes: facts.camera_nodes.clone(),
+        cellular_ifaces: facts.cellular_ifaces.clone(),
+        trusted_client_count: facts.trusted_client_count,
+    }
+}
+
+fn apply_me_net_hold(facts: &mut MeFacts, hold: &MeNetHold) {
+    apply_me_net_values(
+        facts,
+        hold.storage.clone(),
+        hold.wifi_status.clone(),
+        hold.wifi_status_readable,
+        hold.cellular_supervisor.clone(),
+    );
+    apply_me_local_values(
+        facts,
+        hold.bluetooth_paired,
+        hold.camera_nodes.clone(),
+        hold.cellular_ifaces.clone(),
+        hold.trusted_client_count,
+    );
+}
+
 fn apply_me_net_probes(facts: &mut MeFacts) {
+    if me_net_values_held(facts) {
+        return;
+    }
     let (wifi_status, wifi_status_readable) = wifi_status_from_cli();
     apply_me_net_values(
         facts,
@@ -10534,6 +10586,7 @@ fn main() {
         me_facts_held: None,
         me_camp_fact_log: None,
         me_camp_presence: None,
+        me_net_hold: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -10649,6 +10702,7 @@ fn main() {
             shell.me_net_ready = true;
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_net_probes(&mut facts);
+                shell.me_net_hold = Some(hold_me_net(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -10683,6 +10737,8 @@ fn main() {
                 None => wifi_connect_open(&pending.ssid),
             }
             println!("saai-shell: connecting to \"{}\"", pending.ssid);
+            shell.me_net_hold = None;
+            shell.invalidate_me_rows();
         }
         event_loop
             .dispatch(Duration::from_millis(16), &mut shell)
@@ -10997,6 +11053,9 @@ struct Shell {
     /// `/proc` + CP from the camp turn. Recapture must not walk `/proc`
     /// again.
     me_camp_presence: Option<MeCampPresenceHold>,
+    /// Wi-Fi / `df` / local sysfs / supervisor from the net turn.
+    /// Recapture must not shell out again. Dropped after a connect.
+    me_net_hold: Option<MeNetHold>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -14176,7 +14235,13 @@ impl Shell {
                 if self.me_full_ready {
                     let mut facts = self.me_facts();
                     if self.me_net_ready {
+                        if let Some(hold) = &self.me_net_hold {
+                            apply_me_net_hold(&mut facts, hold);
+                        }
                         apply_me_net_probes(&mut facts);
+                        if self.me_net_hold.is_none() {
+                            self.me_net_hold = Some(hold_me_net(&facts));
+                        }
                     }
                     if self.me_runtime_ready {
                         apply_me_runtime_probes(&mut facts);
@@ -28125,6 +28190,51 @@ mod tests {
         assert!(filled.wifi_status_readable);
         assert_eq!(filled.cellular_supervisor.as_deref(), Some("hold"));
         assert_eq!(filled.cellular_cp.as_deref(), Some("ONLINE"));
+    }
+
+    #[test]
+    fn apply_me_net_probes_skip_when_wifi_held() {
+        let mut src = me_fixture_facts();
+        src.storage = "1.0 ГБ из 2.0 ГБ занято".into();
+        src.wifi_status = "Подключено: test".into();
+        src.wifi_status_readable = true;
+        src.cellular_supervisor = Some("hold".into());
+        src.bluetooth_paired = 2;
+        src.camera_nodes = vec!["video0".into()];
+        src.cellular_ifaces = vec!["rmnet0".into()];
+        src.trusted_client_count = 1;
+        src.cellular_cp = Some("ONLINE".into());
+        super::apply_me_net_probes(&mut src);
+        assert_eq!(src.storage, "1.0 ГБ из 2.0 ГБ занято");
+        assert_eq!(src.wifi_status, "Подключено: test");
+        assert!(src.wifi_status_readable);
+        assert_eq!(src.cellular_supervisor.as_deref(), Some("hold"));
+        assert_eq!(src.bluetooth_paired, 2);
+        assert_eq!(src.camera_nodes, vec!["video0".to_string()]);
+        assert_eq!(src.cellular_ifaces, vec!["rmnet0".to_string()]);
+        assert_eq!(src.trusted_client_count, 1);
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        assert!(super::me_net_values_held(&src));
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_net_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("me_net_values_held"));
+        assert!(body.contains("return"));
+        assert!(body.contains("wifi_status_from_cli"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(connect.contains("invalidate_me_rows"));
     }
 
     #[test]
