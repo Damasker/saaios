@@ -560,6 +560,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 orb pulse skip runtime facts flash | ADR-786 orb pulse skip `read_runtime_live_facts` on `/data` **на panther** (ADR-787; `d12e70a6…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 orb skip read_battery | Me orb skip `read_battery` **host** (ADR-788; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 orb skip read_battery flash | ADR-788 Me orb skip `read_battery` on `/data` **на panther** (ADR-789; `622864fd…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
+| VUI-09 status skip wifi_is_up | status bar skip `wifi_is_up`; use net hold **host** (ADR-790; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -917,6 +918,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 orb pulse skip runtime facts flash: ADR-786 orb pulse skip `read_runtime_live_facts` on `/data` (ADR-787; `d12e70a6…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 orb skip read_battery: Me orb skip `read_battery` (ADR-788; host; dest-no-lock stays off)
 - VUI-09 orb skip read_battery flash: ADR-788 Me orb skip `read_battery` on `/data` (ADR-789; `622864fd…`; dest-no-lock stays off; `surface=me`)
+- VUI-09 status skip wifi_is_up: status bar skip `wifi_is_up`; use net hold (ADR-790; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

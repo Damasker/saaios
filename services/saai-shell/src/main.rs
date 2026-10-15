@@ -1201,6 +1201,7 @@ fn pressed_tab_from_touch(
 /// connection exists. Confirmed on-device to read `down` honestly when
 /// `wpa_supplicant` hasn't associated to anything, not just when the
 /// radio is off.
+#[allow(dead_code)]
 fn wifi_is_up() -> bool {
     std::fs::read_to_string("/sys/class/net/wlan0/operstate")
         .map(|state| state.trim() == "up")
@@ -17633,7 +17634,17 @@ impl Shell {
             space_color(&self.system_space_entities, &self.selected_space_id).context(),
             current_time_string(self.settings.utc_offset_minutes),
         )
-        .with_network_up(wifi_is_up());
+        .with_network_up(
+            self.me_net_hold
+                .as_ref()
+                .map(|hold| hold.wifi_status.starts_with("Подключено"))
+                .or_else(|| {
+                    self.me_facts_held
+                        .as_ref()
+                        .map(|facts| facts.wifi_status.starts_with("Подключено"))
+                })
+                .unwrap_or(false),
+        );
         if let Some((percent, charging)) = read_battery() {
             status = status.with_battery(percent, charging);
         }
@@ -20690,7 +20701,14 @@ mod tests {
     fn radio_off_is_wlan0_operstate_not_entityd() {
         let src = include_str!("main.rs");
         assert!(src.contains("/sys/class/net/wlan0/operstate"));
-        assert!(src.contains(".with_network_up(wifi_is_up())"));
+        let helper = src
+            .split("fn wifi_is_up")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(helper.contains("/sys/class/net/wlan0/operstate"));
     }
 
     #[test]
@@ -29980,6 +29998,38 @@ mod tests {
             .unwrap();
         assert!(body.contains("orb_visual_state_with"));
         assert!(!body.contains(concat!("read_battery", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn present_status_bar_skip_wifi_is_up() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn present_status_bar")
+            .nth(1)
+            .unwrap()
+            .split("fn refresh_statusbar_if_due")
+            .next()
+            .unwrap();
+        assert!(body.contains("with_network_up"));
+        assert!(body.contains("me_net_hold"));
+        assert!(!body.contains(concat!("wifi_is_up", "()")));
         let probes = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
