@@ -593,6 +593,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Boot skip cmdline on `/data` (ADR-779; `10129e45…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Runtime skip tmp sock (ADR-780; host). dest-no-lock stays off.
+  Runtime skip tmp sock on `/data` (ADR-781; `2602a2af…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
