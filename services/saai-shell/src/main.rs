@@ -9241,18 +9241,22 @@ fn write_status_request(stream: &mut impl Write) -> bool {
     stream.write_all(br#"{"op":"status"}"#).is_ok() && stream.flush().is_ok()
 }
 
-fn read_runtime_live_facts_from_unix(path: &Path) -> RuntimeLiveFacts {
-    let mut stream = match UnixStream::connect(path) {
-        Ok(stream) => stream,
-        Err(_) => return RuntimeLiveFacts::default(),
-    };
+fn read_runtime_live_facts_from_connected(stream: &mut UnixStream) -> RuntimeLiveFacts {
     let _ = stream.set_read_timeout(Some(RUNTIME_STATUS_TIMEOUT));
     let _ = stream.set_write_timeout(Some(RUNTIME_STATUS_TIMEOUT));
-    if !write_status_request(&mut stream) {
+    if !write_status_request(stream) {
         return RuntimeLiveFacts::default();
     }
     let _ = stream.shutdown(std::net::Shutdown::Write);
-    read_runtime_live_facts_from_stream(&mut stream)
+    read_runtime_live_facts_from_stream(stream)
+}
+
+#[allow(dead_code)]
+fn read_runtime_live_facts_from_unix(path: &Path) -> RuntimeLiveFacts {
+    match UnixStream::connect(path) {
+        Ok(mut stream) => read_runtime_live_facts_from_connected(&mut stream),
+        Err(_) => RuntimeLiveFacts::default(),
+    }
 }
 
 fn read_runtime_live_facts_from_tcp(addr: &str) -> RuntimeLiveFacts {
@@ -9275,8 +9279,10 @@ fn read_runtime_live_facts_from_tcp(addr: &str) -> RuntimeLiveFacts {
 
 fn read_runtime_live_facts() -> RuntimeLiveFacts {
     for path in runtime_sock_candidates() {
-        if path.exists() {
-            return read_runtime_live_facts_from_unix(&path);
+        match UnixStream::connect(&path) {
+            Ok(mut stream) => return read_runtime_live_facts_from_connected(&mut stream),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return RuntimeLiveFacts::default(),
         }
     }
     if Path::new("/data/saaios/system/saaios-runtime").exists() {
@@ -29805,7 +29811,7 @@ mod tests {
             .split("struct MeFacts")
             .next()
             .unwrap();
-        assert!(body.contains("read_runtime_live_facts_from_unix"));
+        assert!(body.contains("read_runtime_live_facts_from_connected"));
         assert!(body.contains("read_runtime_live_facts_from_tcp"));
         assert!(!body.contains(concat!("phone_gate_surface", "()")));
         assert!(!body.contains(concat!("hardware_model", "()")));
@@ -29848,6 +29854,41 @@ mod tests {
         let paths = super::runtime_sock_candidates();
         assert!(paths.iter().any(|path| path.ends_with("saaios.sock")));
         assert!(paths.iter().any(|path| path == std::path::Path::new("/tmp/saaios.sock")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        assert!(!probes.contains("read_runtime_live_facts_from_unix"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn read_runtime_live_facts_skip_sock_exists() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn read_runtime_live_facts()")
+            .nth(1)
+            .unwrap()
+            .split("struct MeFacts")
+            .next()
+            .unwrap();
+        assert!(body.contains("UnixStream::connect"));
+        assert!(body.contains("read_runtime_live_facts_from_connected"));
+        assert!(body.contains("NotFound"));
+        assert!(!body.contains("if path.exists()"));
+        assert!(!body.contains(concat!("path.exists", "()")));
         let probes = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
