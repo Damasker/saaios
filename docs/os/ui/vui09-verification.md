@@ -587,6 +587,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Window skip phone gate on `/data` (ADR-775; `ceb55563…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Boot skip attempts (ADR-776; host). dest-no-lock stays off.
+  Boot skip attempts on `/data` (ADR-777; `5f02c7cc…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
