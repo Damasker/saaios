@@ -350,6 +350,7 @@ The verification ledger stays in
 | boot skip attempts flash | ADR-777; `5f02c7cc…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | boot skip cmdline | ADR-778; host; boot skip `/proc/cmdline` when bootconfig has the slot; dest-no-lock stays off |
 | boot skip cmdline flash | ADR-779; `10129e45…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| runtime skip tmp sock | ADR-780; host; runtime skip `/tmp/saaios.sock` exists on aarch64; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

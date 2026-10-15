@@ -9202,7 +9202,9 @@ fn runtime_sock_candidates() -> Vec<PathBuf> {
             paths.push(PathBuf::from(env_path));
         }
     }
-    paths.push(PathBuf::from("/tmp/saaios.sock"));
+    if cfg!(not(target_arch = "aarch64")) {
+        paths.push(PathBuf::from("/tmp/saaios.sock"));
+    }
     paths.push(PathBuf::from("/run/saaios/saaios.sock"));
     paths
 }
@@ -29817,6 +29819,44 @@ mod tests {
         assert!(probes.contains("read_runtime_live_facts"));
         assert!(!probes.contains("read_runtime_live_facts_from_unix"));
         assert!(!probes.contains("read_runtime_live_facts_from_tcp"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn runtime_sock_candidates_skip_tmp_on_aarch64() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn runtime_sock_candidates()")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("target_arch"));
+        assert!(body.contains("aarch64"));
+        assert!(body.contains("/tmp/saaios.sock"));
+        assert!(body.contains("/run/saaios/saaios.sock"));
+        assert!(body.contains("not(target_arch"));
+        let paths = super::runtime_sock_candidates();
+        assert!(paths.iter().any(|path| path.ends_with("saaios.sock")));
+        assert!(paths.iter().any(|path| path == std::path::Path::new("/tmp/saaios.sock")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        assert!(!probes.contains("read_runtime_live_facts_from_unix"));
         let connect = src
             .split("wifi_connect_pending.take()")
             .nth(1)

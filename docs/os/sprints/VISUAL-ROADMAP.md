@@ -541,7 +541,8 @@ real phone interface consistently.
   (ADR-776; host). Boot skip attempts on `/data`
   (ADR-777; `5f02c7cc…`). Boot skip cmdline
   (ADR-778; host). Boot skip cmdline on `/data`
-  (ADR-779; `10129e45…`).
+  (ADR-779; `10129e45…`). Runtime skip tmp sock
+  (ADR-780; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2414,6 +2415,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Boot skip cmdline on panther (ADR-779; `10129e45…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Runtime skip tmp sock (ADR-780; host). dest-no-lock stays off. Runtime
+  skip `/tmp/saaios.sock` exists on aarch64. Leave Сейчас. Still
+  Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2793,7 +2797,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-776; host). Boot skip attempts on `/data`
 (ADR-777; `5f02c7cc…`). Boot skip cmdline
 (ADR-778; host). Boot skip cmdline on `/data`
-(ADR-779; `10129e45…`).
+(ADR-779; `10129e45…`). Runtime skip tmp sock
+(ADR-780; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
