@@ -486,7 +486,8 @@ real phone interface consistently.
   (ADR-721; `7a127ccc…`). Reuse locality status
   (ADR-722; host). Held «Местность» on `/data`
   (ADR-723; `cfe15b55…`). Locality on the camp turn
-  (ADR-724; host).
+  (ADR-724; host). Locality camp turn on `/data`
+  (ADR-725; `e6af707f…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2219,6 +2220,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Сейчас. Still Experimental.
 - [x] Locality on the camp turn (ADR-724; host). dest-no-lock stays off.
   First chrome skip widget JSON. Leave Сейчас. Still Experimental.
+- [x] Locality camp turn on panther (ADR-725; `e6af707f…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`. Leave
+  Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2543,7 +2547,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-721; `7a127ccc…`). Reuse locality status
 (ADR-722; host). Held «Местность» on `/data`
 (ADR-723; `cfe15b55…`). Locality on the camp turn
-(ADR-724; host).
+(ADR-724; host). Locality camp turn on `/data`
+(ADR-725; `e6af707f…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
