@@ -472,7 +472,8 @@ real phone interface consistently.
   (ADR-707; `a74c3dc4…`). Reuse camp `/proc` presence
   (ADR-708; host). Held `/proc` presence on `/data`
   (ADR-709; `412c67bf…`). Reuse net probes
-  (ADR-710; host).
+  (ADR-710; host). Held Wi-Fi/`df` on `/data`
+  (ADR-711; `3be0c132…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2165,6 +2166,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Leave Сейчас. Still Experimental.
 - [x] Reuse net probes (ADR-710; host). dest-no-lock stays off.
   Recapture skips `wpa_cli`/`df`. Leave Сейчас. Still Experimental.
+- [x] Held Wi-Fi/`df` on panther (ADR-711; `3be0c132…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2475,7 +2479,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-707; `a74c3dc4…`). Reuse camp `/proc` presence
 (ADR-708; host). Held `/proc` presence on `/data`
 (ADR-709; `412c67bf…`). Reuse net probes
-(ADR-710; host).
+(ADR-710; host). Held Wi-Fi/`df` on `/data`
+(ADR-711; `3be0c132…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
