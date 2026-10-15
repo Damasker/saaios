@@ -2155,10 +2155,283 @@ fn cellular_row_status(
     }
 }
 
+fn cellular_summary_status(
+    cp: Option<&str>,
+    registration_raw: Option<u32>,
+    radio: Option<&str>,
+    sim: Option<&str>,
+    owner: Option<&str>,
+    endpoint: Option<&str>,
+    supervisor: Option<&str>,
+    action: Option<&str>,
+    open: Option<&str>,
+    live: &[String],
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(state) = cp.and_then(cp_state_token) {
+        parts.push(state.to_string());
+    }
+    if let Some(phrase) = registration_raw.and_then(registration_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = radio.and_then(radio_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = sim.and_then(sim_presence_phrase) {
+        parts.push(phrase.to_string());
+    }
+    match owner {
+        Some("running") => parts.push("процесс".to_string()),
+        Some("gone") if !parts.is_empty() => parts.push("без процесса".to_string()),
+        _ => {}
+    }
+    if let Some(phrase) = endpoint.and_then(endpoint_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = supervisor.and_then(supervisor_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = action.and_then(action_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if let Some(phrase) = open.and_then(open_phrase) {
+        parts.push(phrase.to_string());
+    }
+    if !live.is_empty() {
+        parts.push(live.join(" · "));
+    }
+    if parts.is_empty() {
+        "Нет модема".to_string()
+    } else {
+        parts.join(" · ")
+    }
+}
+
 /// Capture nodes in `video4linux`. `v4l-touch*` is the panel, not a
 /// camera (ADR-256). No `/dev/video*` on panther as of 2026-09-20.
+fn me_readout_if(key: &str, value: Option<String>) -> Option<DataRow> {
+    let text = value.filter(|value| !value.is_empty())?;
+    let label = observation_row_label(key)?;
+    Some(SettingRow::readout(label, text).row)
+}
+
+fn cellular_detail_rows(facts: &MeFacts) -> Vec<DataRow> {
+    [
+        me_readout_if(
+            "cellular.voice_registration_raw",
+            facts
+                .cellular_voice_raw
+                .and_then(registration_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.selection",
+            facts
+                .cellular_selection
+                .as_deref()
+                .and_then(selection_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.stack",
+            facts
+                .cellular_stack
+                .as_deref()
+                .and_then(stack_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.device_service",
+            facts
+                .cellular_device_service
+                .as_deref()
+                .and_then(device_service_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.voice_operation",
+            facts
+                .cellular_voice_operation
+                .as_deref()
+                .and_then(voice_operation_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.allow_data",
+            facts
+                .cellular_allow_data
+                .as_deref()
+                .and_then(allow_data_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.initial_attach",
+            facts
+                .cellular_initial_attach
+                .as_deref()
+                .and_then(initial_attach_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.dns",
+            facts
+                .cellular_dns
+                .as_deref()
+                .and_then(dns_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.dns6",
+            facts
+                .cellular_dns6
+                .as_deref()
+                .and_then(dns_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.config",
+            facts
+                .cellular_config
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.power",
+            facts
+                .cellular_power
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.voice_set",
+            facts
+                .cellular_voice_set
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.ipv4",
+            facts
+                .cellular_ipv4
+                .as_deref()
+                .and_then(dns_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.ipv6",
+            facts
+                .cellular_ipv6
+                .as_deref()
+                .and_then(dns_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.setup",
+            facts
+                .cellular_setup
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.profile",
+            facts
+                .cellular_profile
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.activity",
+            facts
+                .cellular_activity
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.fastdorm",
+            facts
+                .cellular_fastdorm
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.endc",
+            facts
+                .cellular_endc
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.throttle",
+            facts
+                .cellular_throttle
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.smsc",
+            facts
+                .cellular_smsc
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.vonrget",
+            facts
+                .cellular_vonrget
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.dbgtrace",
+            facts
+                .cellular_dbgtrace
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.pssvc",
+            facts
+                .cellular_pssvc
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.gpslock",
+            facts
+                .cellular_gpslock
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+        me_readout_if(
+            "cellular.samode",
+            facts
+                .cellular_samode
+                .as_deref()
+                .and_then(config_phrase)
+                .map(str::to_string),
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
 fn cellular_row_with_session(facts: &MeFacts) -> String {
-    let base = cellular_row_status(
+    let base = cellular_summary_status(
         facts.cellular_cp.as_deref(),
         facts.cellular_registration_raw,
         facts.cellular_radio.as_deref(),
@@ -2168,47 +2441,6 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
         facts.cellular_supervisor.as_deref(),
         facts.cellular_action.as_deref(),
         facts.cellular_open.as_deref(),
-        facts.cellular_voice_raw,
-        facts.cellular_selection.as_deref(),
-        facts.cellular_stack.as_deref(),
-        facts.cellular_device_service.as_deref(),
-        facts.cellular_voice_operation.as_deref(),
-        facts.cellular_allow_data.as_deref(),
-        facts.cellular_initial_attach.as_deref(),
-        facts.cellular_dns.as_deref(),
-        facts.cellular_dns6.as_deref(),
-        facts.cellular_config.as_deref(),
-        facts.cellular_sgc.as_deref(),
-        facts.cellular_power.as_deref(),
-        facts.cellular_voice_set.as_deref(),
-        facts.cellular_ipv4.as_deref(),
-        facts.cellular_ipv6.as_deref(),
-        facts.cellular_setup.as_deref(),
-        facts.cellular_profile.as_deref(),
-        facts.cellular_activity.as_deref(),
-        facts.cellular_fastdorm.as_deref(),
-        facts.cellular_endc.as_deref(),
-        facts.cellular_throttle.as_deref(),
-        facts.cellular_unsolff.as_deref(),
-        facts.cellular_unsol.as_deref(),
-        facts.cellular_screen.as_deref(),
-        facts.cellular_cellinfo.as_deref(),
-        facts.cellular_smsc.as_deref(),
-        facts.cellular_vonrget.as_deref(),
-        facts.cellular_aptime.as_deref(),
-        facts.cellular_dbgtrace.as_deref(),
-        facts.cellular_tty.as_deref(),
-        facts.cellular_pssvc.as_deref(),
-        facts.cellular_prefmodem.as_deref(),
-        facts.cellular_slot.as_deref(),
-        facts.cellular_sigcrit.as_deref(),
-        facts.cellular_smsact.as_deref(),
-        facts.cellular_linkcrit.as_deref(),
-        facts.cellular_smscb.as_deref(),
-        facts.cellular_calllist.as_deref(),
-        facts.cellular_gpslock.as_deref(),
-        facts.cellular_gpsnfw.as_deref(),
-        facts.cellular_samode.as_deref(),
         &facts.cellular_ifaces,
     );
     if base == "Нет модема" {
@@ -9705,9 +9937,8 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 SettingRow::cycle("Виброотклик", haptic_status, "toggle_haptics").row,
             ],
         ),
-        me_section_data(
-            "Связь",
-            vec![
+        me_section_data("Связь", {
+            let mut rows = vec![
                 wifi_setting_row(facts),
                 if facts.bluetooth_present {
                     SettingRow::open(
@@ -9719,22 +9950,29 @@ fn me_system_sections(facts: &MeFacts) -> Vec<SystemSection> {
                 } else {
                     SettingRow::readout("Bluetooth", "Нет адаптера").row
                 },
-                SettingRow::readout("Сотовая сеть", cellular_row_with_session(&facts)).row,
-                SettingRow::open("Местность", locality_me_status(), "refresh_locality").row,
-                SettingRow::cycle(
-                    "Удалённый доступ (SSH)",
-                    remote_status,
-                    "toggle_remote_access",
-                )
-                .row,
-                SettingRow::open(
-                    "Доверенные клиенты",
-                    format!("{} ключей", facts.trusted_client_count),
-                    "open_trusted_clients",
-                )
-                .row,
-            ],
-        ),
+                SettingRow::readout("Сотовая сеть", cellular_row_with_session(facts)).row,
+            ];
+            rows.extend(cellular_detail_rows(facts));
+            rows.push(SettingRow::open(
+                "Местность",
+                locality_me_status(),
+                "refresh_locality",
+            )
+            .row);
+            rows.push(SettingRow::cycle(
+                "Удалённый доступ (SSH)",
+                remote_status,
+                "toggle_remote_access",
+            )
+            .row);
+            rows.push(SettingRow::open(
+                "Доверенные клиенты",
+                format!("{} ключей", facts.trusted_client_count),
+                "open_trusted_clients",
+            )
+            .row);
+            rows
+        }),
         me_section_data(
             "Приватность",
             vec![
@@ -26554,6 +26792,51 @@ mod tests {
             .iter()
             .any(|row| row.card.label == "Устройство" && row.dispatch.is_none()));
         assert!(!rows.iter().any(|row| row.card.label.contains("Память")));
+    }
+
+    #[test]
+    fn me_system_sections_group_cellular_facts_under_svyaz() {
+        let mut facts = me_fixture_facts();
+        facts.cellular_cp = Some("ONLINE".into());
+        facts.cellular_owner = Some("running".into());
+        facts.cellular_dns = Some("yes".into());
+        facts.cellular_ipv4 = Some("yes".into());
+        facts.cellular_dbgtrace = Some("accepted".into());
+        facts.cellular_gpslock = Some("accepted".into());
+        facts.cellular_endc = Some("accepted".into());
+        facts.cellular_smsc = Some("accepted".into());
+        facts.cellular_vonrget = Some("accepted".into());
+        let sections = me_system_sections(&facts);
+        assert!(sections.iter().any(|section| section.title == "Связь"));
+        assert!(sections.iter().any(|section| section.title == "Экран"));
+        let rows = flatten_me_rows(&sections);
+        let cellular = rows
+            .iter()
+            .find(|row| row.card.label == "Сотовая сеть")
+            .expect("cellular summary");
+        assert!(cellular.card.status.contains("процесс"));
+        assert!(!cellular.card.status.contains("dns "));
+        assert!(!cellular.card.status.contains("ipv4 "));
+        assert!(!cellular.card.status.contains("трасса "));
+        assert!(!cellular.card.status.contains("gps "));
+        let labels: Vec<_> = rows.iter().map(|row| row.card.label.as_str()).collect();
+        let svyaz = labels.iter().position(|label| *label == "Связь").unwrap();
+        let dns = labels.iter().position(|label| *label == "DNS").unwrap();
+        let ipv4 = labels.iter().position(|label| *label == "IPv4").unwrap();
+        let endc = labels.iter().position(|label| *label == "ENDC").unwrap();
+        let smsc = labels.iter().position(|label| *label == "SMSC").unwrap();
+        let vonr = labels.iter().position(|label| *label == "VoNR").unwrap();
+        let trace = labels.iter().position(|label| *label == "Трасса").unwrap();
+        let gps = labels.iter().position(|label| *label == "GPS").unwrap();
+        assert!(svyaz < dns);
+        assert!(dns < ipv4);
+        assert!(ipv4 < endc);
+        assert!(endc < smsc);
+        assert!(smsc < vonr);
+        assert!(vonr < trace);
+        assert!(trace < gps);
+        assert!(!labels.contains(&"cellular.dns"));
+        assert!(!labels.contains(&"linkcrit"));
     }
 
     #[test]
