@@ -459,6 +459,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   off. `surface=me` then process `S`.
   Stop `/proc` after owner, status, and modemd (ADR-694; host).
   dest-no-lock stays off.
+  `/proc` stop on `/data` (ADR-695; `0f93f0d9…`). dest-no-lock stays
+  off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

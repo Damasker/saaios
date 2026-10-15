@@ -456,7 +456,8 @@ real phone interface consistently.
   (ADR-691; `8f60e55c…`). Local probes on the Wi-Fi turn
   (ADR-692; host). Local probes on `/data`
   (ADR-693; `f25649f7…`). Stop `/proc` after owner, status,
-  and modemd (ADR-694; host).
+  and modemd (ADR-694; host). `/proc` stop on `/data`
+  (ADR-695; `0f93f0d9…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2105,6 +2106,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Stop `/proc` after owner, status, and modemd (ADR-694; host).
   dest-no-lock stays off. Later shared fd stays `owner`. Leave
   Сейчас. Still Experimental.
+- [x] `/proc` camp early-exit on panther (ADR-695; `0f93f0d9…`).
+  dest-no-lock stays off. `switched to Me` + `surface=me` then
+  process `S`. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2399,7 +2403,8 @@ connect (ADR-678; host). Timeout on `/data`
 (ADR-691; `8f60e55c…`). Local probes on the Wi-Fi turn
 (ADR-692; host). Local probes on `/data`
 (ADR-693; `f25649f7…`). Stop `/proc` after owner, status,
-and modemd (ADR-694; host).
+and modemd (ADR-694; host). `/proc` stop on `/data`
+(ADR-695; `0f93f0d9…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
