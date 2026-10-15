@@ -549,6 +549,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 boot skip attempts | boot skip `boot-attempts` exists; slot only **host** (ADR-776; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 boot skip attempts flash | ADR-776 boot skip `boot-attempts` exists on `/data` **на panther** (ADR-777; `5f02c7cc…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 boot skip cmdline | boot skip `/proc/cmdline` when bootconfig has the slot **host** (ADR-778; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 boot skip cmdline flash | ADR-778 boot skip `/proc/cmdline` on `/data` **на panther** (ADR-779; `10129e45…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -895,6 +896,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 boot skip attempts: boot skip `boot-attempts` exists; slot only (ADR-776; host; dest-no-lock stays off)
 - VUI-09 boot skip attempts flash: ADR-776 boot skip `boot-attempts` exists on `/data` (ADR-777; `5f02c7cc…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 boot skip cmdline: boot skip `/proc/cmdline` when bootconfig has the slot (ADR-778; host; dest-no-lock stays off)
+- VUI-09 boot skip cmdline flash: ADR-778 boot skip `/proc/cmdline` on `/data` (ADR-779; `10129e45…`; dest-no-lock stays off; `surface=me`)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
