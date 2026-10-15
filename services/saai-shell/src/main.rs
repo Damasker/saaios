@@ -9193,6 +9193,100 @@ fn me_fill_blocks_idle(
     facts_pending || full_pending || net_pending || runtime_pending || obs_pending
 }
 
+fn apply_me_camp_values(
+    facts: &mut MeFacts,
+    cellular_cp: Option<String>,
+    camp_owner: bool,
+    cellular_endpoint: Option<&'static str>,
+    status_query: bool,
+    log: Option<&str>,
+) {
+    facts.cellular_cp = cellular_cp;
+    facts.cellular_registration_raw = log.and_then(read_data_registration_raw);
+    facts.cellular_voice_raw = log.and_then(read_voice_registration_raw);
+    facts.cellular_radio = log.and_then(read_radio_token);
+    facts.cellular_selection = log.and_then(read_selection_mode);
+    facts.cellular_stack = log.and_then(read_stack_mode);
+    facts.cellular_device_service = log.and_then(read_device_service);
+    facts.cellular_voice_operation = log.and_then(read_voice_operation);
+    facts.cellular_allow_data = log.and_then(read_allow_data);
+    facts.cellular_initial_attach = log.and_then(read_initial_attach);
+    facts.cellular_dns = log.and_then(read_dns);
+    facts.cellular_dns6 = log.and_then(read_dns6);
+    facts.cellular_config = log.and_then(read_modem_config);
+    facts.cellular_sgc = log.and_then(read_sgc);
+    facts.cellular_power = log.and_then(read_radio_power);
+    facts.cellular_voice_set = log.and_then(read_voice_set);
+    facts.cellular_ipv4 = log.and_then(read_ipv4);
+    facts.cellular_ipv6 = log.and_then(read_ipv6);
+    facts.cellular_setup = log.and_then(read_setup);
+    facts.cellular_profile = log.and_then(read_profile);
+    facts.cellular_activity = log.and_then(read_activity);
+    facts.cellular_fastdorm = log.and_then(read_fastdorm);
+    facts.cellular_endc = log.and_then(read_endc);
+    facts.cellular_throttle = log.and_then(read_throttle);
+    facts.cellular_unsolff = log.and_then(read_unsolff);
+    facts.cellular_unsol = log.and_then(read_unsol);
+    facts.cellular_screen = log.and_then(read_screen);
+    facts.cellular_cellinfo = log.and_then(read_cellinfo);
+    facts.cellular_smsc = log.and_then(read_smsc);
+    facts.cellular_vonrget = log.and_then(read_vonrget);
+    facts.cellular_aptime = log.and_then(read_aptime);
+    facts.cellular_dbgtrace = log.and_then(read_dbgtrace);
+    facts.cellular_tty = log.and_then(read_tty);
+    facts.cellular_pssvc = log.and_then(read_pssvc);
+    facts.cellular_prefmodem = log.and_then(read_prefmodem);
+    facts.cellular_slot = log.and_then(read_slot);
+    facts.cellular_sigcrit = log.and_then(read_sigcrit);
+    facts.cellular_smsact = log.and_then(read_smsact);
+    facts.cellular_linkcrit = log.and_then(read_linkcrit);
+    facts.cellular_smscb = log.and_then(read_smscb);
+    facts.cellular_calllist = log.and_then(read_calllist);
+    facts.cellular_gpslock = log.and_then(read_gpslock);
+    facts.cellular_gpsnfw = log.and_then(read_gpsnfw);
+    facts.cellular_samode = log.and_then(read_samode);
+    facts.cellular_sim = log.and_then(read_sim_presence);
+    facts.cellular_owner = Some(
+        if camp_owner {
+            "running"
+        } else {
+            "gone"
+        }
+        .to_string(),
+    );
+    facts.cellular_endpoint = cellular_endpoint.map(str::to_string);
+    facts.cellular_action = Some(
+        saai_observation::camp_action(facts.cellular_cp.as_deref(), camp_owner).to_string(),
+    );
+    facts.cellular_open = Some(
+        saai_observation::camp_open(
+            facts.cellular_cp.as_deref(),
+            camp_owner,
+            cellular_endpoint,
+            status_query,
+        )
+        .to_string(),
+    );
+}
+
+fn apply_me_camp_probes(facts: &mut MeFacts) {
+    let camp = proc_camp_presence();
+    let cellular_cp = read_cp_state();
+    let camp_log = if camp_log_current_from(camp.owner, cellular_cp.as_deref()) {
+        read_camp_owner_log()
+    } else {
+        None
+    };
+    apply_me_camp_values(
+        facts,
+        cellular_cp,
+        camp.owner,
+        camp.endpoint,
+        camp.status_query,
+        camp_log.as_deref(),
+    );
+}
+
 fn apply_me_runtime_values(
     facts: &mut MeFacts,
     model: String,
@@ -10456,6 +10550,10 @@ fn main() {
         } else if shell.me_full_pending {
             shell.me_full_pending = false;
             shell.me_full_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_camp_probes(&mut facts);
+                shell.me_facts_held = Some(facts);
+            }
             shell.invalidate_me_rows();
             shell.capture_me_rows();
             if !shell.locked && shell.current_page == RootPage::Me {
@@ -10787,9 +10885,10 @@ struct Shell {
     /// live observation rows so the first Sistema list can commit.
     me_obs_ready: bool,
     me_obs_pending: bool,
-    /// First flatten is settings + sysfs. The next turn runs the live
-    /// `me_facts()` camp / `/proc` probes. `wpa_cli` / `df` wait for
-    /// `me_net_ready`. Runtime JSON waits for `me_runtime_ready`.
+    /// First flatten is settings + sysfs. The next turn applies camp
+    /// `/proc` and the owner log onto held chrome facts. `wpa_cli` /
+    /// `df` wait for `me_net_ready`. Runtime JSON waits for
+    /// `me_runtime_ready`.
     me_full_ready: bool,
     me_full_pending: bool,
     /// Live camp facts keep Wi-Fi «Нет статуса» and storage
@@ -14998,19 +15097,7 @@ impl Shell {
             .collect();
         let (node_class, node_target, node_arch) =
             node_identity_resolved(None, phone_gate_surface());
-        let camp = proc_camp_presence();
-        let camp_owner = camp.owner;
-        let cellular_cp = read_cp_state();
-        let camp_current = camp_log_current_from(camp_owner, cellular_cp.as_deref());
-        let camp_log = if camp_current {
-            read_camp_owner_log()
-        } else {
-            None
-        };
-        let log = camp_log.as_deref();
-        let cellular_endpoint = camp.endpoint;
-        let status_query = camp.status_query;
-        MeFacts {
+        let mut facts = MeFacts {
             space_count: self.spaces.len(),
             entity_count: total_entities,
             build_id: env!("SAAIOS_BUILD_ID").to_string(),
@@ -15035,73 +15122,56 @@ impl Shell {
             bluetooth_paired: 0,
             bluetooth_present: bluetooth_adapter_present(),
             cellular_ifaces: Vec::new(),
-            cellular_cp: cellular_cp.clone(),
-            cellular_registration_raw: log.and_then(read_data_registration_raw),
-            cellular_voice_raw: log.and_then(read_voice_registration_raw),
-            cellular_radio: log.and_then(read_radio_token),
-            cellular_selection: log.and_then(read_selection_mode),
-            cellular_stack: log.and_then(read_stack_mode),
-            cellular_device_service: log.and_then(read_device_service),
-            cellular_voice_operation: log.and_then(read_voice_operation),
-            cellular_allow_data: log.and_then(read_allow_data),
-            cellular_initial_attach: log.and_then(read_initial_attach),
-            cellular_dns: log.and_then(read_dns),
-            cellular_dns6: log.and_then(read_dns6),
-            cellular_config: log.and_then(read_modem_config),
-            cellular_sgc: log.and_then(read_sgc),
-            cellular_power: log.and_then(read_radio_power),
-            cellular_voice_set: log.and_then(read_voice_set),
-            cellular_ipv4: log.and_then(read_ipv4),
-            cellular_ipv6: log.and_then(read_ipv6),
-            cellular_setup: log.and_then(read_setup),
-            cellular_profile: log.and_then(read_profile),
-            cellular_activity: log.and_then(read_activity),
-            cellular_fastdorm: log.and_then(read_fastdorm),
-            cellular_endc: log.and_then(read_endc),
-            cellular_throttle: log.and_then(read_throttle),
-            cellular_unsolff: log.and_then(read_unsolff),
-            cellular_unsol: log.and_then(read_unsol),
-            cellular_screen: log.and_then(read_screen),
-            cellular_cellinfo: log.and_then(read_cellinfo),
-            cellular_smsc: log.and_then(read_smsc),
-            cellular_vonrget: log.and_then(read_vonrget),
-            cellular_aptime: log.and_then(read_aptime),
-            cellular_dbgtrace: log.and_then(read_dbgtrace),
-            cellular_tty: log.and_then(read_tty),
-            cellular_pssvc: log.and_then(read_pssvc),
-            cellular_prefmodem: log.and_then(read_prefmodem),
-            cellular_slot: log.and_then(read_slot),
-            cellular_sigcrit: log.and_then(read_sigcrit),
-            cellular_smsact: log.and_then(read_smsact),
-            cellular_linkcrit: log.and_then(read_linkcrit),
-            cellular_smscb: log.and_then(read_smscb),
-            cellular_calllist: log.and_then(read_calllist),
-            cellular_gpslock: log.and_then(read_gpslock),
-            cellular_gpsnfw: log.and_then(read_gpsnfw),
-            cellular_samode: log.and_then(read_samode),
-            cellular_sim: log.and_then(read_sim_presence),
-            cellular_owner: Some(
-                if camp_owner {
-                    "running"
-                } else {
-                    "gone"
-                }
-                .to_string(),
-            ),
-            cellular_endpoint: cellular_endpoint.map(str::to_string),
+            cellular_cp: None,
+            cellular_registration_raw: None,
+            cellular_voice_raw: None,
+            cellular_radio: None,
+            cellular_selection: None,
+            cellular_stack: None,
+            cellular_device_service: None,
+            cellular_voice_operation: None,
+            cellular_allow_data: None,
+            cellular_initial_attach: None,
+            cellular_dns: None,
+            cellular_dns6: None,
+            cellular_config: None,
+            cellular_sgc: None,
+            cellular_power: None,
+            cellular_voice_set: None,
+            cellular_ipv4: None,
+            cellular_ipv6: None,
+            cellular_setup: None,
+            cellular_profile: None,
+            cellular_activity: None,
+            cellular_fastdorm: None,
+            cellular_endc: None,
+            cellular_throttle: None,
+            cellular_unsolff: None,
+            cellular_unsol: None,
+            cellular_screen: None,
+            cellular_cellinfo: None,
+            cellular_smsc: None,
+            cellular_vonrget: None,
+            cellular_aptime: None,
+            cellular_dbgtrace: None,
+            cellular_tty: None,
+            cellular_pssvc: None,
+            cellular_prefmodem: None,
+            cellular_slot: None,
+            cellular_sigcrit: None,
+            cellular_smsact: None,
+            cellular_linkcrit: None,
+            cellular_smscb: None,
+            cellular_calllist: None,
+            cellular_gpslock: None,
+            cellular_gpsnfw: None,
+            cellular_samode: None,
+            cellular_sim: None,
+            cellular_owner: None,
+            cellular_endpoint: None,
             cellular_supervisor: None,
-            cellular_action: Some(
-                saai_observation::camp_action(cellular_cp.as_deref(), camp_owner).to_string(),
-            ),
-            cellular_open: Some(
-                saai_observation::camp_open(
-                    cellular_cp.as_deref(),
-                    camp_owner,
-                    cellular_endpoint,
-                    status_query,
-                )
-                .to_string(),
-            ),
+            cellular_action: None,
+            cellular_open: None,
             camera_nodes: Vec::new(),
             pin_set: self.settings.pin_code.is_some(),
             lock_widgets_label: self.settings.lock_widgets.label().to_string(),
@@ -15121,7 +15191,9 @@ impl Shell {
             apps,
             observations: Vec::new(),
             memory_records: Vec::new(),
-        }
+        };
+        apply_me_camp_probes(&mut facts);
+        facts
     }
 
     fn me_all_rows(&self) -> Vec<MeRow> {
@@ -27733,6 +27805,32 @@ mod tests {
         assert!(super::me_fill_blocks_idle(false, false, false, true, false));
         assert!(super::me_fill_blocks_idle(false, false, false, false, true));
         assert!(!super::me_fill_blocks_idle(false, false, false, false, false));
+    }
+
+    #[test]
+    fn apply_me_camp_values_keep_chrome_sysfs() {
+        let mut src = me_fixture_facts();
+        src.kernel = "6.1.0-panther".into();
+        src.uptime = "1 ч".into();
+        src.cellular_cp = None;
+        src.cellular_owner = None;
+        src.cellular_endpoint = None;
+        src.cellular_registration_raw = None;
+        super::apply_me_camp_values(
+            &mut src,
+            Some("ONLINE".into()),
+            true,
+            Some("owner"),
+            true,
+            Some("field=data registration_raw=1\n"),
+        );
+        assert_eq!(src.kernel, "6.1.0-panther");
+        assert_eq!(src.uptime, "1 ч");
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        assert_eq!(src.cellular_owner.as_deref(), Some("running"));
+        assert_eq!(src.cellular_endpoint.as_deref(), Some("owner"));
+        assert_eq!(src.cellular_registration_raw, Some(1));
+        assert!(src.cellular_supervisor.is_none());
     }
 
     #[test]

@@ -268,6 +268,7 @@ The verification ledger stays in
 | proc camp early-exit flash | ADR-695; `0f93f0d9…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | supervisor with net | ADR-696; host; camp facts skip supervisor tail; dest-no-lock stays off |
 | supervisor net flash | ADR-697; `64c3fc50…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| camp on chrome hold | ADR-698; host; apply `/proc` + camp log onto held chrome facts; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
