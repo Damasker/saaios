@@ -482,7 +482,8 @@ real phone interface consistently.
   (ADR-717; `95b17773…`). Reuse adapter presence
   (ADR-718; host). Held Wi-Fi / Bluetooth presence on `/data`
   (ADR-719; `90a5c1a6…`). Storage grouped under Устройство
-  (ADR-720; host).
+  (ADR-720; host). Grouped `Хранилище` on `/data`
+  (ADR-721; `7a127ccc…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2205,6 +2206,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Storage grouped under Устройство (ADR-720; host). dest-no-lock stays
   off. `Это устройство` stays the model. `Хранилище` stays the S15
   label. Leave Сейчас. Still Experimental.
+- [x] Grouped `Хранилище` on panther (ADR-721; `7a127ccc…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`. Leave
+  Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2525,7 +2529,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-717; `95b17773…`). Reuse adapter presence
 (ADR-718; host). Held Wi-Fi / Bluetooth presence on `/data`
 (ADR-719; `90a5c1a6…`). Storage grouped under Устройство
-(ADR-720; host).
+(ADR-720; host). Grouped `Хранилище` on `/data`
+(ADR-721; `7a127ccc…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
