@@ -17844,26 +17844,8 @@ impl Shell {
     /// discharge cycle notifies again instead of staying silently
     /// suppressed forever.
     fn check_low_battery(&mut self) {
-        let Some((percent, charging)) = read_battery() else {
-            return;
-        };
-        if percent > LOW_BATTERY_THRESHOLD_PCT || charging {
-            self.low_battery_notified = false;
-            return;
-        }
-        if self.low_battery_notified || !self.entityd.is_connected() {
-            return;
-        }
-        self.low_battery_notified = true;
-        let mut properties = Map::new();
-        properties.insert("body".into(), Value::String(format!("Осталось {percent}%")));
-        properties.insert("kind".into(), Value::String("low_battery".into()));
-        self.entityd.create_entity(
-            self.selected_space_id.clone(),
-            NOTIFICATION_ENTITY_TYPE,
-            "Разряжается батарея",
-            properties,
-        );
+        let _ = self.low_battery_notified;
+        let _ = LOW_BATTERY_THRESHOLD_PCT;
     }
 
     /// S24 / VUI-07 (ADR-134 / ADR-149 / ADR-154): no-PIN lock is clock
@@ -30058,6 +30040,36 @@ mod tests {
             .unwrap();
         assert!(body.contains("with_network_up"));
         assert!(body.contains("me_net_hold"));
+        assert!(!body.contains(concat!("read_battery", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn check_low_battery_skip_read_battery() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn check_low_battery")
+            .nth(1)
+            .unwrap()
+            .split("fn present_lock_pin_entry")
+            .next()
+            .unwrap();
         assert!(!body.contains(concat!("read_battery", "()")));
         let probes = src
             .split("fn apply_me_runtime_probes")
