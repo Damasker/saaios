@@ -561,7 +561,8 @@ real phone interface consistently.
   (ADR-796; host). Lock idle skip read_battery on `/data`
   (ADR-797; `9b6735e0…`). Lock pin skip read_battery
   (ADR-798; host). Lock pin skip read_battery on `/data`
-  (ADR-799; `5961f994…`).
+  (ADR-799; `5961f994…`). Lock idle skip runtime facts
+  (ADR-800; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2485,6 +2486,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Lock pin skip read_battery on panther (ADR-799; `5961f994…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Lock idle skip runtime facts (ADR-800; host). dest-no-lock stays off. Lock idle
+  skip `read_runtime_live_facts`. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2884,7 +2887,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-796; host). Lock idle skip read_battery on `/data`
 (ADR-797; `9b6735e0…`). Lock pin skip read_battery
 (ADR-798; host). Lock pin skip read_battery on `/data`
-(ADR-799; `5961f994…`).
+(ADR-799; `5961f994…`). Lock idle skip runtime facts
+(ADR-800; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

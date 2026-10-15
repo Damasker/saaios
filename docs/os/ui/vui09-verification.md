@@ -622,6 +622,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Lock pin skip read_battery (ADR-798; host). dest-no-lock stays off.
   Lock pin skip read_battery on `/data` (ADR-799; `5961f994…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Lock idle skip runtime facts (ADR-800; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
