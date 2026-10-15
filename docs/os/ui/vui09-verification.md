@@ -545,6 +545,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   CP next turn on `/data` (ADR-747; `3692690a…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Playback next turn (ADR-748; host). dest-no-lock stays off.
+  Playback next turn on `/data` (ADR-749; `738b3d91…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
