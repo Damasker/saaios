@@ -625,6 +625,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Lock idle skip runtime facts (ADR-800; host). dest-no-lock stays off.
   Lock idle skip runtime facts on `/data` (ADR-801; `8c29b96e…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Lock pin skip runtime facts (ADR-802; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

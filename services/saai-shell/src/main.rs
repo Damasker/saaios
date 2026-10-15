@@ -17876,10 +17876,7 @@ impl Shell {
                 pin_code.is_some(),
                 None,
                 self.entityd.is_connected(),
-                orb_attention(
-                    &self.selected_entities,
-                    read_runtime_live_facts().health.as_ref(),
-                ),
+                orb_attention(&self.selected_entities, None),
             );
             self.last_lock_idle_time = Some(idle.time.clone());
             self.last_lock_attention_key = Some(lock_attention_key(&view));
@@ -30099,7 +30096,7 @@ mod tests {
             .next()
             .unwrap();
         assert!(!body.contains(concat!("read_battery", "()")));
-        assert!(body.contains("read_runtime_live_facts"));
+        assert!(body.contains("orb_attention"));
         let probes = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
@@ -30130,7 +30127,7 @@ mod tests {
             .next()
             .unwrap();
         assert!(!body.contains(concat!("read_battery", "()")));
-        assert!(body.contains("read_runtime_live_facts"));
+        assert!(body.contains("orb_attention"));
         let probes = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
@@ -30158,6 +30155,37 @@ mod tests {
             .nth(1)
             .unwrap()
             .split("/// S21: first real notification")
+            .next()
+            .unwrap();
+        assert!(body.contains("orb_attention"));
+        assert!(!body.contains(concat!("read_runtime_live_facts", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn present_lock_pin_skip_read_runtime_live_facts() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn present_lock_pin_entry")
+            .nth(1)
+            .unwrap()
+            .split("fn check_deep_idle")
             .next()
             .unwrap();
         assert!(body.contains("orb_attention"));
