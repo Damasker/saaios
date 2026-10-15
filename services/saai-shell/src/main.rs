@@ -9476,6 +9476,7 @@ fn me_fill_blocks_idle(
     facts_pending: bool,
     chrome_pending: bool,
     full_pending: bool,
+    locality_pending: bool,
     camp_log_pending: bool,
     net_pending: bool,
     runtime_pending: bool,
@@ -9484,6 +9485,7 @@ fn me_fill_blocks_idle(
     facts_pending
         || chrome_pending
         || full_pending
+        || locality_pending
         || camp_log_pending
         || net_pending
         || runtime_pending
@@ -10922,6 +10924,8 @@ fn main() {
         me_chrome_pending: false,
         me_full_ready: false,
         me_full_pending: false,
+        me_locality_ready: false,
+        me_locality_pending: false,
         me_camp_log_ready: false,
         me_camp_log_pending: false,
         me_net_ready: false,
@@ -11030,7 +11034,6 @@ fn main() {
             shell.me_full_ready = true;
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_camp_probes(&mut facts);
-                apply_me_locality_probes(&mut facts);
                 shell.me_camp_presence = Some(MeCampPresenceHold {
                     cp: facts.cellular_cp.clone(),
                     owner: facts.cellular_owner.clone(),
@@ -11038,6 +11041,18 @@ fn main() {
                     action: facts.cellular_action.clone(),
                     open: facts.cellular_open.clone(),
                 });
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_locality_pending {
+            shell.me_locality_pending = false;
+            shell.me_locality_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_locality_probes(&mut facts);
                 if let Some(hold) = &mut shell.me_chrome_hold {
                     hold.locality = facts.locality.clone();
                 }
@@ -11396,11 +11411,15 @@ struct Shell {
     me_chrome_ready: bool,
     me_chrome_pending: bool,
     /// Chrome facts keep radio empty until this turn applies camp
-    /// `/proc`. The owner log waits for `me_camp_log_ready`. `wpa_cli`
-    /// / `df` wait for `me_net_ready`. Runtime JSON waits for
-    /// `me_runtime_ready`.
+    /// `/proc`. Locality JSON waits for `me_locality_ready`. The owner
+    /// log waits for `me_camp_log_ready`. `wpa_cli` / `df` wait for
+    /// `me_net_ready`. Runtime JSON waits for `me_runtime_ready`.
     me_full_ready: bool,
     me_full_pending: bool,
+    /// Camp `/proc` keeps «Местность» empty until this turn reads
+    /// widget JSON.
+    me_locality_ready: bool,
+    me_locality_pending: bool,
     /// Camp presence keeps radio tokens empty until this turn streams
     /// the owner log.
     me_camp_log_ready: bool,
@@ -14643,16 +14662,28 @@ impl Shell {
             } else if !self.me_full_ready {
                 self.me_full_pending = true;
             }
-            if self.me_full_ready && !self.me_camp_log_ready {
+            if self.me_full_ready && !self.me_locality_ready {
+                self.me_locality_pending = true;
+            }
+            if self.me_full_ready && self.me_locality_ready && !self.me_camp_log_ready {
                 self.me_camp_log_pending = true;
             }
-            if self.me_full_ready && self.me_camp_log_ready && !self.me_net_ready {
+            if self.me_full_ready
+                && self.me_locality_ready
+                && self.me_camp_log_ready
+                && !self.me_net_ready
+            {
                 self.me_net_pending = true;
             }
-            if self.me_full_ready && self.me_camp_log_ready && !self.me_runtime_ready {
+            if self.me_full_ready
+                && self.me_locality_ready
+                && self.me_camp_log_ready
+                && !self.me_runtime_ready
+            {
                 self.me_runtime_pending = true;
             }
             let hold = if !self.me_chrome_ready
+                || !self.me_locality_ready
                 || !self.me_camp_log_ready
                 || !self.me_net_ready
                 || !self.me_runtime_ready
@@ -16566,6 +16597,7 @@ impl Shell {
                 self.me_facts_pending,
                 self.me_chrome_pending,
                 self.me_full_pending,
+                self.me_locality_pending,
                 self.me_camp_log_pending,
                 self.me_net_pending,
                 self.me_runtime_pending,
@@ -28467,14 +28499,33 @@ mod tests {
 
     #[test]
     fn me_fill_blocks_idle_while_pending() {
-        assert!(super::me_fill_blocks_idle(true, false, false, false, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, true, false, false, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, true, false, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, true, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, false, true, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, false, false, true, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, false, false, false, true));
-        assert!(!super::me_fill_blocks_idle(false, false, false, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(
+            true, false, false, false, false, false, false, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, true, false, false, false, false, false, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, true, false, false, false, false, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, true, false, false, false, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, true, false, false, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, true, false, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, true, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, true
+        ));
+        assert!(!super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, false
+        ));
     }
 
     #[test]
@@ -28819,7 +28870,15 @@ mod tests {
             .split("me_camp_presence")
             .next()
             .unwrap();
-        assert!(camp.contains("apply_me_locality_probes"));
+        assert!(!camp.contains("apply_me_locality_probes"));
+        let turn = src
+            .split("else if shell.me_locality_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_camp_log_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_locality_probes"));
         let facts = src
             .split("fn me_facts(&self)")
             .nth(1)
@@ -28836,6 +28895,14 @@ mod tests {
             .next()
             .unwrap();
         assert!(!first.contains("apply_me_locality_probes"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("locality_pending"));
     }
 
     #[test]
