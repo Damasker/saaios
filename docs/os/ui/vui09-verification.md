@@ -495,6 +495,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Reuse runtime JSON (ADR-714; host). dest-no-lock stays off.
   Held identity / «Наблюдения» on `/data` (ADR-715; `b77c623c…`).
   dest-no-lock stays off. `surface=me` then process `S`.
+  Reuse chrome sysfs (ADR-716; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

@@ -1408,6 +1408,16 @@ struct MeNetHold {
     trusted_client_count: usize,
 }
 
+#[derive(Clone, Debug)]
+struct MeChromeHold {
+    model: String,
+    kernel: String,
+    uptime: String,
+    boot_slot: String,
+    boot_attempts: u32,
+    playback_ready: bool,
+}
+
 #[derive(Clone, Copy)]
 struct ProcCampRow<'a> {
     cmdline: &'a [u8],
@@ -9662,6 +9672,42 @@ fn apply_me_runtime_probes(facts: &mut MeFacts) {
     );
 }
 
+fn me_chrome_values_held(facts: &MeFacts) -> bool {
+    !facts.kernel.is_empty() && facts.kernel != "неизвестно"
+}
+
+fn hold_me_chrome(facts: &MeFacts) -> MeChromeHold {
+    MeChromeHold {
+        model: facts.model.clone(),
+        kernel: facts.kernel.clone(),
+        uptime: facts.uptime.clone(),
+        boot_slot: facts.boot_slot.clone(),
+        boot_attempts: facts.boot_attempts,
+        playback_ready: facts.playback_ready,
+    }
+}
+
+fn apply_me_chrome_hold(facts: &mut MeFacts, hold: &MeChromeHold) {
+    facts.model = hold.model.clone();
+    facts.kernel = hold.kernel.clone();
+    facts.uptime = hold.uptime.clone();
+    facts.boot_slot = hold.boot_slot.clone();
+    facts.boot_attempts = hold.boot_attempts;
+    facts.playback_ready = hold.playback_ready;
+}
+
+fn apply_me_chrome_probes(facts: &mut MeFacts) {
+    if me_chrome_values_held(facts) {
+        return;
+    }
+    facts.model = node_model_resolved(None, hardware_model());
+    facts.kernel = kernel_release();
+    facts.uptime = uptime_string();
+    facts.boot_slot = boot_slot();
+    facts.boot_attempts = boot_attempts();
+    facts.playback_ready = playback_ready();
+}
+
 #[allow(dead_code)]
 fn me_facts_without_runtime(mut facts: MeFacts) -> MeFacts {
     facts.observations.clear();
@@ -10866,6 +10912,7 @@ fn main() {
         me_camp_presence: None,
         me_net_hold: None,
         me_runtime_hold: None,
+        me_chrome_hold: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -11339,6 +11386,9 @@ struct Shell {
     /// Runtime identity / «Наблюдения» / memory from the runtime turn.
     /// Recapture must not read `status` JSON again.
     me_runtime_hold: Option<MeRuntimeHold>,
+    /// Kernel / uptime / boot from the first chrome fill.
+    /// Recapture must not re-read those sysfs files.
+    me_chrome_hold: Option<MeChromeHold>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -14540,6 +14590,9 @@ impl Shell {
                     self.me_facts_chrome()
                 }
             });
+            if self.me_chrome_hold.is_none() {
+                self.me_chrome_hold = Some(hold_me_chrome(&raw));
+            }
             if !self.me_full_ready {
                 self.me_full_pending = true;
             }
@@ -15423,153 +15476,25 @@ impl Shell {
             .collect();
         let (node_class, node_target, node_arch) =
             node_identity_resolved(None, phone_gate_surface());
-        me_facts_without_live_probes(MeFacts {
+        let mut facts = MeFacts {
             space_count: self.spaces.len(),
             entity_count: total_entities,
             build_id: env!("SAAIOS_BUILD_ID").to_string(),
-            model: node_model_resolved(None, hardware_model()),
+            model: String::new(),
             node_class: node_class.to_string(),
             node_target: node_target.to_string(),
             node_arch: node_arch.to_string(),
-            kernel: kernel_release(),
-            uptime: uptime_string(),
+            kernel: String::new(),
+            uptime: String::new(),
             storage: String::new(),
             brightness_pct: self.settings.brightness_pct,
             idle_timeout_secs: self.settings.idle_timeout_secs,
             deep_idle_timeout_secs: self.settings.deep_idle_timeout_secs,
             utc_offset_minutes: self.settings.utc_offset_minutes,
-            boot_slot: boot_slot(),
-            boot_attempts: boot_attempts(),
+            boot_slot: String::new(),
+            boot_attempts: 0,
             volume_pct: self.settings.volume_pct,
-            playback_ready: playback_ready(),
-            wifi_status: String::new(),
-            wifi_present: wifi_adapter_present(),
-            wifi_status_readable: false,
-            bluetooth_paired: 0,
-            bluetooth_present: bluetooth_adapter_present(),
-            cellular_ifaces: Vec::new(),
-            cellular_cp: None,
-            cellular_registration_raw: None,
-            cellular_voice_raw: None,
-            cellular_radio: None,
-            cellular_selection: None,
-            cellular_stack: None,
-            cellular_device_service: None,
-            cellular_voice_operation: None,
-            cellular_allow_data: None,
-            cellular_initial_attach: None,
-            cellular_dns: None,
-            cellular_dns6: None,
-            cellular_config: None,
-            cellular_sgc: None,
-            cellular_power: None,
-            cellular_voice_set: None,
-            cellular_ipv4: None,
-            cellular_ipv6: None,
-            cellular_setup: None,
-            cellular_profile: None,
-            cellular_activity: None,
-            cellular_fastdorm: None,
-            cellular_endc: None,
-            cellular_throttle: None,
-            cellular_unsolff: None,
-            cellular_unsol: None,
-            cellular_screen: None,
-            cellular_cellinfo: None,
-            cellular_smsc: None,
-            cellular_vonrget: None,
-            cellular_aptime: None,
-            cellular_dbgtrace: None,
-            cellular_tty: None,
-            cellular_pssvc: None,
-            cellular_prefmodem: None,
-            cellular_slot: None,
-            cellular_sigcrit: None,
-            cellular_smsact: None,
-            cellular_linkcrit: None,
-            cellular_smscb: None,
-            cellular_calllist: None,
-            cellular_gpslock: None,
-            cellular_gpsnfw: None,
-            cellular_samode: None,
-            cellular_sim: None,
-            cellular_owner: None,
-            cellular_endpoint: None,
-            cellular_supervisor: None,
-            cellular_action: None,
-            cellular_open: None,
-            camp_fact_log: None,
-            camera_nodes: Vec::new(),
-            pin_set: self.settings.pin_code.is_some(),
-            lock_widgets_label: self.settings.lock_widgets.label().to_string(),
-            text_scale_pct: self.settings.text_scale_pct,
-            contrast_pct: self.settings.contrast_pct,
-            remote_access: self.settings.remote_access_enabled,
-            trusted_client_count: 0,
-            space_color_label: space_color(&self.system_space_entities, &self.selected_space_id)
-                .label()
-                .to_string(),
-            space_name: space_display_name(&self.spaces, &self.selected_space_id),
-            orb_enabled: self.settings.orb_enabled,
-            reduced_motion: self.settings.reduced_motion,
-            haptics_enabled: self.settings.haptics_enabled,
-            entityd_connected: self.entityd.is_connected(),
-            appd_connected: self.appd.is_connected(),
-            apps,
-            observations: Vec::new(),
-            memory_records: Vec::new(),
-        })
-    }
-
-    fn me_facts(&self) -> MeFacts {
-        let total_entities: usize = self.entity_counts.values().sum();
-        let apps = self
-            .installed_apps
-            .values()
-            .map(|app| {
-                let grants = self
-                    .apps_grants
-                    .get(&app.id)
-                    .map(|granted| {
-                        if granted.is_empty() {
-                            "без разрешений".to_string()
-                        } else {
-                            granted
-                                .iter()
-                                .map(|name| capability_label(name))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        }
-                    })
-                    .unwrap_or_else(|| "без разрешений".to_string());
-                MeAppFact {
-                    name: app.name.clone(),
-                    state: app_state_label(&app.state).to_string(),
-                    grants,
-                }
-            })
-            .collect();
-        let (node_class, node_target, node_arch) =
-            node_identity_resolved(None, phone_gate_surface());
-        let mut facts = MeFacts {
-            space_count: self.spaces.len(),
-            entity_count: total_entities,
-            build_id: env!("SAAIOS_BUILD_ID").to_string(),
-            model: node_model_resolved(None, hardware_model()),
-            node_class: node_class.to_string(),
-            node_target: node_target.to_string(),
-            node_arch: node_arch.to_string(),
-            kernel: kernel_release(),
-            uptime: uptime_string(),
-            storage: "неизвестно".into(),
-            brightness_pct: self.settings.brightness_pct,
-            idle_timeout_secs: self.settings.idle_timeout_secs,
-            deep_idle_timeout_secs: self.settings.deep_idle_timeout_secs,
-            utc_offset_minutes: self.settings.utc_offset_minutes,
-            boot_slot: boot_slot(),
-            boot_attempts: boot_attempts(),
-            volume_pct: self.settings.volume_pct,
-            playback_ready: playback_ready(),
+            playback_ready: false,
             wifi_status: String::new(),
             wifi_present: wifi_adapter_present(),
             wifi_status_readable: false,
@@ -15647,6 +15572,143 @@ impl Shell {
             observations: Vec::new(),
             memory_records: Vec::new(),
         };
+        if let Some(hold) = &self.me_chrome_hold {
+            apply_me_chrome_hold(&mut facts, hold);
+        }
+        apply_me_chrome_probes(&mut facts);
+        me_facts_without_live_probes(facts)
+    }
+
+    fn me_facts(&self) -> MeFacts {
+        let total_entities: usize = self.entity_counts.values().sum();
+        let apps = self
+            .installed_apps
+            .values()
+            .map(|app| {
+                let grants = self
+                    .apps_grants
+                    .get(&app.id)
+                    .map(|granted| {
+                        if granted.is_empty() {
+                            "без разрешений".to_string()
+                        } else {
+                            granted
+                                .iter()
+                                .map(|name| capability_label(name))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        }
+                    })
+                    .unwrap_or_else(|| "без разрешений".to_string());
+                MeAppFact {
+                    name: app.name.clone(),
+                    state: app_state_label(&app.state).to_string(),
+                    grants,
+                }
+            })
+            .collect();
+        let (node_class, node_target, node_arch) =
+            node_identity_resolved(None, phone_gate_surface());
+        let mut facts = MeFacts {
+            space_count: self.spaces.len(),
+            entity_count: total_entities,
+            build_id: env!("SAAIOS_BUILD_ID").to_string(),
+            model: String::new(),
+            node_class: node_class.to_string(),
+            node_target: node_target.to_string(),
+            node_arch: node_arch.to_string(),
+            kernel: String::new(),
+            uptime: String::new(),
+            storage: "неизвестно".into(),
+            brightness_pct: self.settings.brightness_pct,
+            idle_timeout_secs: self.settings.idle_timeout_secs,
+            deep_idle_timeout_secs: self.settings.deep_idle_timeout_secs,
+            utc_offset_minutes: self.settings.utc_offset_minutes,
+            boot_slot: String::new(),
+            boot_attempts: 0,
+            volume_pct: self.settings.volume_pct,
+            playback_ready: false,
+            wifi_status: String::new(),
+            wifi_present: wifi_adapter_present(),
+            wifi_status_readable: false,
+            bluetooth_paired: 0,
+            bluetooth_present: bluetooth_adapter_present(),
+            cellular_ifaces: Vec::new(),
+            cellular_cp: None,
+            cellular_registration_raw: None,
+            cellular_voice_raw: None,
+            cellular_radio: None,
+            cellular_selection: None,
+            cellular_stack: None,
+            cellular_device_service: None,
+            cellular_voice_operation: None,
+            cellular_allow_data: None,
+            cellular_initial_attach: None,
+            cellular_dns: None,
+            cellular_dns6: None,
+            cellular_config: None,
+            cellular_sgc: None,
+            cellular_power: None,
+            cellular_voice_set: None,
+            cellular_ipv4: None,
+            cellular_ipv6: None,
+            cellular_setup: None,
+            cellular_profile: None,
+            cellular_activity: None,
+            cellular_fastdorm: None,
+            cellular_endc: None,
+            cellular_throttle: None,
+            cellular_unsolff: None,
+            cellular_unsol: None,
+            cellular_screen: None,
+            cellular_cellinfo: None,
+            cellular_smsc: None,
+            cellular_vonrget: None,
+            cellular_aptime: None,
+            cellular_dbgtrace: None,
+            cellular_tty: None,
+            cellular_pssvc: None,
+            cellular_prefmodem: None,
+            cellular_slot: None,
+            cellular_sigcrit: None,
+            cellular_smsact: None,
+            cellular_linkcrit: None,
+            cellular_smscb: None,
+            cellular_calllist: None,
+            cellular_gpslock: None,
+            cellular_gpsnfw: None,
+            cellular_samode: None,
+            cellular_sim: None,
+            cellular_owner: None,
+            cellular_endpoint: None,
+            cellular_supervisor: None,
+            cellular_action: None,
+            cellular_open: None,
+            camp_fact_log: None,
+            camera_nodes: Vec::new(),
+            pin_set: self.settings.pin_code.is_some(),
+            lock_widgets_label: self.settings.lock_widgets.label().to_string(),
+            text_scale_pct: self.settings.text_scale_pct,
+            contrast_pct: self.settings.contrast_pct,
+            remote_access: self.settings.remote_access_enabled,
+            trusted_client_count: 0,
+            space_color_label: space_color(&self.system_space_entities, &self.selected_space_id)
+                .label()
+                .to_string(),
+            space_name: space_display_name(&self.spaces, &self.selected_space_id),
+            orb_enabled: self.settings.orb_enabled,
+            reduced_motion: self.settings.reduced_motion,
+            haptics_enabled: self.settings.haptics_enabled,
+            entityd_connected: self.entityd.is_connected(),
+            appd_connected: self.appd.is_connected(),
+            apps,
+            observations: Vec::new(),
+            memory_records: Vec::new(),
+        };
+        if let Some(hold) = &self.me_chrome_hold {
+            apply_me_chrome_hold(&mut facts, hold);
+        }
+        apply_me_chrome_probes(&mut facts);
         if let Some(hold) = &self.me_camp_presence {
             facts.cellular_cp = hold.cp.clone();
             facts.cellular_owner = hold.owner.clone();
@@ -28526,6 +28588,40 @@ mod tests {
         assert!(body.contains("me_runtime_values_held"));
         assert!(body.contains("return"));
         assert!(body.contains("read_runtime_live_facts"));
+    }
+
+    #[test]
+    fn apply_me_chrome_probes_skip_when_kernel_held() {
+        let mut src = me_fixture_facts();
+        src.model = "held-model".into();
+        src.kernel = "6.1.0-panther".into();
+        src.uptime = "1 ч".into();
+        src.boot_slot = "A".into();
+        src.boot_attempts = 3;
+        src.playback_ready = true;
+        src.cellular_cp = Some("ONLINE".into());
+        super::apply_me_chrome_probes(&mut src);
+        assert_eq!(src.model, "held-model");
+        assert_eq!(src.kernel, "6.1.0-panther");
+        assert_eq!(src.uptime, "1 ч");
+        assert_eq!(src.boot_slot, "A");
+        assert_eq!(src.boot_attempts, 3);
+        assert!(src.playback_ready);
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        assert!(super::me_chrome_values_held(&src));
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("me_chrome_values_held"));
+        assert!(body.contains("return"));
+        assert!(body.contains("kernel_release"));
+        assert!(body.contains("uptime_string"));
+        assert!(body.contains("boot_slot"));
     }
 
     #[test]
