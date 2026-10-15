@@ -1433,9 +1433,13 @@ struct MeCameraHold {
 
 #[derive(Clone, Debug)]
 struct MeChromeHold {
-    model: String,
     kernel: String,
     locality: String,
+}
+
+#[derive(Clone, Debug)]
+struct MeModelHold {
+    model: String,
 }
 
 #[derive(Clone, Debug)]
@@ -9519,6 +9523,7 @@ fn me_facts_for_first_paint(mut facts: MeFacts, obs_ready: bool) -> (MeFacts, bo
 fn me_fill_blocks_idle(
     facts_pending: bool,
     chrome_pending: bool,
+    model_pending: bool,
     uptime_pending: bool,
     playback_pending: bool,
     adapters_pending: bool,
@@ -9539,6 +9544,7 @@ fn me_fill_blocks_idle(
 ) -> bool {
     facts_pending
         || chrome_pending
+        || model_pending
         || uptime_pending
         || playback_pending
         || adapters_pending
@@ -9786,14 +9792,12 @@ fn me_chrome_values_held(facts: &MeFacts) -> bool {
 
 fn hold_me_chrome(facts: &MeFacts) -> MeChromeHold {
     MeChromeHold {
-        model: facts.model.clone(),
         kernel: facts.kernel.clone(),
         locality: facts.locality.clone(),
     }
 }
 
 fn apply_me_chrome_hold(facts: &mut MeFacts, hold: &MeChromeHold) {
-    facts.model = hold.model.clone();
     facts.kernel = hold.kernel.clone();
     facts.locality = hold.locality.clone();
 }
@@ -9802,8 +9806,28 @@ fn apply_me_chrome_probes(facts: &mut MeFacts) {
     if me_chrome_values_held(facts) {
         return;
     }
-    facts.model = node_model_resolved(None, hardware_model());
     facts.kernel = kernel_release();
+}
+
+fn me_model_values_held(facts: &MeFacts) -> bool {
+    !facts.model.is_empty() && facts.model != "неизвестно"
+}
+
+fn hold_me_model(facts: &MeFacts) -> MeModelHold {
+    MeModelHold {
+        model: facts.model.clone(),
+    }
+}
+
+fn apply_me_model_hold(facts: &mut MeFacts, hold: &MeModelHold) {
+    facts.model = hold.model.clone();
+}
+
+fn apply_me_model_probes(facts: &mut MeFacts) {
+    if me_model_values_held(facts) {
+        return;
+    }
+    facts.model = node_model_resolved(None, hardware_model());
 }
 
 fn me_uptime_values_held(facts: &MeFacts) -> bool {
@@ -11183,6 +11207,8 @@ fn main() {
         me_obs_pending: false,
         me_chrome_ready: false,
         me_chrome_pending: false,
+        me_model_ready: false,
+        me_model_pending: false,
         me_uptime_ready: false,
         me_uptime_pending: false,
         me_playback_ready: false,
@@ -11227,6 +11253,7 @@ fn main() {
         me_camera_hold: None,
         me_runtime_hold: None,
         me_chrome_hold: None,
+        me_model_hold: None,
         me_uptime_hold: None,
         me_playback_hold: None,
         me_adapters_hold: None,
@@ -11316,6 +11343,19 @@ fn main() {
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_chrome_probes(&mut facts);
                 shell.me_chrome_hold = Some(hold_me_chrome(&facts));
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_model_pending {
+            shell.me_model_pending = false;
+            shell.me_model_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_model_probes(&mut facts);
+                shell.me_model_hold = Some(hold_me_model(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -11842,13 +11882,18 @@ struct Shell {
     /// live observation rows so the first Sistema list can commit.
     me_obs_ready: bool,
     me_obs_pending: bool,
-    /// First flatten is settings only. The next turn fills kernel /
-    /// model. Uptime waits for `me_uptime_ready`. Playback waits for
-    /// `me_playback_ready`. Adapters wait for `me_adapters_ready`.
-    /// Boot waits for `me_boot_ready`. Camp `/proc` waits for
-    /// `me_full_ready`. CP waits for `me_cp_ready`.
+    /// First flatten is settings only. The next turn fills kernel.
+    /// Model waits for `me_model_ready`. Uptime waits for
+    /// `me_uptime_ready`. Playback waits for `me_playback_ready`.
+    /// Adapters wait for `me_adapters_ready`. Boot waits for
+    /// `me_boot_ready`. Camp `/proc` waits for `me_full_ready`. CP
+    /// waits for `me_cp_ready`.
     me_chrome_ready: bool,
     me_chrome_pending: bool,
+    /// Chrome facts keep model empty until this turn reads
+    /// `/proc/device-tree/model`.
+    me_model_ready: bool,
+    me_model_pending: bool,
     /// Chrome facts keep uptime empty until this turn reads
     /// `/proc/uptime`.
     me_uptime_ready: bool,
@@ -11956,9 +12001,12 @@ struct Shell {
     /// Runtime identity / «Наблюдения» / memory from the runtime turn.
     /// Recapture must not read `status` JSON again.
     me_runtime_hold: Option<MeRuntimeHold>,
-    /// Kernel / model from the chrome fill. Recapture must not
-    /// re-read those sysfs files.
+    /// Kernel from the chrome fill. Recapture must not re-read
+    /// `/proc/sys/kernel/osrelease`.
     me_chrome_hold: Option<MeChromeHold>,
+    /// Model from the model turn. Recapture must not re-read
+    /// `/proc/device-tree/model`. Kept after a Wi-Fi connect.
+    me_model_hold: Option<MeModelHold>,
     /// Uptime from the uptime turn. Recapture must not re-read
     /// `/proc/uptime`. Kept after a Wi-Fi connect.
     me_uptime_hold: Option<MeUptimeHold>,
@@ -15232,6 +15280,9 @@ impl Shell {
             if self.me_chrome_ready && self.me_chrome_hold.is_none() {
                 self.me_chrome_hold = Some(hold_me_chrome(&raw));
             }
+            if self.me_model_ready && self.me_model_hold.is_none() {
+                self.me_model_hold = Some(hold_me_model(&raw));
+            }
             if self.me_uptime_ready && self.me_uptime_hold.is_none() {
                 self.me_uptime_hold = Some(hold_me_uptime(&raw));
             }
@@ -15249,6 +15300,8 @@ impl Shell {
             }
             if !self.me_chrome_ready {
                 self.me_chrome_pending = true;
+            } else if !self.me_model_ready {
+                self.me_model_pending = true;
             } else if !self.me_uptime_ready {
                 self.me_uptime_pending = true;
             } else if !self.me_playback_ready {
@@ -15353,6 +15406,7 @@ impl Shell {
                 self.me_runtime_pending = true;
             }
             let hold = if !self.me_chrome_ready
+                || !self.me_model_ready
                 || !self.me_uptime_ready
                 || !self.me_playback_ready
                 || !self.me_adapters_ready
@@ -16474,6 +16528,10 @@ impl Shell {
             apply_me_chrome_hold(&mut facts, hold);
         }
         apply_me_chrome_probes(&mut facts);
+        if let Some(hold) = &self.me_model_hold {
+            apply_me_model_hold(&mut facts, hold);
+        }
+        apply_me_model_probes(&mut facts);
         if let Some(hold) = &self.me_uptime_hold {
             apply_me_uptime_hold(&mut facts, hold);
         }
@@ -17297,6 +17355,7 @@ impl Shell {
             || me_fill_blocks_idle(
                 self.me_facts_pending,
                 self.me_chrome_pending,
+                self.me_model_pending,
                 self.me_uptime_pending,
                 self.me_playback_pending,
                 self.me_adapters_pending,
@@ -29213,83 +29272,87 @@ mod tests {
     fn me_fill_blocks_idle_while_pending() {
         assert!(super::me_fill_blocks_idle(
             true, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, true, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, true, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, true, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, true, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, true, false, false, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, true, false, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, true, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, true, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, true, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, true, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, true,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            true, false, false, false, false, false, false,
+            true, false, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, true, false, false, false, false, false,
+            false, true, false, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, true, false, false, false, false,
+            false, false, true, false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, true, false, false, false,
+            false, false, false, true, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, true, false, false,
+            false, false, false, false, true, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, true, false,
+            false, false, false, false, false, true, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, true,
+            false, false, false, false, false, false, true, false,
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, true,
         ));
         assert!(!super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false, false, false, false,
+            false, false, false, false, false, false, false, false,
         ));
     }
 
@@ -29592,6 +29655,57 @@ mod tests {
         assert!(!body.contains(concat!("boot_slot", "()")));
         assert!(!body.contains(concat!("boot_attempts", "()")));
         assert!(!body.contains(concat!("playback_ready", "()")));
+        assert!(!body.contains(concat!("hardware_model", "()")));
+        assert!(!body.contains("node_model_resolved"));
+    }
+
+    #[test]
+    fn apply_me_chrome_probes_skip_model() {
+        let mut src = me_fixture_facts();
+        src.kernel = "6.1.0-panther".into();
+        src.model = "held-model".into();
+        src.cellular_cp = Some("ONLINE".into());
+        super::apply_me_chrome_probes(&mut src);
+        super::apply_me_model_probes(&mut src);
+        assert_eq!(src.model, "held-model");
+        assert_eq!(src.kernel, "6.1.0-panther");
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!body.contains(concat!("hardware_model", "()")));
+        assert!(!body.contains("node_model_resolved"));
+        assert!(body.contains("return"));
+        let chrome = src
+            .split("fn me_facts_chrome")
+            .nth(1)
+            .unwrap()
+            .split("fn me_facts(")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("hardware_model", "()")));
+        let turn = src
+            .split("else if shell.me_model_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_uptime_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_model_probes"));
+        assert!(turn.contains("hold_me_model"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("model_pending"));
     }
 
     #[test]
@@ -29858,11 +29972,12 @@ mod tests {
             .split("else if shell.me_chrome_pending")
             .nth(1)
             .unwrap()
-            .split("else if shell.me_uptime_pending")
+            .split("else if shell.me_model_pending")
             .next()
             .unwrap();
         assert!(turn.contains("apply_me_chrome_probes"));
         assert!(turn.contains("hold_me_chrome"));
+        assert!(!turn.contains("apply_me_model_probes"));
         assert!(!turn.contains("apply_me_uptime_probes"));
         assert!(!turn.contains("apply_me_playback_probes"));
         assert!(!turn.contains("apply_me_adapters_probes"));
@@ -29899,6 +30014,7 @@ mod tests {
         assert!(!chrome.contains(concat!("bluetooth_adapter_present", "()")));
         assert!(!chrome.contains(concat!("playback_ready", "()")));
         assert!(!chrome.contains(concat!("uptime_string", "()")));
+        assert!(!chrome.contains(concat!("hardware_model", "()")));
         let turn = src
             .split("else if shell.me_boot_pending")
             .nth(1)
@@ -29998,6 +30114,7 @@ mod tests {
         assert!(!connect.contains("me_adapters_hold = None"));
         assert!(!connect.contains("me_playback_hold = None"));
         assert!(!connect.contains("me_uptime_hold = None"));
+        assert!(!connect.contains("me_model_hold = None"));
         assert!(!connect.contains("me_cp_hold = None"));
         assert!(!connect.contains("me_storage_hold = None"));
         assert!(!connect.contains("me_supervisor_hold = None"));
