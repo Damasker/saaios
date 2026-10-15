@@ -9971,7 +9971,7 @@ fn apply_me_net_values(
 
 fn wifi_status_from_cli(wifi_present: bool) -> (String, bool) {
     if !wifi_present {
-        return (String::new(), wifi_net_class_readable());
+        return (String::new(), true);
     }
     let output = wpa_cli(&["status"]);
     let readable = wifi_wpa_state(&output).is_some();
@@ -30287,6 +30287,7 @@ mod tests {
             .unwrap();
         assert!(cli.contains("wifi_present"));
         assert!(!cli.contains(concat!("wifi_adapter_present", "()")));
+        assert!(!cli.contains(concat!("wifi_net_class_readable", "()")));
         let adapters = src
             .split("else if shell.me_adapters_pending")
             .nth(1)
@@ -30296,6 +30297,39 @@ mod tests {
             .unwrap();
         assert!(adapters.contains("apply_me_adapters_probes"));
         assert!(adapters.contains("hold_me_adapters"));
+    }
+
+    #[test]
+    fn apply_me_net_probes_skip_net_class_readable() {
+        let mut src = me_fixture_facts();
+        src.wifi_present = false;
+        src.wifi_status.clear();
+        src.wifi_status_readable = false;
+        src.cellular_cp = Some("ONLINE".into());
+        super::apply_me_net_probes(&mut src);
+        assert!(src.wifi_status.is_empty());
+        assert!(src.wifi_status_readable);
+        assert!(!src.wifi_present);
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        let src = include_str!("main.rs");
+        let cli = src
+            .split("fn wifi_status_from_cli")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!cli.contains(concat!("wifi_net_class_readable", "()")));
+        assert!(!cli.contains(concat!("wifi_adapter_present", "()")));
+        let net = src
+            .split("fn apply_me_net_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(net.contains("facts.wifi_present"));
+        assert!(!net.contains(concat!("wifi_net_class_readable", "()")));
     }
 
     #[test]
