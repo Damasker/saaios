@@ -462,7 +462,8 @@ real phone interface consistently.
   (ADR-697; `64c3fc50…`). Camp probes onto held chrome
   (ADR-698; host). Camp onto chrome hold on `/data`
   (ADR-699; `f9e2d372…`). Skip `/proc` cmdline unless `comm`
-  is a camp binary (ADR-700; host).
+  is a camp binary (ADR-700; host). `comm` filter on `/data`
+  (ADR-701; `64d39dde…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2129,6 +2130,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Skip `/proc` cmdline unless `comm` is a camp binary (ADR-700;
   host). dest-no-lock stays off. `kworker` and `saai-shell` skip
   cmdline. Leave Сейчас. Still Experimental.
+- [x] `/proc` comm filter on panther (ADR-701; `64d39dde…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2429,7 +2433,8 @@ and modemd (ADR-694; host). `/proc` stop on `/data`
 (ADR-697; `64c3fc50…`). Camp probes onto held chrome
 (ADR-698; host). Camp onto chrome hold on `/data`
 (ADR-699; `f9e2d372…`). Skip `/proc` cmdline unless `comm`
-is a camp binary (ADR-700; host).
+is a camp binary (ADR-700; host). `comm` filter on `/data`
+(ADR-701; `64d39dde…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

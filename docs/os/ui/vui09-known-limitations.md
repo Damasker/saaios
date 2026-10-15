@@ -271,6 +271,7 @@ The verification ledger stays in
 | camp on chrome hold | ADR-698; host; apply `/proc` + camp log onto held chrome facts; dest-no-lock stays off |
 | camp chrome flash | ADR-699; `f9e2d372…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | proc comm filter | ADR-700; host; skip `/proc` cmdline unless `comm` is a camp binary; dest-no-lock stays off |
+| proc comm flash | ADR-701; `64d39dde…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

@@ -471,6 +471,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   stays off. `surface=me` then process `S`.
   Skip `/proc` cmdline unless `comm` is a camp binary (ADR-700; host).
   dest-no-lock stays off.
+  `comm` filter on `/data` (ADR-701; `64d39dde…`). dest-no-lock stays
+  off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
