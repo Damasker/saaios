@@ -9198,22 +9198,51 @@ fn me_facts_for_first_paint(mut facts: MeFacts, obs_ready: bool) -> (MeFacts, bo
 fn me_fill_blocks_idle(
     facts_pending: bool,
     full_pending: bool,
+    camp_log_pending: bool,
     net_pending: bool,
     runtime_pending: bool,
     obs_pending: bool,
 ) -> bool {
-    facts_pending || full_pending || net_pending || runtime_pending || obs_pending
+    facts_pending
+        || full_pending
+        || camp_log_pending
+        || net_pending
+        || runtime_pending
+        || obs_pending
 }
 
-fn apply_me_camp_values(
+fn apply_me_camp_presence_values(
     facts: &mut MeFacts,
     cellular_cp: Option<String>,
     camp_owner: bool,
     cellular_endpoint: Option<&'static str>,
     status_query: bool,
-    log: Option<&str>,
 ) {
     facts.cellular_cp = cellular_cp;
+    facts.cellular_owner = Some(
+        if camp_owner {
+            "running"
+        } else {
+            "gone"
+        }
+        .to_string(),
+    );
+    facts.cellular_endpoint = cellular_endpoint.map(str::to_string);
+    facts.cellular_action = Some(
+        saai_observation::camp_action(facts.cellular_cp.as_deref(), camp_owner).to_string(),
+    );
+    facts.cellular_open = Some(
+        saai_observation::camp_open(
+            facts.cellular_cp.as_deref(),
+            camp_owner,
+            cellular_endpoint,
+            status_query,
+        )
+        .to_string(),
+    );
+}
+
+fn apply_me_camp_log_values(facts: &mut MeFacts, log: Option<&str>) {
     facts.cellular_registration_raw = log.and_then(read_data_registration_raw);
     facts.cellular_voice_raw = log.and_then(read_voice_registration_raw);
     facts.cellular_radio = log.and_then(read_radio_token);
@@ -9258,46 +9287,47 @@ fn apply_me_camp_values(
     facts.cellular_gpsnfw = log.and_then(read_gpsnfw);
     facts.cellular_samode = log.and_then(read_samode);
     facts.cellular_sim = log.and_then(read_sim_presence);
-    facts.cellular_owner = Some(
-        if camp_owner {
-            "running"
-        } else {
-            "gone"
-        }
-        .to_string(),
-    );
-    facts.cellular_endpoint = cellular_endpoint.map(str::to_string);
     facts.camp_fact_log = log.map(str::to_string);
-    facts.cellular_action = Some(
-        saai_observation::camp_action(facts.cellular_cp.as_deref(), camp_owner).to_string(),
+}
+
+fn apply_me_camp_values(
+    facts: &mut MeFacts,
+    cellular_cp: Option<String>,
+    camp_owner: bool,
+    cellular_endpoint: Option<&'static str>,
+    status_query: bool,
+    log: Option<&str>,
+) {
+    apply_me_camp_presence_values(
+        facts,
+        cellular_cp,
+        camp_owner,
+        cellular_endpoint,
+        status_query,
     );
-    facts.cellular_open = Some(
-        saai_observation::camp_open(
-            facts.cellular_cp.as_deref(),
-            camp_owner,
-            cellular_endpoint,
-            status_query,
-        )
-        .to_string(),
-    );
+    apply_me_camp_log_values(facts, log);
 }
 
 fn apply_me_camp_probes(facts: &mut MeFacts) {
     let camp = proc_camp_presence();
     let cellular_cp = read_cp_state();
-    let camp_log = if camp_log_current_from(camp.owner, cellular_cp.as_deref()) {
-        read_camp_owner_log()
-    } else {
-        None
-    };
-    apply_me_camp_values(
+    apply_me_camp_presence_values(
         facts,
         cellular_cp,
         camp.owner,
         camp.endpoint,
         camp.status_query,
-        camp_log.as_deref(),
     );
+}
+
+fn apply_me_camp_log_probes(facts: &mut MeFacts) {
+    let owner = facts.cellular_owner.as_deref() == Some("running");
+    let log = if camp_log_current_from(owner, facts.cellular_cp.as_deref()) {
+        read_camp_owner_log()
+    } else {
+        None
+    };
+    apply_me_camp_log_values(facts, log.as_deref());
 }
 
 fn apply_me_runtime_values(
@@ -10479,6 +10509,8 @@ fn main() {
         me_obs_pending: false,
         me_full_ready: false,
         me_full_pending: false,
+        me_camp_log_ready: false,
+        me_camp_log_pending: false,
         me_net_ready: false,
         me_net_pending: false,
         me_runtime_ready: false,
@@ -10567,6 +10599,18 @@ fn main() {
             shell.me_full_ready = true;
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_camp_probes(&mut facts);
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_camp_log_pending {
+            shell.me_camp_log_pending = false;
+            shell.me_camp_log_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_camp_log_probes(&mut facts);
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -10901,11 +10945,15 @@ struct Shell {
     me_obs_ready: bool,
     me_obs_pending: bool,
     /// First flatten is settings + sysfs. The next turn applies camp
-    /// `/proc` and the owner log onto held chrome facts. `wpa_cli` /
-    /// `df` wait for `me_net_ready`. Runtime JSON waits for
-    /// `me_runtime_ready`.
+    /// `/proc` onto held chrome facts. The owner log waits for
+    /// `me_camp_log_ready`. `wpa_cli` / `df` wait for `me_net_ready`.
+    /// Runtime JSON waits for `me_runtime_ready`.
     me_full_ready: bool,
     me_full_pending: bool,
+    /// Camp presence keeps radio tokens empty until this turn streams
+    /// the owner log.
+    me_camp_log_ready: bool,
+    me_camp_log_pending: bool,
     /// Live camp facts keep Wi-Fi «Нет статуса» and storage
     /// «неизвестно» until this turn runs one `wpa_cli status` and `df`.
     me_net_ready: bool,
@@ -14109,13 +14157,17 @@ impl Shell {
             if !self.me_full_ready {
                 self.me_full_pending = true;
             }
-            if self.me_full_ready && !self.me_net_ready {
+            if self.me_full_ready && !self.me_camp_log_ready {
+                self.me_camp_log_pending = true;
+            }
+            if self.me_full_ready && self.me_camp_log_ready && !self.me_net_ready {
                 self.me_net_pending = true;
             }
-            if self.me_full_ready && !self.me_runtime_ready {
+            if self.me_full_ready && self.me_camp_log_ready && !self.me_runtime_ready {
                 self.me_runtime_pending = true;
             }
-            let hold = if !self.me_net_ready
+            let hold = if !self.me_camp_log_ready
+                || !self.me_net_ready
                 || !self.me_runtime_ready
                 || (!self.me_obs_ready && !raw.observations.is_empty())
             {
@@ -15210,6 +15262,9 @@ impl Shell {
             memory_records: Vec::new(),
         };
         apply_me_camp_probes(&mut facts);
+        if self.me_camp_log_ready {
+            apply_me_camp_log_probes(&mut facts);
+        }
         facts
     }
 
@@ -16001,6 +16056,7 @@ impl Shell {
             || me_fill_blocks_idle(
                 self.me_facts_pending,
                 self.me_full_pending,
+                self.me_camp_log_pending,
                 self.me_net_pending,
                 self.me_runtime_pending,
                 self.me_obs_pending,
@@ -27816,12 +27872,13 @@ mod tests {
 
     #[test]
     fn me_fill_blocks_idle_while_pending() {
-        assert!(super::me_fill_blocks_idle(true, false, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, true, false, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, true, false, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, true, false));
-        assert!(super::me_fill_blocks_idle(false, false, false, false, true));
-        assert!(!super::me_fill_blocks_idle(false, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(true, false, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, true, false, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, true, false, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, true, false, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, false, true, false));
+        assert!(super::me_fill_blocks_idle(false, false, false, false, false, true));
+        assert!(!super::me_fill_blocks_idle(false, false, false, false, false, false));
     }
 
     #[test]
@@ -27866,6 +27923,53 @@ mod tests {
             .unwrap();
         assert!(body.contains("camp_fact_log"));
         assert!(!body.contains(concat!("read_camp_owner_log", "()")));
+    }
+
+    #[test]
+    fn apply_me_camp_probes_skip_owner_log() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_camp_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("proc_camp_presence"));
+        assert!(body.contains("read_cp_state"));
+        assert!(!body.contains(concat!("read_camp_owner_log", "()")));
+        let log_body = src
+            .split("fn apply_me_camp_log_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(log_body.contains(concat!("read_camp_owner_log", "()")));
+        assert!(!log_body.contains("proc_camp_presence"));
+    }
+
+    #[test]
+    fn apply_me_camp_log_values_keep_presence() {
+        let mut src = me_fixture_facts();
+        src.kernel = "6.1.0-panther".into();
+        super::apply_me_camp_presence_values(
+            &mut src,
+            Some("ONLINE".into()),
+            true,
+            Some("owner"),
+            true,
+        );
+        super::apply_me_camp_log_values(&mut src, Some("field=data registration_raw=1\n"));
+        assert_eq!(src.kernel, "6.1.0-panther");
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        assert_eq!(src.cellular_owner.as_deref(), Some("running"));
+        assert_eq!(src.cellular_endpoint.as_deref(), Some("owner"));
+        assert_eq!(src.cellular_registration_raw, Some(1));
+        assert_eq!(
+            src.camp_fact_log.as_deref(),
+            Some("field=data registration_raw=1\n")
+        );
     }
 
     #[test]
