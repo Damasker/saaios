@@ -300,6 +300,7 @@ The verification ledger stays in
 | chrome next flash | ADR-727; `7fe7ab4b…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | locality off camp | ADR-728; host; camp skip widget JSON; fill on the next loop; dest-no-lock stays off |
 | locality off camp flash | ADR-729; `4499003c…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| local sysfs next turn | ADR-730; host; net skip v4l / ifaces / paired / trusted; fill next loop; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

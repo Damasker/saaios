@@ -1402,6 +1402,10 @@ struct MeNetHold {
     wifi_status: String,
     wifi_status_readable: bool,
     cellular_supervisor: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct MeLocalHold {
     bluetooth_paired: usize,
     camera_nodes: Vec<String>,
     cellular_ifaces: Vec<String>,
@@ -9479,6 +9483,7 @@ fn me_fill_blocks_idle(
     locality_pending: bool,
     camp_log_pending: bool,
     net_pending: bool,
+    local_sysfs_pending: bool,
     runtime_pending: bool,
     obs_pending: bool,
 ) -> bool {
@@ -9488,6 +9493,7 @@ fn me_fill_blocks_idle(
         || locality_pending
         || camp_log_pending
         || net_pending
+        || local_sysfs_pending
         || runtime_pending
         || obs_pending
 }
@@ -9784,10 +9790,6 @@ fn hold_me_net(facts: &MeFacts) -> MeNetHold {
         wifi_status: facts.wifi_status.clone(),
         wifi_status_readable: facts.wifi_status_readable,
         cellular_supervisor: facts.cellular_supervisor.clone(),
-        bluetooth_paired: facts.bluetooth_paired,
-        camera_nodes: facts.camera_nodes.clone(),
-        cellular_ifaces: facts.cellular_ifaces.clone(),
-        trusted_client_count: facts.trusted_client_count,
     }
 }
 
@@ -9798,13 +9800,6 @@ fn apply_me_net_hold(facts: &mut MeFacts, hold: &MeNetHold) {
         hold.wifi_status.clone(),
         hold.wifi_status_readable,
         hold.cellular_supervisor.clone(),
-    );
-    apply_me_local_values(
-        facts,
-        hold.bluetooth_paired,
-        hold.camera_nodes.clone(),
-        hold.cellular_ifaces.clone(),
-        hold.trusted_client_count,
     );
 }
 
@@ -9820,7 +9815,6 @@ fn apply_me_net_probes(facts: &mut MeFacts) {
         wifi_status_readable,
         read_supervisor_token(),
     );
-    apply_me_local_probes(facts);
 }
 
 fn apply_me_local_values(
@@ -9836,7 +9830,36 @@ fn apply_me_local_values(
     facts.trusted_client_count = trusted_client_count;
 }
 
+fn me_local_values_held(facts: &MeFacts) -> bool {
+    facts.bluetooth_paired > 0
+        || !facts.camera_nodes.is_empty()
+        || !facts.cellular_ifaces.is_empty()
+        || facts.trusted_client_count > 0
+}
+
+fn hold_me_local(facts: &MeFacts) -> MeLocalHold {
+    MeLocalHold {
+        bluetooth_paired: facts.bluetooth_paired,
+        camera_nodes: facts.camera_nodes.clone(),
+        cellular_ifaces: facts.cellular_ifaces.clone(),
+        trusted_client_count: facts.trusted_client_count,
+    }
+}
+
+fn apply_me_local_hold(facts: &mut MeFacts, hold: &MeLocalHold) {
+    apply_me_local_values(
+        facts,
+        hold.bluetooth_paired,
+        hold.camera_nodes.clone(),
+        hold.cellular_ifaces.clone(),
+        hold.trusted_client_count,
+    );
+}
+
 fn apply_me_local_probes(facts: &mut MeFacts) {
+    if me_local_values_held(facts) {
+        return;
+    }
     apply_me_local_values(
         facts,
         bluetooth_paired_count(),
@@ -10930,12 +10953,15 @@ fn main() {
         me_camp_log_pending: false,
         me_net_ready: false,
         me_net_pending: false,
+        me_local_sysfs_ready: false,
+        me_local_sysfs_pending: false,
         me_runtime_ready: false,
         me_runtime_pending: false,
         me_facts_held: None,
         me_camp_fact_log: None,
         me_camp_presence: None,
         me_net_hold: None,
+        me_local_hold: None,
         me_runtime_hold: None,
         me_chrome_hold: None,
         entityd: {
@@ -11082,6 +11108,19 @@ fn main() {
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_net_probes(&mut facts);
                 shell.me_net_hold = Some(hold_me_net(&facts));
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_local_sysfs_pending {
+            shell.me_local_sysfs_pending = false;
+            shell.me_local_sysfs_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_local_probes(&mut facts);
+                shell.me_local_hold = Some(hold_me_local(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -11426,8 +11465,13 @@ struct Shell {
     me_camp_log_pending: bool,
     /// Live camp facts keep Wi-Fi «Нет статуса» and storage
     /// «неизвестно» until this turn runs one `wpa_cli status` and `df`.
+    /// Camera / ifaces / paired / trusted wait for `me_local_sysfs_ready`.
     me_net_ready: bool,
     me_net_pending: bool,
+    /// Net facts keep camera / ifaces empty until this turn reads
+    /// v4l / net class / paired / trusted clients.
+    me_local_sysfs_ready: bool,
+    me_local_sysfs_pending: bool,
     /// Camp facts keep phone-gate identity and empty observations until
     /// this turn reads runtime `status`.
     me_runtime_ready: bool,
@@ -11441,9 +11485,13 @@ struct Shell {
     /// `/proc` + CP from the camp turn. Recapture must not walk `/proc`
     /// again.
     me_camp_presence: Option<MeCampPresenceHold>,
-    /// Wi-Fi / `df` / local sysfs / supervisor from the net turn.
-    /// Recapture must not shell out again. Dropped after a connect.
+    /// Wi-Fi / `df` / supervisor from the net turn. Recapture must
+    /// not shell out again. Dropped after a connect.
     me_net_hold: Option<MeNetHold>,
+    /// Camera / ifaces / paired / trusted from the local-sysfs turn.
+    /// Recapture must not re-list those nodes. Kept after a Wi-Fi
+    /// connect.
+    me_local_hold: Option<MeLocalHold>,
     /// Runtime identity / «Наблюдения» / memory from the runtime turn.
     /// Recapture must not read `status` JSON again.
     me_runtime_hold: Option<MeRuntimeHold>,
@@ -14640,6 +14688,15 @@ impl Shell {
                             self.me_net_hold = Some(hold_me_net(&facts));
                         }
                     }
+                    if self.me_local_sysfs_ready {
+                        if let Some(hold) = &self.me_local_hold {
+                            apply_me_local_hold(&mut facts, hold);
+                        }
+                        apply_me_local_probes(&mut facts);
+                        if self.me_local_hold.is_none() {
+                            self.me_local_hold = Some(hold_me_local(&facts));
+                        }
+                    }
                     if self.me_runtime_ready {
                         if let Some(hold) = &self.me_runtime_hold {
                             apply_me_runtime_hold(&mut facts, hold);
@@ -14678,6 +14735,16 @@ impl Shell {
             if self.me_full_ready
                 && self.me_locality_ready
                 && self.me_camp_log_ready
+                && self.me_net_ready
+                && !self.me_local_sysfs_ready
+            {
+                self.me_local_sysfs_pending = true;
+            }
+            if self.me_full_ready
+                && self.me_locality_ready
+                && self.me_camp_log_ready
+                && self.me_net_ready
+                && self.me_local_sysfs_ready
                 && !self.me_runtime_ready
             {
                 self.me_runtime_pending = true;
@@ -14686,6 +14753,7 @@ impl Shell {
                 || !self.me_locality_ready
                 || !self.me_camp_log_ready
                 || !self.me_net_ready
+                || !self.me_local_sysfs_ready
                 || !self.me_runtime_ready
                 || (!self.me_obs_ready && !raw.observations.is_empty())
             {
@@ -16600,6 +16668,7 @@ impl Shell {
                 self.me_locality_pending,
                 self.me_camp_log_pending,
                 self.me_net_pending,
+                self.me_local_sysfs_pending,
                 self.me_runtime_pending,
                 self.me_obs_pending,
             )
@@ -28500,31 +28569,34 @@ mod tests {
     #[test]
     fn me_fill_blocks_idle_while_pending() {
         assert!(super::me_fill_blocks_idle(
-            true, false, false, false, false, false, false, false
+            true, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, true, false, false, false, false, false, false
+            false, true, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, true, false, false, false, false, false
+            false, false, true, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, true, false, false, false, false
+            false, false, false, true, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, true, false, false, false
+            false, false, false, false, true, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, true, false, false
+            false, false, false, false, false, true, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, true, false
+            false, false, false, false, false, false, true, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, true
+            false, false, false, false, false, false, false, true, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, false, true
         ));
         assert!(!super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false
+            false, false, false, false, false, false, false, false, false
         ));
     }
 
@@ -29006,6 +29078,47 @@ mod tests {
             .unwrap();
         assert!(connect.contains("me_net_hold = None"));
         assert!(connect.contains("invalidate_me_rows"));
+        assert!(!connect.contains("me_local_hold = None"));
+    }
+
+    #[test]
+    fn apply_me_net_probes_skip_local_sysfs() {
+        let mut src = me_fixture_facts();
+        src.camera_nodes = vec!["video0".into()];
+        src.bluetooth_paired = 2;
+        src.cellular_ifaces = vec!["rmnet0".into()];
+        src.trusted_client_count = 1;
+        super::apply_me_local_probes(&mut src);
+        assert_eq!(src.camera_nodes, vec!["video0".to_string()]);
+        assert_eq!(src.bluetooth_paired, 2);
+        assert_eq!(src.cellular_ifaces, vec!["rmnet0".to_string()]);
+        assert_eq!(src.trusted_client_count, 1);
+        let src = include_str!("main.rs");
+        let net = src
+            .split("fn apply_me_net_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!net.contains("apply_me_local_probes"));
+        let turn = src
+            .split("else if shell.me_local_sysfs_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_runtime_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_local_probes"));
+        assert!(turn.contains("hold_me_local"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("local_sysfs_pending"));
     }
 
     #[test]
