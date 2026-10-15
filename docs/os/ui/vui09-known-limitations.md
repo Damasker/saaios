@@ -323,6 +323,7 @@ The verification ledger stays in
 | uptime next turn | ADR-750; host; chrome skip `/proc/uptime`; fill next loop; dest-no-lock stays off |
 | uptime next flash | ADR-751; `b523e71c…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | model next turn | ADR-752; host; chrome skip device-tree model; fill next loop; dest-no-lock stays off |
+| model next flash | ADR-753; `79e1c0fb…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

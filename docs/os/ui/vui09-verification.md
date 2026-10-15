@@ -551,6 +551,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Uptime next turn on `/data` (ADR-751; `b523e71c…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Model next turn (ADR-752; host). dest-no-lock stays off.
+  Model next turn on `/data` (ADR-753; `79e1c0fb…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
