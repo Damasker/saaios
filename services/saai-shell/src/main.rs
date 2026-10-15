@@ -9321,6 +9321,10 @@ fn apply_me_camp_probes(facts: &mut MeFacts) {
 }
 
 fn apply_me_camp_log_probes(facts: &mut MeFacts) {
+    if let Some(log) = facts.camp_fact_log.clone() {
+        apply_me_camp_log_values(facts, Some(&log));
+        return;
+    }
     let owner = facts.cellular_owner.as_deref() == Some("running");
     let log = if camp_log_current_from(owner, facts.cellular_cp.as_deref()) {
         read_camp_owner_log()
@@ -10516,6 +10520,7 @@ fn main() {
         me_runtime_ready: false,
         me_runtime_pending: false,
         me_facts_held: None,
+        me_camp_fact_log: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -10611,6 +10616,7 @@ fn main() {
             shell.me_camp_log_ready = true;
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_camp_log_probes(&mut facts);
+                shell.me_camp_fact_log = facts.camp_fact_log.clone();
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -10965,6 +10971,9 @@ struct Shell {
     /// First `me_facts()` kept for the net and runtime turns so later
     /// flattens do not shell out again.
     me_facts_held: Option<MeFacts>,
+    /// Filtered owner-log lines from the first stream. Recapture must
+    /// not open the file again.
+    me_camp_fact_log: Option<String>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -15263,6 +15272,7 @@ impl Shell {
         };
         apply_me_camp_probes(&mut facts);
         if self.me_camp_log_ready {
+            facts.camp_fact_log = self.me_camp_fact_log.clone();
             apply_me_camp_log_probes(&mut facts);
         }
         facts
@@ -27947,6 +27957,32 @@ mod tests {
             .unwrap();
         assert!(log_body.contains(concat!("read_camp_owner_log", "()")));
         assert!(!log_body.contains("proc_camp_presence"));
+    }
+
+    #[test]
+    fn apply_me_camp_log_probes_keep_held_lines() {
+        let mut src = me_fixture_facts();
+        src.cellular_owner = Some("running".into());
+        src.cellular_cp = Some("ONLINE".into());
+        src.camp_fact_log = Some("field=data registration_raw=1\n".into());
+        super::apply_me_camp_log_probes(&mut src);
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        assert_eq!(src.cellular_owner.as_deref(), Some("running"));
+        assert_eq!(src.cellular_registration_raw, Some(1));
+        assert_eq!(
+            src.camp_fact_log.as_deref(),
+            Some("field=data registration_raw=1\n")
+        );
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_camp_log_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("camp_fact_log"));
+        assert!(body.contains("return"));
     }
 
     #[test]
