@@ -469,6 +469,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   off.
   Camp onto chrome hold on `/data` (ADR-699; `f9e2d372…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Skip `/proc` cmdline unless `comm` is a camp binary (ADR-700; host).
+  dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

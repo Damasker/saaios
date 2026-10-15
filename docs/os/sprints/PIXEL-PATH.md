@@ -470,6 +470,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 supervisor net flash | ADR-696 supervisor token on `/data` **на panther** (ADR-697; `64c3fc50…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 camp on chrome hold | apply `/proc` + camp log onto held chrome facts **host** (ADR-698; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 camp chrome flash | ADR-698 camp onto chrome hold on `/data` **на panther** (ADR-699; `f9e2d372…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
+| VUI-09 proc comm filter | skip `/proc` cmdline unless `comm` is a camp binary **host** (ADR-700; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -737,6 +738,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 supervisor net flash: ADR-696 supervisor token on `/data` (ADR-697; `64c3fc50…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 camp on chrome hold: apply `/proc` + camp log onto held chrome facts (ADR-698; host; dest-no-lock stays off)
 - VUI-09 camp chrome flash: ADR-698 camp onto chrome hold on `/data` (ADR-699; `f9e2d372…`; dest-no-lock stays off; `surface=me`)
+- VUI-09 proc comm filter: skip `/proc` cmdline unless `comm` is a camp binary (ADR-700; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

@@ -1459,6 +1459,11 @@ fn proc_camp_presence_from_rows(rows: &[ProcCampRow<'_>]) -> ProcCampPresence {
     proc_camp_presence_finish(scan)
 }
 
+fn proc_comm_is_camp_candidate(comm: &str) -> bool {
+    let comm = comm.trim_end_matches(['\n', '\0']).trim();
+    comm == "saai-modemd" || comm == "sit-sim-status" || comm.starts_with("modem-rfs-camp")
+}
+
 fn proc_pid_holds_modem_endpoint(proc_dir: &Path) -> bool {
     let Ok(fds) = std::fs::read_dir(proc_dir.join("fd")) else {
         return false;
@@ -1486,6 +1491,10 @@ fn proc_camp_presence() -> ProcCampPresence {
             continue;
         };
         if !name.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
+        if !proc_comm_is_camp_candidate(&comm) {
             continue;
         }
         let cmdline = std::fs::read(entry.path().join("cmdline")).unwrap_or_default();
@@ -28095,6 +28104,16 @@ mod tests {
         assert!(got.owner);
         assert!(got.status_query);
         assert_eq!(got.endpoint, Some("owner"));
+    }
+
+    #[test]
+    fn proc_comm_is_camp_candidate_skips_unrelated_names() {
+        assert!(super::proc_comm_is_camp_candidate("saai-modemd\n"));
+        assert!(super::proc_comm_is_camp_candidate("sit-sim-status"));
+        assert!(super::proc_comm_is_camp_candidate("modem-rfs-camp-c"));
+        assert!(!super::proc_comm_is_camp_candidate("kworker/0:1"));
+        assert!(!super::proc_comm_is_camp_candidate("saai-shell"));
+        assert!(!super::proc_comm_is_camp_candidate(""));
     }
 
     #[test]
