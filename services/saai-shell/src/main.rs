@@ -9237,10 +9237,12 @@ fn apply_me_net_values(
     storage: String,
     wifi_status: String,
     wifi_status_readable: bool,
+    cellular_supervisor: Option<String>,
 ) {
     facts.storage = storage;
     facts.wifi_status = wifi_status;
     facts.wifi_status_readable = wifi_status_readable;
+    facts.cellular_supervisor = cellular_supervisor;
 }
 
 fn wifi_status_from_cli() -> (String, bool) {
@@ -9265,7 +9267,13 @@ fn wifi_status_from_cli() -> (String, bool) {
 
 fn apply_me_net_probes(facts: &mut MeFacts) {
     let (wifi_status, wifi_status_readable) = wifi_status_from_cli();
-    apply_me_net_values(facts, storage_string(), wifi_status, wifi_status_readable);
+    apply_me_net_values(
+        facts,
+        storage_string(),
+        wifi_status,
+        wifi_status_readable,
+        read_supervisor_token(),
+    );
     apply_me_local_probes(facts);
 }
 
@@ -9300,7 +9308,7 @@ fn me_facts_without_local_probes(mut facts: MeFacts) -> MeFacts {
 
 #[allow(dead_code)]
 fn me_facts_without_net_probes(mut facts: MeFacts) -> MeFacts {
-    apply_me_net_values(&mut facts, "неизвестно".into(), String::new(), false);
+    apply_me_net_values(&mut facts, "неизвестно".into(), String::new(), false, None);
     facts
 }
 
@@ -15081,7 +15089,7 @@ impl Shell {
                 .to_string(),
             ),
             cellular_endpoint: cellular_endpoint.map(str::to_string),
-            cellular_supervisor: read_supervisor_token(),
+            cellular_supervisor: None,
             cellular_action: Some(
                 saai_observation::camp_action(cellular_cp.as_deref(), camp_owner).to_string(),
             ),
@@ -27766,11 +27774,13 @@ mod tests {
         src.storage = "1.0 ГБ из 2.0 ГБ занято".into();
         src.wifi_status = "Подключено: test".into();
         src.wifi_status_readable = true;
+        src.cellular_supervisor = Some("hold".into());
         src.cellular_cp = Some("ONLINE".into());
         let stripped = super::me_facts_without_net_probes(src);
         assert_eq!(stripped.storage, "неизвестно");
         assert!(stripped.wifi_status.is_empty());
         assert!(!stripped.wifi_status_readable);
+        assert!(stripped.cellular_supervisor.is_none());
         assert_eq!(stripped.cellular_cp.as_deref(), Some("ONLINE"));
         let mut filled = stripped;
         super::apply_me_net_values(
@@ -27778,10 +27788,12 @@ mod tests {
             "1.0 ГБ из 2.0 ГБ занято".into(),
             "Не подключено".into(),
             true,
+            Some("hold".into()),
         );
         assert_eq!(filled.storage, "1.0 ГБ из 2.0 ГБ занято");
         assert_eq!(filled.wifi_status, "Не подключено");
         assert!(filled.wifi_status_readable);
+        assert_eq!(filled.cellular_supervisor.as_deref(), Some("hold"));
         assert_eq!(filled.cellular_cp.as_deref(), Some("ONLINE"));
     }
 
