@@ -584,6 +584,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Entityd skip phone gate on `/data` (ADR-773; `b350cf13…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Window skip phone gate (ADR-774; host). dest-no-lock stays off.
+  Window skip phone gate on `/data` (ADR-775; `ceb55563…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
