@@ -1387,6 +1387,7 @@ struct ProcCampPresence {
     endpoint: Option<&'static str>,
 }
 
+#[derive(Clone, Copy)]
 struct ProcCampRow<'a> {
     cmdline: &'a [u8],
     holds_endpoint: bool,
@@ -1396,6 +1397,7 @@ struct ProcCampRow<'a> {
 struct ProcCampScan {
     owner: bool,
     status_query: bool,
+    modemd: bool,
     owner_has: bool,
     modemd_has: bool,
 }
@@ -1408,6 +1410,9 @@ fn proc_camp_presence_apply(scan: &mut ProcCampScan, row: ProcCampRow<'_>) {
     let argv0 = String::from_utf8_lossy(argv0);
     if argv0.ends_with("/sit-sim-status") {
         scan.status_query = true;
+    }
+    if argv0.ends_with("/saai-modemd") {
+        scan.modemd = true;
     }
     let kind = if argv0.ends_with("/modem-rfs-camp-combined-owner") {
         Some("owner")
@@ -1422,6 +1427,10 @@ fn proc_camp_presence_apply(scan: &mut ProcCampScan, row: ProcCampRow<'_>) {
             _ => scan.modemd_has = true,
         }
     }
+}
+
+fn proc_camp_scan_complete(scan: &ProcCampScan) -> bool {
+    scan.owner && scan.status_query && scan.modemd
 }
 
 fn proc_camp_presence_finish(scan: ProcCampScan) -> ProcCampPresence {
@@ -1443,6 +1452,9 @@ fn proc_camp_presence_from_rows(rows: &[ProcCampRow<'_>]) -> ProcCampPresence {
                 holds_endpoint: row.holds_endpoint,
             },
         );
+        if proc_camp_scan_complete(&scan) {
+            break;
+        }
     }
     proc_camp_presence_finish(scan)
 }
@@ -1489,6 +1501,9 @@ fn proc_camp_presence() -> ProcCampPresence {
                 holds_endpoint,
             },
         );
+        if proc_camp_scan_complete(&scan) {
+            break;
+        }
     }
     proc_camp_presence_finish(scan)
 }
@@ -27939,6 +27954,37 @@ mod tests {
         assert_eq!(got.endpoint, Some("owner"));
         let src = include_str!("main.rs");
         assert!(!src.contains(concat!("let mut collected = ", "Vec::new();")));
+    }
+
+    #[test]
+    fn proc_camp_presence_stops_once_owner_status_and_modemd_are_known() {
+        let owner = super::ProcCampRow {
+            cmdline: b"/data/saaios/bin/modem-rfs-camp-combined-owner\0",
+            holds_endpoint: true,
+        };
+        let status = super::ProcCampRow {
+            cmdline: b"/data/saaios/bin/sit-sim-status\0",
+            holds_endpoint: false,
+        };
+        let modemd = super::ProcCampRow {
+            cmdline: b"/data/saaios/system/saai-modemd\0",
+            holds_endpoint: false,
+        };
+        let later_shared = super::ProcCampRow {
+            cmdline: b"/data/saaios/system/saai-modemd\0",
+            holds_endpoint: true,
+        };
+        let mut scan = super::ProcCampScan::default();
+        super::proc_camp_presence_apply(&mut scan, owner);
+        assert!(!super::proc_camp_scan_complete(&scan));
+        super::proc_camp_presence_apply(&mut scan, status);
+        assert!(!super::proc_camp_scan_complete(&scan));
+        super::proc_camp_presence_apply(&mut scan, modemd);
+        assert!(super::proc_camp_scan_complete(&scan));
+        let got = super::proc_camp_presence_from_rows(&[owner, status, modemd, later_shared]);
+        assert!(got.owner);
+        assert!(got.status_query);
+        assert_eq!(got.endpoint, Some("owner"));
     }
 
     #[test]

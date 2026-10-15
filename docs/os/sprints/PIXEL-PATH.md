@@ -464,6 +464,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 Me runtime flash | ADR-690 deferred runtime JSON on `/data` **на panther** (ADR-691; `8f60e55c…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 Me local with net | camp facts skip Bluetooth/v4l/ifaces/keys; fill on Wi-Fi turn **host** (ADR-692; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 Me local flash | ADR-692 local probes on `/data` **на panther** (ADR-693; `f25649f7…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
+| VUI-09 proc camp early exit | stop `/proc` after owner, `sit-sim-status`, and `saai-modemd` **host** (ADR-694; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -725,6 +726,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 Me runtime flash: ADR-690 deferred runtime JSON on `/data` (ADR-691; `8f60e55c…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 Me local with net: camp facts skip Bluetooth/v4l/ifaces/keys; fill on Wi-Fi turn (ADR-692; host; dest-no-lock stays off)
 - VUI-09 Me local flash: ADR-692 local probes on `/data` (ADR-693; `f25649f7…`; dest-no-lock stays off; `surface=me`)
+- VUI-09 proc camp early exit: stop `/proc` after owner, `sit-sim-status`, and `saai-modemd` (ADR-694; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
