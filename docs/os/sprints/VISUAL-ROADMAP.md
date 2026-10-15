@@ -547,7 +547,8 @@ real phone interface consistently.
   (ADR-782; host). Runtime skip sock exists on `/data`
   (ADR-783; `a0faf865…`). Orb skip runtime facts
   (ADR-784; host). Orb skip runtime facts on `/data`
-  (ADR-785; `5ea093f2…`).
+  (ADR-785; `5ea093f2…`). Orb pulse skip runtime facts
+  (ADR-786; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2436,6 +2437,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Orb skip runtime facts on panther (ADR-785; `5ea093f2…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Orb pulse skip runtime facts (ADR-786; host). dest-no-lock stays off. Orb
+  pulse skip `read_runtime_live_facts`. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2821,7 +2824,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-782; host). Runtime skip sock exists on `/data`
 (ADR-783; `a0faf865…`). Orb skip runtime facts
 (ADR-784; host). Orb skip runtime facts on `/data`
-(ADR-785; `5ea093f2…`).
+(ADR-785; `5ea093f2…`). Orb pulse skip runtime facts
+(ADR-786; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

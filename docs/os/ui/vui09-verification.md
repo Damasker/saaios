@@ -601,6 +601,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Orb skip runtime facts (ADR-784; host). dest-no-lock stays off.
   Orb skip runtime facts on `/data` (ADR-785; `5ea093f2…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Orb pulse skip runtime facts (ADR-786; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

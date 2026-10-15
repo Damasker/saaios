@@ -13617,7 +13617,7 @@ impl Shell {
             self.entityd.is_connected(),
             &self.selected_entities,
             self.orb_menu_open,
-            read_runtime_live_facts().health.as_ref(),
+            None,
             Some(&context),
         ))
         .motion()
@@ -29917,6 +29917,38 @@ mod tests {
             .nth(1)
             .unwrap()
             .split("fn dismiss_notification")
+            .next()
+            .unwrap();
+        assert!(body.contains("orb_visual_state_with"));
+        assert!(!body.contains(concat!("read_runtime_live_facts", "()")));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+        assert!(!probes.contains("read_runtime_live_facts_from_unix"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn orb_wants_activity_pulse_skip_read_runtime_live_facts() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn orb_wants_activity_pulse")
+            .nth(1)
+            .unwrap()
+            .split("fn sync_activity_clock")
             .next()
             .unwrap();
         assert!(body.contains("orb_visual_state_with"));
