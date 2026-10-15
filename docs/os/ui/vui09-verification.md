@@ -526,6 +526,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Supervisor next turn (ADR-734; host). dest-no-lock stays off.
   Supervisor next turn on `/data` (ADR-735; `8ab3cd44…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Camera next turn (ADR-736; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

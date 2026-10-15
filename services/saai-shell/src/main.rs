@@ -1415,9 +1415,13 @@ struct MeStorageHold {
 #[derive(Clone, Debug)]
 struct MeLocalHold {
     bluetooth_paired: usize,
-    camera_nodes: Vec<String>,
     cellular_ifaces: Vec<String>,
     trusted_client_count: usize,
+}
+
+#[derive(Clone, Debug)]
+struct MeCameraHold {
+    camera_nodes: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -9494,6 +9498,7 @@ fn me_fill_blocks_idle(
     supervisor_pending: bool,
     storage_pending: bool,
     local_sysfs_pending: bool,
+    camera_pending: bool,
     runtime_pending: bool,
     obs_pending: bool,
 ) -> bool {
@@ -9506,6 +9511,7 @@ fn me_fill_blocks_idle(
         || supervisor_pending
         || storage_pending
         || local_sysfs_pending
+        || camera_pending
         || runtime_pending
         || obs_pending
 }
@@ -9871,7 +9877,6 @@ fn apply_me_local_values(
 
 fn me_local_values_held(facts: &MeFacts) -> bool {
     facts.bluetooth_paired > 0
-        || !facts.camera_nodes.is_empty()
         || !facts.cellular_ifaces.is_empty()
         || facts.trusted_client_count > 0
 }
@@ -9879,33 +9884,45 @@ fn me_local_values_held(facts: &MeFacts) -> bool {
 fn hold_me_local(facts: &MeFacts) -> MeLocalHold {
     MeLocalHold {
         bluetooth_paired: facts.bluetooth_paired,
-        camera_nodes: facts.camera_nodes.clone(),
         cellular_ifaces: facts.cellular_ifaces.clone(),
         trusted_client_count: facts.trusted_client_count,
     }
 }
 
 fn apply_me_local_hold(facts: &mut MeFacts, hold: &MeLocalHold) {
-    apply_me_local_values(
-        facts,
-        hold.bluetooth_paired,
-        hold.camera_nodes.clone(),
-        hold.cellular_ifaces.clone(),
-        hold.trusted_client_count,
-    );
+    facts.bluetooth_paired = hold.bluetooth_paired;
+    facts.cellular_ifaces = hold.cellular_ifaces.clone();
+    facts.trusted_client_count = hold.trusted_client_count;
 }
 
 fn apply_me_local_probes(facts: &mut MeFacts) {
     if me_local_values_held(facts) {
         return;
     }
-    apply_me_local_values(
-        facts,
-        bluetooth_paired_count(),
-        capture_nodes(),
-        cellular_ifaces(),
-        trusted_clients().len(),
-    );
+    facts.bluetooth_paired = bluetooth_paired_count();
+    facts.cellular_ifaces = cellular_ifaces();
+    facts.trusted_client_count = trusted_clients().len();
+}
+
+fn me_camera_values_held(facts: &MeFacts) -> bool {
+    !facts.camera_nodes.is_empty()
+}
+
+fn hold_me_camera(facts: &MeFacts) -> MeCameraHold {
+    MeCameraHold {
+        camera_nodes: facts.camera_nodes.clone(),
+    }
+}
+
+fn apply_me_camera_hold(facts: &mut MeFacts, hold: &MeCameraHold) {
+    facts.camera_nodes = hold.camera_nodes.clone();
+}
+
+fn apply_me_camera_probes(facts: &mut MeFacts) {
+    if me_camera_values_held(facts) {
+        return;
+    }
+    facts.camera_nodes = capture_nodes();
 }
 
 #[allow(dead_code)]
@@ -10998,6 +11015,8 @@ fn main() {
         me_storage_pending: false,
         me_local_sysfs_ready: false,
         me_local_sysfs_pending: false,
+        me_camera_ready: false,
+        me_camera_pending: false,
         me_runtime_ready: false,
         me_runtime_pending: false,
         me_facts_held: None,
@@ -11007,6 +11026,7 @@ fn main() {
         me_supervisor_hold: None,
         me_storage_hold: None,
         me_local_hold: None,
+        me_camera_hold: None,
         me_runtime_hold: None,
         me_chrome_hold: None,
         entityd: {
@@ -11192,6 +11212,19 @@ fn main() {
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_local_probes(&mut facts);
                 shell.me_local_hold = Some(hold_me_local(&facts));
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_camera_pending {
+            shell.me_camera_pending = false;
+            shell.me_camera_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_camera_probes(&mut facts);
+                shell.me_camera_hold = Some(hold_me_camera(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -11547,10 +11580,14 @@ struct Shell {
     /// Wi-Fi facts keep storage «неизвестно» until this turn runs `df`.
     me_storage_ready: bool,
     me_storage_pending: bool,
-    /// Net facts keep camera / ifaces empty until this turn reads
-    /// v4l / net class / paired / trusted clients.
+    /// Net facts keep ifaces / paired / trusted empty until this turn
+    /// reads net class / paired / trusted clients. Camera waits for
+    /// `me_camera_ready`.
     me_local_sysfs_ready: bool,
     me_local_sysfs_pending: bool,
+    /// Local sysfs keeps camera empty until this turn lists v4l.
+    me_camera_ready: bool,
+    me_camera_pending: bool,
     /// Camp facts keep phone-gate identity and empty observations until
     /// this turn reads runtime `status`.
     me_runtime_ready: bool,
@@ -11573,10 +11610,12 @@ struct Shell {
     /// `df` from the storage turn. Recapture must not run `df` again.
     /// Kept after a Wi-Fi connect.
     me_storage_hold: Option<MeStorageHold>,
-    /// Camera / ifaces / paired / trusted from the local-sysfs turn.
-    /// Recapture must not re-list those nodes. Kept after a Wi-Fi
-    /// connect.
+    /// Ifaces / paired / trusted from the local-sysfs turn. Recapture
+    /// must not re-list those nodes. Kept after a Wi-Fi connect.
     me_local_hold: Option<MeLocalHold>,
+    /// v4l camera nodes from the camera turn. Recapture must not
+    /// re-list `video*`. Kept after a Wi-Fi connect.
+    me_camera_hold: Option<MeCameraHold>,
     /// Runtime identity / «Наблюдения» / memory from the runtime turn.
     /// Recapture must not read `status` JSON again.
     me_runtime_hold: Option<MeRuntimeHold>,
@@ -14800,6 +14839,15 @@ impl Shell {
                             self.me_local_hold = Some(hold_me_local(&facts));
                         }
                     }
+                    if self.me_camera_ready {
+                        if let Some(hold) = &self.me_camera_hold {
+                            apply_me_camera_hold(&mut facts, hold);
+                        }
+                        apply_me_camera_probes(&mut facts);
+                        if self.me_camera_hold.is_none() {
+                            self.me_camera_hold = Some(hold_me_camera(&facts));
+                        }
+                    }
                     if self.me_runtime_ready {
                         if let Some(hold) = &self.me_runtime_hold {
                             apply_me_runtime_hold(&mut facts, hold);
@@ -14869,6 +14917,18 @@ impl Shell {
                 && self.me_supervisor_ready
                 && self.me_storage_ready
                 && self.me_local_sysfs_ready
+                && !self.me_camera_ready
+            {
+                self.me_camera_pending = true;
+            }
+            if self.me_full_ready
+                && self.me_locality_ready
+                && self.me_camp_log_ready
+                && self.me_net_ready
+                && self.me_supervisor_ready
+                && self.me_storage_ready
+                && self.me_local_sysfs_ready
+                && self.me_camera_ready
                 && !self.me_runtime_ready
             {
                 self.me_runtime_pending = true;
@@ -14880,6 +14940,7 @@ impl Shell {
                 || !self.me_supervisor_ready
                 || !self.me_storage_ready
                 || !self.me_local_sysfs_ready
+                || !self.me_camera_ready
                 || !self.me_runtime_ready
                 || (!self.me_obs_ready && !raw.observations.is_empty())
             {
@@ -16797,6 +16858,7 @@ impl Shell {
                 self.me_supervisor_pending,
                 self.me_storage_pending,
                 self.me_local_sysfs_pending,
+                self.me_camera_pending,
                 self.me_runtime_pending,
                 self.me_obs_pending,
             )
@@ -28697,40 +28759,43 @@ mod tests {
     #[test]
     fn me_fill_blocks_idle_while_pending() {
         assert!(super::me_fill_blocks_idle(
-            true, false, false, false, false, false, false, false, false, false, false
+            true, false, false, false, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, true, false, false, false, false, false, false, false, false, false
+            false, true, false, false, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, true, false, false, false, false, false, false, false, false
+            false, false, true, false, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, true, false, false, false, false, false, false, false
+            false, false, false, true, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, true, false, false, false, false, false, false
+            false, false, false, false, true, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, true, false, false, false, false, false
+            false, false, false, false, false, true, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, true, false, false, false, false
+            false, false, false, false, false, false, true, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, true, false, false, false
+            false, false, false, false, false, false, false, true, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, true, false, false
+            false, false, false, false, false, false, false, false, true, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, true, false
+            false, false, false, false, false, false, false, false, false, true, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, false, true
+            false, false, false, false, false, false, false, false, false, false, true, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, false, false, false, false, true
         ));
         assert!(!super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, false, false
+            false, false, false, false, false, false, false, false, false, false, false, false
         ));
     }
 
@@ -29213,6 +29278,7 @@ mod tests {
         assert!(connect.contains("me_net_hold = None"));
         assert!(connect.contains("invalidate_me_rows"));
         assert!(!connect.contains("me_local_hold = None"));
+        assert!(!connect.contains("me_camera_hold = None"));
         assert!(!connect.contains("me_storage_hold = None"));
         assert!(!connect.contains("me_supervisor_hold = None"));
     }
@@ -29306,11 +29372,19 @@ mod tests {
             .next()
             .unwrap();
         assert!(!net.contains("apply_me_local_probes"));
+        let local = src
+            .split("fn apply_me_local_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!local.contains(concat!("capture_nodes", "()")));
         let turn = src
             .split("else if shell.me_local_sysfs_pending")
             .nth(1)
             .unwrap()
-            .split("else if shell.me_runtime_pending")
+            .split("else if shell.me_camera_pending")
             .next()
             .unwrap();
         assert!(turn.contains("apply_me_local_probes"));
@@ -29323,6 +29397,40 @@ mod tests {
             .next()
             .unwrap();
         assert!(idle.contains("local_sysfs_pending"));
+    }
+
+    #[test]
+    fn apply_me_local_probes_skip_capture_nodes() {
+        let mut src = me_fixture_facts();
+        src.camera_nodes = vec!["video0".into()];
+        super::apply_me_camera_probes(&mut src);
+        assert_eq!(src.camera_nodes, vec!["video0".to_string()]);
+        let src = include_str!("main.rs");
+        let local = src
+            .split("fn apply_me_local_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!local.contains(concat!("capture_nodes", "()")));
+        let turn = src
+            .split("else if shell.me_camera_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_runtime_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_camera_probes"));
+        assert!(turn.contains("hold_me_camera"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("camera_pending"));
     }
 
     #[test]
