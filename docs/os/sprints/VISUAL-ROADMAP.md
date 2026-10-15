@@ -488,7 +488,8 @@ real phone interface consistently.
   (ADR-723; `cfe15b55…`). Locality on the camp turn
   (ADR-724; host). Locality camp turn on `/data`
   (ADR-725; `e6af707f…`). Chrome sysfs next turn
-  (ADR-726; host).
+  (ADR-726; host). Chrome sysfs next turn on `/data`
+  (ADR-727; `7fe7ab4b…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2227,6 +2228,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Chrome sysfs next turn (ADR-726; host). dest-no-lock stays off.
   First paint skip kernel / uptime / boot / adapters. Leave Сейчас.
   Still Experimental.
+- [x] Chrome sysfs next turn on panther (ADR-727; `7fe7ab4b…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`. Leave
+  Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2553,7 +2557,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-723; `cfe15b55…`). Locality on the camp turn
 (ADR-724; host). Locality camp turn on `/data`
 (ADR-725; `e6af707f…`). Chrome sysfs next turn
-(ADR-726; host).
+(ADR-726; host). Chrome sysfs next turn on `/data`
+(ADR-727; `7fe7ab4b…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
