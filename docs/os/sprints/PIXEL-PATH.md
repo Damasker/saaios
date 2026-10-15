@@ -505,6 +505,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 storage next turn | net skip `df`; fill «Хранилище» next loop **host** (ADR-732; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 storage next flash | ADR-732 `df` next turn on `/data` **на panther** (ADR-733; `c52583ad…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 supervisor next turn | net skip boot-log tail; fill next loop **host** (ADR-734; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 supervisor next flash | ADR-734 supervisor next turn on `/data` **на panther** (ADR-735; `8ab3cd44…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -807,6 +808,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 storage next turn: net skip `df`; fill «Хранилище» next loop (ADR-732; host; dest-no-lock stays off)
 - VUI-09 storage next flash: ADR-732 `df` next turn on `/data` (ADR-733; `c52583ad…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 supervisor next turn: net skip boot-log tail; fill next loop (ADR-734; host; dest-no-lock stays off)
+- VUI-09 supervisor next flash: ADR-734 supervisor next turn on `/data` (ADR-735; `8ab3cd44…`; dest-no-lock stays off; `surface=me`)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
