@@ -333,6 +333,7 @@ The verification ledger stays in
 | runtime reuse model | ADR-760; host; runtime skip device-tree model; use model hold; dest-no-lock stays off |
 | runtime reuse model flash | ADR-761; `d4bd42c8…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | net skip net class | ADR-762; host; net skip `/sys/class/net` is_dir; use adapters hold; dest-no-lock stays off |
+| net skip net class flash | ADR-763; `09032944…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
