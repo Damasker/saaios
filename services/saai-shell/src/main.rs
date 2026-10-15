@@ -1927,12 +1927,12 @@ fn data_session_suffix(
     parts.join(" · ")
 }
 
-fn live_traffic_token() -> Option<&'static str> {
+fn live_traffic_token(ifaces: &[String]) -> Option<&'static str> {
     let mut rx_any = false;
     let mut tx_any = false;
-    for name in cellular_ifaces() {
-        let rx = iface_counter(&name, "rx_bytes");
-        let tx = iface_counter(&name, "tx_bytes");
+    for name in ifaces {
+        let rx = iface_counter(name, "rx_bytes");
+        let tx = iface_counter(name, "tx_bytes");
         if rx > 0 {
             rx_any = true;
         }
@@ -2523,7 +2523,7 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
     };
     let suffix = data_session_suffix(
         log.and_then(read_data_call),
-        live_traffic_token(),
+        live_traffic_token(&facts.cellular_ifaces),
         log.and_then(read_signal_token),
         log.and_then(read_link_estimate),
     );
@@ -29512,6 +29512,53 @@ mod tests {
             .unwrap();
         assert!(body.contains("camp_fact_log"));
         assert!(!body.contains(concat!("read_camp_owner_log", "()")));
+    }
+
+    #[test]
+    fn cellular_row_skip_cellular_ifaces() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn cellular_row_with_session")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("facts.cellular_ifaces"));
+        assert!(!body.contains(concat!("cellular_ifaces", "()")));
+        let traffic = src
+            .split("fn live_traffic_token")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!traffic.contains(concat!("cellular_ifaces", "()")));
+        let ifaces = src
+            .split("fn apply_me_ifaces_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(ifaces.contains("cellular_ifaces"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
     }
 
     #[test]

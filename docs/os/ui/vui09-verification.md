@@ -634,6 +634,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Orb touch skip bluetooth_paired_count (ADR-806; host). dest-no-lock stays off.
   Orb touch skip bluetooth_paired_count on `/data` (ADR-807; `2ca6088c…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Cellular row skip cellular_ifaces (ADR-808; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
