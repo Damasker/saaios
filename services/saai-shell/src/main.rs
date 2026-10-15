@@ -9251,6 +9251,36 @@ fn wifi_status_from_cli() -> (String, bool) {
 fn apply_me_net_probes(facts: &mut MeFacts) {
     let (wifi_status, wifi_status_readable) = wifi_status_from_cli();
     apply_me_net_values(facts, storage_string(), wifi_status, wifi_status_readable);
+    apply_me_local_probes(facts);
+}
+
+fn apply_me_local_values(
+    facts: &mut MeFacts,
+    bluetooth_paired: usize,
+    camera_nodes: Vec<String>,
+    cellular_ifaces: Vec<String>,
+    trusted_client_count: usize,
+) {
+    facts.bluetooth_paired = bluetooth_paired;
+    facts.camera_nodes = camera_nodes;
+    facts.cellular_ifaces = cellular_ifaces;
+    facts.trusted_client_count = trusted_client_count;
+}
+
+fn apply_me_local_probes(facts: &mut MeFacts) {
+    apply_me_local_values(
+        facts,
+        bluetooth_paired_count(),
+        capture_nodes(),
+        cellular_ifaces(),
+        trusted_clients().len(),
+    );
+}
+
+#[allow(dead_code)]
+fn me_facts_without_local_probes(mut facts: MeFacts) -> MeFacts {
+    apply_me_local_values(&mut facts, 0, Vec::new(), Vec::new(), 0);
+    facts
 }
 
 #[allow(dead_code)]
@@ -14979,9 +15009,9 @@ impl Shell {
             wifi_status: String::new(),
             wifi_present: wifi_adapter_present(),
             wifi_status_readable: false,
-            bluetooth_paired: bluetooth_paired_count(),
+            bluetooth_paired: 0,
             bluetooth_present: bluetooth_adapter_present(),
-            cellular_ifaces: cellular_ifaces(),
+            cellular_ifaces: Vec::new(),
             cellular_cp: cellular_cp.clone(),
             cellular_registration_raw: log.and_then(read_data_registration_raw),
             cellular_voice_raw: log.and_then(read_voice_registration_raw),
@@ -15049,13 +15079,13 @@ impl Shell {
                 )
                 .to_string(),
             ),
-            camera_nodes: capture_nodes(),
+            camera_nodes: Vec::new(),
             pin_set: self.settings.pin_code.is_some(),
             lock_widgets_label: self.settings.lock_widgets.label().to_string(),
             text_scale_pct: self.settings.text_scale_pct,
             contrast_pct: self.settings.contrast_pct,
             remote_access: self.settings.remote_access_enabled,
-            trusted_client_count: trusted_clients().len(),
+            trusted_client_count: 0,
             space_color_label: space_color(&self.system_space_entities, &self.selected_space_id)
                 .label()
                 .to_string(),
@@ -27737,6 +27767,35 @@ mod tests {
         assert_eq!(filled.storage, "1.0 ГБ из 2.0 ГБ занято");
         assert_eq!(filled.wifi_status, "Не подключено");
         assert!(filled.wifi_status_readable);
+        assert_eq!(filled.cellular_cp.as_deref(), Some("ONLINE"));
+    }
+
+    #[test]
+    fn me_facts_without_local_probes_keep_camp() {
+        let mut src = me_fixture_facts();
+        src.bluetooth_paired = 2;
+        src.camera_nodes = vec!["video0".into()];
+        src.cellular_ifaces = vec!["rmnet0".into()];
+        src.trusted_client_count = 1;
+        src.cellular_cp = Some("ONLINE".into());
+        let stripped = super::me_facts_without_local_probes(src);
+        assert_eq!(stripped.bluetooth_paired, 0);
+        assert!(stripped.camera_nodes.is_empty());
+        assert!(stripped.cellular_ifaces.is_empty());
+        assert_eq!(stripped.trusted_client_count, 0);
+        assert_eq!(stripped.cellular_cp.as_deref(), Some("ONLINE"));
+        let mut filled = stripped;
+        super::apply_me_local_values(
+            &mut filled,
+            2,
+            vec!["video0".into()],
+            vec!["rmnet0".into()],
+            1,
+        );
+        assert_eq!(filled.bluetooth_paired, 2);
+        assert_eq!(filled.camera_nodes, vec!["video0".to_string()]);
+        assert_eq!(filled.cellular_ifaces, vec!["rmnet0".to_string()]);
+        assert_eq!(filled.trusted_client_count, 1);
         assert_eq!(filled.cellular_cp.as_deref(), Some("ONLINE"));
     }
 
