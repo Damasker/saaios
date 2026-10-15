@@ -464,7 +464,8 @@ real phone interface consistently.
   (ADR-699; `f9e2d372…`). Skip `/proc` cmdline unless `comm`
   is a camp binary (ADR-700; host). `comm` filter on `/data`
   (ADR-701; `64d39dde…`). Stream the camp owner log
-  (ADR-702; host).
+  (ADR-702; host). Streamed owner log on `/data`
+  (ADR-703; `f15c170f…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2137,6 +2138,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Stream the camp owner log (ADR-702; host). dest-no-lock stays off.
   Flatten uses held fact lines. Early one-shot lines stay. Leave
   Сейчас. Still Experimental.
+- [x] Streamed camp owner log on panther (ADR-703; `f15c170f…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`.
+  Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2439,7 +2443,8 @@ and modemd (ADR-694; host). `/proc` stop on `/data`
 (ADR-699; `f9e2d372…`). Skip `/proc` cmdline unless `comm`
 is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-701; `64d39dde…`). Stream the camp owner log
-(ADR-702; host).
+(ADR-702; host). Streamed owner log on `/data`
+(ADR-703; `f15c170f…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

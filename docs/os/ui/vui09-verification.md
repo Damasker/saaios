@@ -474,6 +474,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   `comm` filter on `/data` (ADR-701; `64d39dde…`). dest-no-lock stays
   off. `surface=me` then process `S`.
   Stream the camp owner log (ADR-702; host). dest-no-lock stays off.
+  Streamed owner log on `/data` (ADR-703; `f15c170f…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
