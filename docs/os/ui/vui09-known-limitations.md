@@ -359,6 +359,7 @@ The verification ledger stays in
 | orb pulse skip runtime facts | ADR-786; host; orb pulse skip `read_runtime_live_facts`; dest-no-lock stays off |
 | orb pulse skip runtime facts flash | ADR-787; `d12e70a6…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | orb skip read_battery | ADR-788; host; Me orb skip `read_battery`; dest-no-lock stays off |
+| orb skip read_battery flash | ADR-789; `622864fd…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
