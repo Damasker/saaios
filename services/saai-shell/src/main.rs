@@ -2693,7 +2693,7 @@ fn wifi_connected_ssid() -> Option<String> {
 
 #[allow(dead_code)]
 fn wifi_status_line() -> String {
-    wifi_status_from_cli().0
+    wifi_status_from_cli(wifi_adapter_present()).0
 }
 
 fn wifi_setting_row(facts: &MeFacts) -> DataRow {
@@ -9969,8 +9969,8 @@ fn apply_me_net_values(
     facts.cellular_supervisor = cellular_supervisor;
 }
 
-fn wifi_status_from_cli() -> (String, bool) {
-    if !wifi_adapter_present() {
+fn wifi_status_from_cli(wifi_present: bool) -> (String, bool) {
+    if !wifi_present {
         return (String::new(), wifi_net_class_readable());
     }
     let output = wpa_cli(&["status"]);
@@ -10009,7 +10009,7 @@ fn apply_me_net_probes(facts: &mut MeFacts) {
     if me_net_values_held(facts) {
         return;
     }
-    let (wifi_status, wifi_status_readable) = wifi_status_from_cli();
+    let (wifi_status, wifi_status_readable) = wifi_status_from_cli(facts.wifi_present);
     facts.wifi_status = wifi_status;
     facts.wifi_status_readable = wifi_status_readable;
 }
@@ -30196,6 +30196,16 @@ mod tests {
         assert!(body.contains("me_net_values_held"));
         assert!(body.contains("return"));
         assert!(body.contains("wifi_status_from_cli"));
+        assert!(body.contains("facts.wifi_present"));
+        assert!(!body.contains(concat!("wifi_adapter_present", "()")));
+        let cli = src
+            .split("fn wifi_status_from_cli")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!cli.contains(concat!("wifi_adapter_present", "()")));
         let connect = src
             .split("wifi_connect_pending.take()")
             .nth(1)
@@ -30219,6 +30229,38 @@ mod tests {
         assert!(!connect.contains("me_cp_hold = None"));
         assert!(!connect.contains("me_storage_hold = None"));
         assert!(!connect.contains("me_supervisor_hold = None"));
+    }
+
+    #[test]
+    fn apply_me_net_probes_skip_adapter_present() {
+        let src = include_str!("main.rs");
+        let net = src
+            .split("fn apply_me_net_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(net.contains("facts.wifi_present"));
+        assert!(!net.contains(concat!("wifi_adapter_present", "()")));
+        let cli = src
+            .split("fn wifi_status_from_cli")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(cli.contains("wifi_present"));
+        assert!(!cli.contains(concat!("wifi_adapter_present", "()")));
+        let adapters = src
+            .split("else if shell.me_adapters_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_boot_pending")
+            .next()
+            .unwrap();
+        assert!(adapters.contains("apply_me_adapters_probes"));
+        assert!(adapters.contains("hold_me_adapters"));
     }
 
     #[test]
