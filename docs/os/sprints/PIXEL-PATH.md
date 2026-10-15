@@ -477,6 +477,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 camp log next turn | camp facts skip owner log; fill on the next turn **host** (ADR-704; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 camp log next flash | ADR-704 owner log next turn on `/data` **на panther** (ADR-705; `d7afc85b…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 camp log reuse | recapture uses held owner-log lines; skip re-open **host** (ADR-706; dest-no-lock stays off; leave Сейчас) |
+| VUI-09 camp log reuse flash | ADR-706 held owner-log lines on `/data` **на panther** (ADR-707; `a74c3dc4…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -751,6 +752,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 camp log next turn: camp facts skip owner log; fill on the next turn (ADR-704; host; dest-no-lock stays off)
 - VUI-09 camp log next flash: ADR-704 owner log next turn on `/data` (ADR-705; `d7afc85b…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 camp log reuse: recapture uses held owner-log lines; skip re-open (ADR-706; host; dest-no-lock stays off)
+- VUI-09 camp log reuse flash: ADR-706 held owner-log lines on `/data` (ADR-707; `a74c3dc4…`; dest-no-lock stays off; `surface=me`)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

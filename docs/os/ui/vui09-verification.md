@@ -480,6 +480,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Owner log next turn on `/data` (ADR-705; `d7afc85b…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Reuse streamed owner-log lines (ADR-706; host). dest-no-lock stays off.
+  Held owner-log lines on `/data` (ADR-707; `a74c3dc4…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
