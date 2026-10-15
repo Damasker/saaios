@@ -365,6 +365,7 @@ The verification ledger stays in
 | status skip read_battery | ADR-792; host; status bar skip `read_battery`; dest-no-lock stays off |
 | status skip read_battery flash | ADR-793; `609702f3…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | low-battery skip read_battery | ADR-794; host; low-battery skip `read_battery`; dest-no-lock stays off |
+| low-battery skip read_battery flash | ADR-795; `cb4aa243…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
