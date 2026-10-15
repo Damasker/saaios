@@ -1387,6 +1387,15 @@ struct ProcCampPresence {
     endpoint: Option<&'static str>,
 }
 
+#[derive(Clone, Debug)]
+struct MeCampPresenceHold {
+    cp: Option<String>,
+    owner: Option<String>,
+    endpoint: Option<String>,
+    action: Option<String>,
+    open: Option<String>,
+}
+
 #[derive(Clone, Copy)]
 struct ProcCampRow<'a> {
     cmdline: &'a [u8],
@@ -9309,6 +9318,9 @@ fn apply_me_camp_values(
 }
 
 fn apply_me_camp_probes(facts: &mut MeFacts) {
+    if facts.cellular_owner.is_some() {
+        return;
+    }
     let camp = proc_camp_presence();
     let cellular_cp = read_cp_state();
     apply_me_camp_presence_values(
@@ -10521,6 +10533,7 @@ fn main() {
         me_runtime_pending: false,
         me_facts_held: None,
         me_camp_fact_log: None,
+        me_camp_presence: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -10604,6 +10617,13 @@ fn main() {
             shell.me_full_ready = true;
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_camp_probes(&mut facts);
+                shell.me_camp_presence = Some(MeCampPresenceHold {
+                    cp: facts.cellular_cp.clone(),
+                    owner: facts.cellular_owner.clone(),
+                    endpoint: facts.cellular_endpoint.clone(),
+                    action: facts.cellular_action.clone(),
+                    open: facts.cellular_open.clone(),
+                });
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -10974,6 +10994,9 @@ struct Shell {
     /// Filtered owner-log lines from the first stream. Recapture must
     /// not open the file again.
     me_camp_fact_log: Option<String>,
+    /// `/proc` + CP from the camp turn. Recapture must not walk `/proc`
+    /// again.
+    me_camp_presence: Option<MeCampPresenceHold>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -15270,6 +15293,13 @@ impl Shell {
             observations: Vec::new(),
             memory_records: Vec::new(),
         };
+        if let Some(hold) = &self.me_camp_presence {
+            facts.cellular_cp = hold.cp.clone();
+            facts.cellular_owner = hold.owner.clone();
+            facts.cellular_endpoint = hold.endpoint.clone();
+            facts.cellular_action = hold.action.clone();
+            facts.cellular_open = hold.open.clone();
+        }
         apply_me_camp_probes(&mut facts);
         if self.me_camp_log_ready {
             facts.camp_fact_log = self.me_camp_fact_log.clone();
@@ -27933,6 +27963,33 @@ mod tests {
             .unwrap();
         assert!(body.contains("camp_fact_log"));
         assert!(!body.contains(concat!("read_camp_owner_log", "()")));
+    }
+
+    #[test]
+    fn apply_me_camp_probes_skip_when_owner_held() {
+        let mut src = me_fixture_facts();
+        src.cellular_owner = Some("running".into());
+        src.cellular_cp = Some("ONLINE".into());
+        src.cellular_endpoint = Some("owner".into());
+        src.cellular_action = Some("hold".into());
+        src.cellular_open = Some("ready".into());
+        super::apply_me_camp_probes(&mut src);
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        assert_eq!(src.cellular_owner.as_deref(), Some("running"));
+        assert_eq!(src.cellular_endpoint.as_deref(), Some("owner"));
+        assert_eq!(src.cellular_action.as_deref(), Some("hold"));
+        assert_eq!(src.cellular_open.as_deref(), Some("ready"));
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_camp_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("cellular_owner"));
+        assert!(body.contains("return"));
+        assert!(body.contains("proc_camp_presence"));
     }
 
     #[test]

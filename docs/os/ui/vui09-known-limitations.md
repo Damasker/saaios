@@ -278,6 +278,7 @@ The verification ledger stays in
 | camp log next flash | ADR-705; `d7afc85b…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | camp log reuse | ADR-706; host; recapture uses held owner-log lines; skip re-open; dest-no-lock stays off |
 | camp log reuse flash | ADR-707; `a74c3dc4…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| camp presence reuse | ADR-708; host; recapture uses held `/proc` presence; skip the walk; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
