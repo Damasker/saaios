@@ -1389,7 +1389,6 @@ struct ProcCampPresence {
 
 #[derive(Clone, Debug)]
 struct MeCampPresenceHold {
-    cp: Option<String>,
     owner: Option<String>,
     endpoint: Option<String>,
     action: Option<String>,
@@ -1451,6 +1450,11 @@ struct MeAdaptersHold {
 struct MeBootHold {
     boot_slot: String,
     boot_attempts: u32,
+}
+
+#[derive(Clone, Debug)]
+struct MeCpHold {
+    cellular_cp: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -9510,6 +9514,7 @@ fn me_fill_blocks_idle(
     adapters_pending: bool,
     boot_pending: bool,
     full_pending: bool,
+    cp_pending: bool,
     locality_pending: bool,
     camp_log_pending: bool,
     net_pending: bool,
@@ -9527,6 +9532,7 @@ fn me_fill_blocks_idle(
         || adapters_pending
         || boot_pending
         || full_pending
+        || cp_pending
         || locality_pending
         || camp_log_pending
         || net_pending
@@ -9642,13 +9648,47 @@ fn apply_me_camp_probes(facts: &mut MeFacts) {
         return;
     }
     let camp = proc_camp_presence();
-    let cellular_cp = read_cp_state();
     apply_me_camp_presence_values(
         facts,
-        cellular_cp,
+        facts.cellular_cp.clone(),
         camp.owner,
         camp.endpoint,
         camp.status_query,
+    );
+}
+
+fn me_cp_values_held(facts: &MeFacts) -> bool {
+    facts.cellular_cp.is_some()
+}
+
+fn hold_me_cp(facts: &MeFacts) -> MeCpHold {
+    MeCpHold {
+        cellular_cp: facts.cellular_cp.clone(),
+    }
+}
+
+fn apply_me_cp_hold(facts: &mut MeFacts, hold: &MeCpHold) {
+    facts.cellular_cp = hold.cellular_cp.clone();
+}
+
+fn apply_me_cp_probes(facts: &mut MeFacts) {
+    if me_cp_values_held(facts) {
+        return;
+    }
+    facts.cellular_cp = read_cp_state();
+    let owner = facts.cellular_owner.as_deref() == Some("running");
+    facts.cellular_action = Some(
+        saai_observation::camp_action(facts.cellular_cp.as_deref(), owner).to_string(),
+    );
+    let status_query = facts.cellular_open.as_deref() == Some("lock");
+    facts.cellular_open = Some(
+        saai_observation::camp_open(
+            facts.cellular_cp.as_deref(),
+            owner,
+            facts.cellular_endpoint.as_deref(),
+            status_query,
+        )
+        .to_string(),
     );
 }
 
@@ -11101,6 +11141,8 @@ fn main() {
         me_boot_pending: false,
         me_full_ready: false,
         me_full_pending: false,
+        me_cp_ready: false,
+        me_cp_pending: false,
         me_locality_ready: false,
         me_locality_pending: false,
         me_camp_log_ready: false,
@@ -11135,6 +11177,7 @@ fn main() {
         me_chrome_hold: None,
         me_adapters_hold: None,
         me_boot_hold: None,
+        me_cp_hold: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -11258,12 +11301,24 @@ fn main() {
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_camp_probes(&mut facts);
                 shell.me_camp_presence = Some(MeCampPresenceHold {
-                    cp: facts.cellular_cp.clone(),
                     owner: facts.cellular_owner.clone(),
                     endpoint: facts.cellular_endpoint.clone(),
                     action: facts.cellular_action.clone(),
                     open: facts.cellular_open.clone(),
                 });
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_cp_pending {
+            shell.me_cp_pending = false;
+            shell.me_cp_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_cp_probes(&mut facts);
+                shell.me_cp_hold = Some(hold_me_cp(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -11710,7 +11765,7 @@ struct Shell {
     /// First flatten is settings only. The next turn fills kernel /
     /// uptime / playback. Adapters wait for `me_adapters_ready`. Boot
     /// waits for `me_boot_ready`. Camp `/proc` waits for
-    /// `me_full_ready`.
+    /// `me_full_ready`. CP waits for `me_cp_ready`.
     me_chrome_ready: bool,
     me_chrome_pending: bool,
     /// Chrome facts keep wlan0 / hci0 empty until this turn checks
@@ -11722,11 +11777,16 @@ struct Shell {
     me_boot_ready: bool,
     me_boot_pending: bool,
     /// Chrome facts keep radio empty until this turn applies camp
-    /// `/proc`. Locality JSON waits for `me_locality_ready`. The owner
-    /// log waits for `me_camp_log_ready`. `wpa_cli` / `df` wait for
-    /// `me_net_ready`. Runtime JSON waits for `me_runtime_ready`.
+    /// `/proc`. CP sysfs waits for `me_cp_ready`. Locality JSON waits
+    /// for `me_locality_ready`. The owner log waits for
+    /// `me_camp_log_ready`. `wpa_cli` / `df` wait for `me_net_ready`.
+    /// Runtime JSON waits for `me_runtime_ready`.
     me_full_ready: bool,
     me_full_pending: bool,
+    /// Camp `/proc` keeps CP empty until this turn reads the modem
+    /// state node.
+    me_cp_ready: bool,
+    me_cp_pending: bool,
     /// Camp `/proc` keeps «Местность» empty until this turn reads
     /// widget JSON.
     me_locality_ready: bool,
@@ -11776,9 +11836,12 @@ struct Shell {
     /// Filtered owner-log lines from the first stream. Recapture must
     /// not open the file again.
     me_camp_fact_log: Option<String>,
-    /// `/proc` + CP from the camp turn. Recapture must not walk `/proc`
-    /// again.
+    /// `/proc` owner / endpoint from the camp turn. Recapture must not
+    /// walk `/proc` again.
     me_camp_presence: Option<MeCampPresenceHold>,
+    /// CP token from the CP turn. Recapture must not re-read the
+    /// modem state node. Kept after a Wi-Fi connect.
+    me_cp_hold: Option<MeCpHold>,
     /// Wi-Fi from the net turn. Recapture must not shell out again.
     /// Dropped after a connect.
     me_net_hold: Option<MeNetHold>,
@@ -15080,6 +15143,9 @@ impl Shell {
             if self.me_boot_ready && self.me_boot_hold.is_none() {
                 self.me_boot_hold = Some(hold_me_boot(&raw));
             }
+            if self.me_cp_ready && self.me_cp_hold.is_none() {
+                self.me_cp_hold = Some(hold_me_cp(&raw));
+            }
             if !self.me_chrome_ready {
                 self.me_chrome_pending = true;
             } else if !self.me_adapters_ready {
@@ -15088,8 +15154,10 @@ impl Shell {
                 self.me_boot_pending = true;
             } else if !self.me_full_ready {
                 self.me_full_pending = true;
+            } else if !self.me_cp_ready {
+                self.me_cp_pending = true;
             }
-            if self.me_full_ready && !self.me_locality_ready {
+            if self.me_full_ready && self.me_cp_ready && !self.me_locality_ready {
                 self.me_locality_pending = true;
             }
             if self.me_full_ready && self.me_locality_ready && !self.me_camp_log_ready {
@@ -15182,6 +15250,8 @@ impl Shell {
             let hold = if !self.me_chrome_ready
                 || !self.me_adapters_ready
                 || !self.me_boot_ready
+                || !self.me_full_ready
+                || !self.me_cp_ready
                 || !self.me_locality_ready
                 || !self.me_camp_log_ready
                 || !self.me_net_ready
@@ -16307,13 +16377,16 @@ impl Shell {
         apply_me_boot_probes(&mut facts);
         apply_me_locality_probes(&mut facts);
         if let Some(hold) = &self.me_camp_presence {
-            facts.cellular_cp = hold.cp.clone();
             facts.cellular_owner = hold.owner.clone();
             facts.cellular_endpoint = hold.endpoint.clone();
             facts.cellular_action = hold.action.clone();
             facts.cellular_open = hold.open.clone();
         }
         apply_me_camp_probes(&mut facts);
+        if let Some(hold) = &self.me_cp_hold {
+            apply_me_cp_hold(&mut facts, hold);
+        }
+        apply_me_cp_probes(&mut facts);
         if self.me_camp_log_ready {
             facts.camp_fact_log = self.me_camp_fact_log.clone();
             apply_me_camp_log_probes(&mut facts);
@@ -17112,6 +17185,7 @@ impl Shell {
                 self.me_adapters_pending,
                 self.me_boot_pending,
                 self.me_full_pending,
+                self.me_cp_pending,
                 self.me_locality_pending,
                 self.me_camp_log_pending,
                 self.me_net_pending,
@@ -29022,71 +29096,75 @@ mod tests {
     fn me_fill_blocks_idle_while_pending() {
         assert!(super::me_fill_blocks_idle(
             true, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, true, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, true, false, false, false, false, false, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, true, false, false, false, false, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, true, false, false, false, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, true, false, false, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, true, false, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, true, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, true, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, true, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, true, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, true,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            true, false, false, false,
+            true, false, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, true, false, false,
+            false, true, false, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, true, false,
+            false, false, true, false, false,
         ));
         assert!(super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, true,
+            false, false, false, true, false,
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false, false, false, false, true,
         ));
         assert!(!super::me_fill_blocks_idle(
             false, false, false, false, false, false, false, false, false, false, false, false,
-            false, false, false, false,
+            false, false, false, false, false,
         ));
     }
 
@@ -29159,6 +29237,63 @@ mod tests {
         assert!(body.contains("cellular_owner"));
         assert!(body.contains("return"));
         assert!(body.contains("proc_camp_presence"));
+        assert!(!body.contains(concat!("read_cp_state", "()")));
+    }
+
+    #[test]
+    fn apply_me_camp_probes_skip_cp_state() {
+        let mut src = me_fixture_facts();
+        src.cellular_owner = Some("running".into());
+        src.cellular_cp = Some("ONLINE".into());
+        src.cellular_open = Some("owner".into());
+        super::apply_me_cp_probes(&mut src);
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        assert_eq!(src.cellular_owner.as_deref(), Some("running"));
+        assert_eq!(src.cellular_open.as_deref(), Some("owner"));
+        let src = include_str!("main.rs");
+        let camp = src
+            .split("fn apply_me_camp_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!camp.contains(concat!("read_cp_state", "()")));
+        let body = src
+            .split("fn apply_me_cp_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains(concat!("read_cp_state", "()")));
+        assert!(body.contains("return"));
+        let camp_turn = src
+            .split("else if shell.me_full_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_cp_pending")
+            .next()
+            .unwrap();
+        assert!(camp_turn.contains("apply_me_camp_probes"));
+        assert!(!camp_turn.contains("apply_me_cp_probes"));
+        let turn = src
+            .split("else if shell.me_cp_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_locality_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_cp_probes"));
+        assert!(turn.contains("hold_me_cp"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("cp_pending"));
     }
 
     #[test]
@@ -29172,7 +29307,7 @@ mod tests {
             .next()
             .unwrap();
         assert!(body.contains("proc_camp_presence"));
-        assert!(body.contains("read_cp_state"));
+        assert!(!body.contains(concat!("read_cp_state", "()")));
         assert!(!body.contains(concat!("read_camp_owner_log", "()")));
         let log_body = src
             .split("fn apply_me_camp_log_probes")
@@ -29635,6 +29770,7 @@ mod tests {
         assert!(!connect.contains("me_trusted_hold = None"));
         assert!(!connect.contains("me_boot_hold = None"));
         assert!(!connect.contains("me_adapters_hold = None"));
+        assert!(!connect.contains("me_cp_hold = None"));
         assert!(!connect.contains("me_storage_hold = None"));
         assert!(!connect.contains("me_supervisor_hold = None"));
     }
