@@ -1415,8 +1415,12 @@ struct MeStorageHold {
 #[derive(Clone, Debug)]
 struct MeLocalHold {
     bluetooth_paired: usize,
-    cellular_ifaces: Vec<String>,
     trusted_client_count: usize,
+}
+
+#[derive(Clone, Debug)]
+struct MeIfacesHold {
+    cellular_ifaces: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -9498,6 +9502,7 @@ fn me_fill_blocks_idle(
     supervisor_pending: bool,
     storage_pending: bool,
     local_sysfs_pending: bool,
+    ifaces_pending: bool,
     camera_pending: bool,
     runtime_pending: bool,
     obs_pending: bool,
@@ -9511,6 +9516,7 @@ fn me_fill_blocks_idle(
         || supervisor_pending
         || storage_pending
         || local_sysfs_pending
+        || ifaces_pending
         || camera_pending
         || runtime_pending
         || obs_pending
@@ -9876,22 +9882,18 @@ fn apply_me_local_values(
 }
 
 fn me_local_values_held(facts: &MeFacts) -> bool {
-    facts.bluetooth_paired > 0
-        || !facts.cellular_ifaces.is_empty()
-        || facts.trusted_client_count > 0
+    facts.bluetooth_paired > 0 || facts.trusted_client_count > 0
 }
 
 fn hold_me_local(facts: &MeFacts) -> MeLocalHold {
     MeLocalHold {
         bluetooth_paired: facts.bluetooth_paired,
-        cellular_ifaces: facts.cellular_ifaces.clone(),
         trusted_client_count: facts.trusted_client_count,
     }
 }
 
 fn apply_me_local_hold(facts: &mut MeFacts, hold: &MeLocalHold) {
     facts.bluetooth_paired = hold.bluetooth_paired;
-    facts.cellular_ifaces = hold.cellular_ifaces.clone();
     facts.trusted_client_count = hold.trusted_client_count;
 }
 
@@ -9900,8 +9902,28 @@ fn apply_me_local_probes(facts: &mut MeFacts) {
         return;
     }
     facts.bluetooth_paired = bluetooth_paired_count();
-    facts.cellular_ifaces = cellular_ifaces();
     facts.trusted_client_count = trusted_clients().len();
+}
+
+fn me_ifaces_values_held(facts: &MeFacts) -> bool {
+    !facts.cellular_ifaces.is_empty()
+}
+
+fn hold_me_ifaces(facts: &MeFacts) -> MeIfacesHold {
+    MeIfacesHold {
+        cellular_ifaces: facts.cellular_ifaces.clone(),
+    }
+}
+
+fn apply_me_ifaces_hold(facts: &mut MeFacts, hold: &MeIfacesHold) {
+    facts.cellular_ifaces = hold.cellular_ifaces.clone();
+}
+
+fn apply_me_ifaces_probes(facts: &mut MeFacts) {
+    if me_ifaces_values_held(facts) {
+        return;
+    }
+    facts.cellular_ifaces = cellular_ifaces();
 }
 
 fn me_camera_values_held(facts: &MeFacts) -> bool {
@@ -11015,6 +11037,8 @@ fn main() {
         me_storage_pending: false,
         me_local_sysfs_ready: false,
         me_local_sysfs_pending: false,
+        me_ifaces_ready: false,
+        me_ifaces_pending: false,
         me_camera_ready: false,
         me_camera_pending: false,
         me_runtime_ready: false,
@@ -11026,6 +11050,7 @@ fn main() {
         me_supervisor_hold: None,
         me_storage_hold: None,
         me_local_hold: None,
+        me_ifaces_hold: None,
         me_camera_hold: None,
         me_runtime_hold: None,
         me_chrome_hold: None,
@@ -11212,6 +11237,19 @@ fn main() {
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_local_probes(&mut facts);
                 shell.me_local_hold = Some(hold_me_local(&facts));
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_ifaces_pending {
+            shell.me_ifaces_pending = false;
+            shell.me_ifaces_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_ifaces_probes(&mut facts);
+                shell.me_ifaces_hold = Some(hold_me_ifaces(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -11569,8 +11607,9 @@ struct Shell {
     me_camp_log_pending: bool,
     /// Live camp facts keep Wi-Fi «Нет статуса» until this turn runs
     /// one `wpa_cli status`. Supervisor waits for `me_supervisor_ready`.
-    /// Storage waits for `me_storage_ready`. Camera / ifaces / paired /
-    /// trusted wait for `me_local_sysfs_ready`.
+    /// Storage waits for `me_storage_ready`. Paired / trusted wait for
+    /// `me_local_sysfs_ready`. Ifaces wait for `me_ifaces_ready`.
+    /// Camera waits for `me_camera_ready`.
     me_net_ready: bool,
     me_net_pending: bool,
     /// Wi-Fi facts keep supervisor empty until this turn tails the
@@ -11580,11 +11619,15 @@ struct Shell {
     /// Wi-Fi facts keep storage «неизвестно» until this turn runs `df`.
     me_storage_ready: bool,
     me_storage_pending: bool,
-    /// Net facts keep ifaces / paired / trusted empty until this turn
-    /// reads net class / paired / trusted clients. Camera waits for
-    /// `me_camera_ready`.
+    /// Net facts keep paired / trusted empty until this turn reads
+    /// saved Bluetooth and authorized_keys. Ifaces wait for
+    /// `me_ifaces_ready`. Camera waits for `me_camera_ready`.
     me_local_sysfs_ready: bool,
     me_local_sysfs_pending: bool,
+    /// Local sysfs keeps rmnet ifaces empty until this turn lists
+    /// `/sys/class/net` and checks bearer.
+    me_ifaces_ready: bool,
+    me_ifaces_pending: bool,
     /// Local sysfs keeps camera empty until this turn lists v4l.
     me_camera_ready: bool,
     me_camera_pending: bool,
@@ -11610,9 +11653,13 @@ struct Shell {
     /// `df` from the storage turn. Recapture must not run `df` again.
     /// Kept after a Wi-Fi connect.
     me_storage_hold: Option<MeStorageHold>,
-    /// Ifaces / paired / trusted from the local-sysfs turn. Recapture
-    /// must not re-list those nodes. Kept after a Wi-Fi connect.
+    /// Paired / trusted from the local-sysfs turn. Recapture must not
+    /// re-read those files. Kept after a Wi-Fi connect.
     me_local_hold: Option<MeLocalHold>,
+    /// rmnet ifaces from the ifaces turn. Recapture must not walk
+    /// `/sys/class/net` or shell `/saaios/ip` again. Kept after a
+    /// Wi-Fi connect.
+    me_ifaces_hold: Option<MeIfacesHold>,
     /// v4l camera nodes from the camera turn. Recapture must not
     /// re-list `video*`. Kept after a Wi-Fi connect.
     me_camera_hold: Option<MeCameraHold>,
@@ -14839,6 +14886,15 @@ impl Shell {
                             self.me_local_hold = Some(hold_me_local(&facts));
                         }
                     }
+                    if self.me_ifaces_ready {
+                        if let Some(hold) = &self.me_ifaces_hold {
+                            apply_me_ifaces_hold(&mut facts, hold);
+                        }
+                        apply_me_ifaces_probes(&mut facts);
+                        if self.me_ifaces_hold.is_none() {
+                            self.me_ifaces_hold = Some(hold_me_ifaces(&facts));
+                        }
+                    }
                     if self.me_camera_ready {
                         if let Some(hold) = &self.me_camera_hold {
                             apply_me_camera_hold(&mut facts, hold);
@@ -14917,6 +14973,18 @@ impl Shell {
                 && self.me_supervisor_ready
                 && self.me_storage_ready
                 && self.me_local_sysfs_ready
+                && !self.me_ifaces_ready
+            {
+                self.me_ifaces_pending = true;
+            }
+            if self.me_full_ready
+                && self.me_locality_ready
+                && self.me_camp_log_ready
+                && self.me_net_ready
+                && self.me_supervisor_ready
+                && self.me_storage_ready
+                && self.me_local_sysfs_ready
+                && self.me_ifaces_ready
                 && !self.me_camera_ready
             {
                 self.me_camera_pending = true;
@@ -14928,6 +14996,7 @@ impl Shell {
                 && self.me_supervisor_ready
                 && self.me_storage_ready
                 && self.me_local_sysfs_ready
+                && self.me_ifaces_ready
                 && self.me_camera_ready
                 && !self.me_runtime_ready
             {
@@ -14940,6 +15009,7 @@ impl Shell {
                 || !self.me_supervisor_ready
                 || !self.me_storage_ready
                 || !self.me_local_sysfs_ready
+                || !self.me_ifaces_ready
                 || !self.me_camera_ready
                 || !self.me_runtime_ready
                 || (!self.me_obs_ready && !raw.observations.is_empty())
@@ -16858,6 +16928,7 @@ impl Shell {
                 self.me_supervisor_pending,
                 self.me_storage_pending,
                 self.me_local_sysfs_pending,
+                self.me_ifaces_pending,
                 self.me_camera_pending,
                 self.me_runtime_pending,
                 self.me_obs_pending,
@@ -28759,43 +28830,60 @@ mod tests {
     #[test]
     fn me_fill_blocks_idle_while_pending() {
         assert!(super::me_fill_blocks_idle(
-            true, false, false, false, false, false, false, false, false, false, false, false
+            true, false, false, false, false, false, false, false, false, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, true, false, false, false, false, false, false, false, false, false, false
+            false, true, false, false, false, false, false, false, false, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, true, false, false, false, false, false, false, false, false, false
+            false, false, true, false, false, false, false, false, false, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, true, false, false, false, false, false, false, false, false
+            false, false, false, true, false, false, false, false, false, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, true, false, false, false, false, false, false, false
+            false, false, false, false, true, false, false, false, false, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, true, false, false, false, false, false, false
+            false, false, false, false, false, true, false, false, false, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, true, false, false, false, false, false
+            false, false, false, false, false, false, true, false, false, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, true, false, false, false, false
+            false, false, false, false, false, false, false, true, false, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, true, false, false, false
+            false, false, false, false, false, false, false, false, true, false, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, true, false, false
+            false, false, false, false, false, false, false, false, false, true, false, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, false, true, false
+            false, false, false, false, false, false, false, false, false, false, true, false,
+            false,
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, false, false, true
+            false, false, false, false, false, false, false, false, false, false, false, true,
+            false,
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            true,
         ));
         assert!(!super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, false, false, false
+            false, false, false, false, false, false, false, false, false, false, false, false,
+            false,
         ));
     }
 
@@ -29279,6 +29367,7 @@ mod tests {
         assert!(connect.contains("invalidate_me_rows"));
         assert!(!connect.contains("me_local_hold = None"));
         assert!(!connect.contains("me_camera_hold = None"));
+        assert!(!connect.contains("me_ifaces_hold = None"));
         assert!(!connect.contains("me_storage_hold = None"));
         assert!(!connect.contains("me_supervisor_hold = None"));
     }
@@ -29380,11 +29469,12 @@ mod tests {
             .next()
             .unwrap();
         assert!(!local.contains(concat!("capture_nodes", "()")));
+        assert!(!local.contains(concat!("cellular_ifaces", "()")));
         let turn = src
             .split("else if shell.me_local_sysfs_pending")
             .nth(1)
             .unwrap()
-            .split("else if shell.me_camera_pending")
+            .split("else if shell.me_ifaces_pending")
             .next()
             .unwrap();
         assert!(turn.contains("apply_me_local_probes"));
@@ -29431,6 +29521,40 @@ mod tests {
             .next()
             .unwrap();
         assert!(idle.contains("camera_pending"));
+    }
+
+    #[test]
+    fn apply_me_local_probes_skip_cellular_ifaces() {
+        let mut src = me_fixture_facts();
+        src.cellular_ifaces = vec!["rmnet0".into()];
+        super::apply_me_ifaces_probes(&mut src);
+        assert_eq!(src.cellular_ifaces, vec!["rmnet0".to_string()]);
+        let src = include_str!("main.rs");
+        let local = src
+            .split("fn apply_me_local_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!local.contains(concat!("cellular_ifaces", "()")));
+        let turn = src
+            .split("else if shell.me_ifaces_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_camera_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_ifaces_probes"));
+        assert!(turn.contains("hold_me_ifaces"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("ifaces_pending"));
     }
 
     #[test]

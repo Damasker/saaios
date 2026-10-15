@@ -529,6 +529,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Camera next turn (ADR-736; host). dest-no-lock stays off.
   Camera next turn on `/data` (ADR-737; `57db0be8…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Ifaces next turn (ADR-738; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
