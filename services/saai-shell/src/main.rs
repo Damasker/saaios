@@ -1400,6 +1400,10 @@ struct MeCampPresenceHold {
 struct MeNetHold {
     wifi_status: String,
     wifi_status_readable: bool,
+}
+
+#[derive(Clone, Debug)]
+struct MeSupervisorHold {
     cellular_supervisor: Option<String>,
 }
 
@@ -9487,6 +9491,7 @@ fn me_fill_blocks_idle(
     locality_pending: bool,
     camp_log_pending: bool,
     net_pending: bool,
+    supervisor_pending: bool,
     storage_pending: bool,
     local_sysfs_pending: bool,
     runtime_pending: bool,
@@ -9498,6 +9503,7 @@ fn me_fill_blocks_idle(
         || locality_pending
         || camp_log_pending
         || net_pending
+        || supervisor_pending
         || storage_pending
         || local_sysfs_pending
         || runtime_pending
@@ -9784,23 +9790,19 @@ fn wifi_status_from_cli() -> (String, bool) {
 }
 
 fn me_net_values_held(facts: &MeFacts) -> bool {
-    facts.wifi_status_readable
-        || !facts.wifi_status.is_empty()
-        || facts.cellular_supervisor.is_some()
+    facts.wifi_status_readable || !facts.wifi_status.is_empty()
 }
 
 fn hold_me_net(facts: &MeFacts) -> MeNetHold {
     MeNetHold {
         wifi_status: facts.wifi_status.clone(),
         wifi_status_readable: facts.wifi_status_readable,
-        cellular_supervisor: facts.cellular_supervisor.clone(),
     }
 }
 
 fn apply_me_net_hold(facts: &mut MeFacts, hold: &MeNetHold) {
     facts.wifi_status = hold.wifi_status.clone();
     facts.wifi_status_readable = hold.wifi_status_readable;
-    facts.cellular_supervisor = hold.cellular_supervisor.clone();
 }
 
 fn apply_me_net_probes(facts: &mut MeFacts) {
@@ -9810,6 +9812,26 @@ fn apply_me_net_probes(facts: &mut MeFacts) {
     let (wifi_status, wifi_status_readable) = wifi_status_from_cli();
     facts.wifi_status = wifi_status;
     facts.wifi_status_readable = wifi_status_readable;
+}
+
+fn me_supervisor_values_held(facts: &MeFacts) -> bool {
+    facts.cellular_supervisor.is_some()
+}
+
+fn hold_me_supervisor(facts: &MeFacts) -> MeSupervisorHold {
+    MeSupervisorHold {
+        cellular_supervisor: facts.cellular_supervisor.clone(),
+    }
+}
+
+fn apply_me_supervisor_hold(facts: &mut MeFacts, hold: &MeSupervisorHold) {
+    facts.cellular_supervisor = hold.cellular_supervisor.clone();
+}
+
+fn apply_me_supervisor_probes(facts: &mut MeFacts) {
+    if me_supervisor_values_held(facts) {
+        return;
+    }
     facts.cellular_supervisor = read_supervisor_token();
 }
 
@@ -10970,6 +10992,8 @@ fn main() {
         me_camp_log_pending: false,
         me_net_ready: false,
         me_net_pending: false,
+        me_supervisor_ready: false,
+        me_supervisor_pending: false,
         me_storage_ready: false,
         me_storage_pending: false,
         me_local_sysfs_ready: false,
@@ -10980,6 +11004,7 @@ fn main() {
         me_camp_fact_log: None,
         me_camp_presence: None,
         me_net_hold: None,
+        me_supervisor_hold: None,
         me_storage_hold: None,
         me_local_hold: None,
         me_runtime_hold: None,
@@ -11128,6 +11153,19 @@ fn main() {
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_net_probes(&mut facts);
                 shell.me_net_hold = Some(hold_me_net(&facts));
+                shell.me_facts_held = Some(facts);
+            }
+            shell.invalidate_me_rows();
+            shell.capture_me_rows();
+            if !shell.locked && shell.current_page == RootPage::Me {
+                shell.draw(&conn, &qh);
+            }
+        } else if shell.me_supervisor_pending {
+            shell.me_supervisor_pending = false;
+            shell.me_supervisor_ready = true;
+            if let Some(mut facts) = shell.me_facts_held.take() {
+                apply_me_supervisor_probes(&mut facts);
+                shell.me_supervisor_hold = Some(hold_me_supervisor(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -11497,10 +11535,15 @@ struct Shell {
     me_camp_log_ready: bool,
     me_camp_log_pending: bool,
     /// Live camp facts keep Wi-Fi «Нет статуса» until this turn runs
-    /// one `wpa_cli status`. Storage waits for `me_storage_ready`.
-    /// Camera / ifaces / paired / trusted wait for `me_local_sysfs_ready`.
+    /// one `wpa_cli status`. Supervisor waits for `me_supervisor_ready`.
+    /// Storage waits for `me_storage_ready`. Camera / ifaces / paired /
+    /// trusted wait for `me_local_sysfs_ready`.
     me_net_ready: bool,
     me_net_pending: bool,
+    /// Wi-Fi facts keep supervisor empty until this turn tails the
+    /// boot log.
+    me_supervisor_ready: bool,
+    me_supervisor_pending: bool,
     /// Wi-Fi facts keep storage «неизвестно» until this turn runs `df`.
     me_storage_ready: bool,
     me_storage_pending: bool,
@@ -11521,9 +11564,12 @@ struct Shell {
     /// `/proc` + CP from the camp turn. Recapture must not walk `/proc`
     /// again.
     me_camp_presence: Option<MeCampPresenceHold>,
-    /// Wi-Fi / supervisor from the net turn. Recapture must not
-    /// shell out again. Dropped after a connect.
+    /// Wi-Fi from the net turn. Recapture must not shell out again.
+    /// Dropped after a connect.
     me_net_hold: Option<MeNetHold>,
+    /// Supervisor token from the boot-log tail. Recapture must not
+    /// re-read the log. Kept after a Wi-Fi connect.
+    me_supervisor_hold: Option<MeSupervisorHold>,
     /// `df` from the storage turn. Recapture must not run `df` again.
     /// Kept after a Wi-Fi connect.
     me_storage_hold: Option<MeStorageHold>,
@@ -14727,6 +14773,15 @@ impl Shell {
                             self.me_net_hold = Some(hold_me_net(&facts));
                         }
                     }
+                    if self.me_supervisor_ready {
+                        if let Some(hold) = &self.me_supervisor_hold {
+                            apply_me_supervisor_hold(&mut facts, hold);
+                        }
+                        apply_me_supervisor_probes(&mut facts);
+                        if self.me_supervisor_hold.is_none() {
+                            self.me_supervisor_hold = Some(hold_me_supervisor(&facts));
+                        }
+                    }
                     if self.me_storage_ready {
                         if let Some(hold) = &self.me_storage_hold {
                             apply_me_storage_hold(&mut facts, hold);
@@ -14784,6 +14839,15 @@ impl Shell {
                 && self.me_locality_ready
                 && self.me_camp_log_ready
                 && self.me_net_ready
+                && !self.me_supervisor_ready
+            {
+                self.me_supervisor_pending = true;
+            }
+            if self.me_full_ready
+                && self.me_locality_ready
+                && self.me_camp_log_ready
+                && self.me_net_ready
+                && self.me_supervisor_ready
                 && !self.me_storage_ready
             {
                 self.me_storage_pending = true;
@@ -14792,6 +14856,7 @@ impl Shell {
                 && self.me_locality_ready
                 && self.me_camp_log_ready
                 && self.me_net_ready
+                && self.me_supervisor_ready
                 && self.me_storage_ready
                 && !self.me_local_sysfs_ready
             {
@@ -14801,6 +14866,7 @@ impl Shell {
                 && self.me_locality_ready
                 && self.me_camp_log_ready
                 && self.me_net_ready
+                && self.me_supervisor_ready
                 && self.me_storage_ready
                 && self.me_local_sysfs_ready
                 && !self.me_runtime_ready
@@ -14811,6 +14877,7 @@ impl Shell {
                 || !self.me_locality_ready
                 || !self.me_camp_log_ready
                 || !self.me_net_ready
+                || !self.me_supervisor_ready
                 || !self.me_storage_ready
                 || !self.me_local_sysfs_ready
                 || !self.me_runtime_ready
@@ -16727,6 +16794,7 @@ impl Shell {
                 self.me_locality_pending,
                 self.me_camp_log_pending,
                 self.me_net_pending,
+                self.me_supervisor_pending,
                 self.me_storage_pending,
                 self.me_local_sysfs_pending,
                 self.me_runtime_pending,
@@ -28629,37 +28697,40 @@ mod tests {
     #[test]
     fn me_fill_blocks_idle_while_pending() {
         assert!(super::me_fill_blocks_idle(
-            true, false, false, false, false, false, false, false, false, false
+            true, false, false, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, true, false, false, false, false, false, false, false, false
+            false, true, false, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, true, false, false, false, false, false, false, false
+            false, false, true, false, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, true, false, false, false, false, false, false
+            false, false, false, true, false, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, true, false, false, false, false, false
+            false, false, false, false, true, false, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, true, false, false, false, false
+            false, false, false, false, false, true, false, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, true, false, false, false
+            false, false, false, false, false, false, true, false, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, true, false, false
+            false, false, false, false, false, false, false, true, false, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, true, false
+            false, false, false, false, false, false, false, false, true, false, false
         ));
         assert!(super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, true
+            false, false, false, false, false, false, false, false, false, true, false
+        ));
+        assert!(super::me_fill_blocks_idle(
+            false, false, false, false, false, false, false, false, false, false, true
         ));
         assert!(!super::me_fill_blocks_idle(
-            false, false, false, false, false, false, false, false, false, false
+            false, false, false, false, false, false, false, false, false, false, false
         ));
     }
 
@@ -29143,6 +29214,41 @@ mod tests {
         assert!(connect.contains("invalidate_me_rows"));
         assert!(!connect.contains("me_local_hold = None"));
         assert!(!connect.contains("me_storage_hold = None"));
+        assert!(!connect.contains("me_supervisor_hold = None"));
+    }
+
+    #[test]
+    fn apply_me_net_probes_skip_supervisor_token() {
+        let mut src = me_fixture_facts();
+        src.cellular_supervisor = Some("hold".into());
+        super::apply_me_supervisor_probes(&mut src);
+        assert_eq!(src.cellular_supervisor.as_deref(), Some("hold"));
+        let src = include_str!("main.rs");
+        let net = src
+            .split("fn apply_me_net_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!net.contains(concat!("read_supervisor_token", "()")));
+        let turn = src
+            .split("else if shell.me_supervisor_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_storage_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_supervisor_probes"));
+        assert!(turn.contains("hold_me_supervisor"));
+        let idle = src
+            .split("fn me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(idle.contains("supervisor_pending"));
     }
 
     #[test]

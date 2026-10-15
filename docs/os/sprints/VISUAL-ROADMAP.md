@@ -495,7 +495,8 @@ real phone interface consistently.
   (ADR-730; host). Local sysfs next turn on `/data`
   (ADR-731; `6ff452f7…`). Storage next turn
   (ADR-732; host). Storage next turn on `/data`
-  (ADR-733; `c52583ad…`).
+  (ADR-733; `c52583ad…`). Supervisor next turn
+  (ADR-734; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2252,6 +2253,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Storage next turn on panther (ADR-733; `c52583ad…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Supervisor next turn (ADR-734; host). dest-no-lock stays off. Net
+  skip boot-log tail. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2585,7 +2588,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-730; host). Local sysfs next turn on `/data`
 (ADR-731; `6ff452f7…`). Storage next turn
 (ADR-732; host). Storage next turn on `/data`
-(ADR-733; `c52583ad…`).
+(ADR-733; `c52583ad…`). Supervisor next turn
+(ADR-734; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
