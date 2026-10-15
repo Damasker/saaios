@@ -568,6 +568,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Net skip net class (ADR-762; host). dest-no-lock stays off.
   Net skip net class on `/data` (ADR-763; `09032944…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Runtime skip phone gate (ADR-764; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

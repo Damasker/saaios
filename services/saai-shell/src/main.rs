@@ -9777,8 +9777,10 @@ fn apply_me_runtime_probes(facts: &mut MeFacts) {
         return;
     }
     let live = read_runtime_live_facts();
+    let phone_gate = cfg!(target_arch = "aarch64")
+        && facts.model.to_ascii_lowercase().contains("pixel");
     let (node_class, node_target, node_arch) =
-        node_identity_resolved(live.identity.as_ref(), phone_gate_surface());
+        node_identity_resolved(live.identity.as_ref(), phone_gate);
     apply_me_runtime_values(
         facts,
         node_model_resolved(live.identity.as_ref(), facts.model.clone()),
@@ -29696,6 +29698,41 @@ mod tests {
             .unwrap();
         assert!(!connect.contains("me_model_hold = None"));
         assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn apply_me_runtime_probes_skip_phone_gate_surface() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("facts.model"));
+        assert!(body.contains("read_runtime_live_facts"));
+        assert!(!body.contains(concat!("phone_gate_surface", "()")));
+        assert!(!body.contains(concat!("hardware_model", "()")));
+        assert!(!body.contains("/data/saaios"));
+        let model = src
+            .split("else if shell.me_model_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_uptime_pending")
+            .next()
+            .unwrap();
+        assert!(model.contains("apply_me_model_probes"));
+        assert!(model.contains("hold_me_model"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(!connect.contains("me_runtime_hold = None"));
+        assert!(connect.contains("me_net_hold = None"));
     }
 
     #[test]
