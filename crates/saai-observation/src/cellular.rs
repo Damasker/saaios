@@ -821,6 +821,14 @@ pub fn last_radio_token(log: &str) -> Option<&'static str> {
 /// Last data-registration, radio, and SIM lines. Early one-shot lines stay
 /// even after the camp log grows past a tail window.
 pub fn owner_fact_lines(log: &str) -> String {
+    owner_fact_lines_from_lines(log.lines())
+}
+
+pub fn owner_fact_lines_from_lines<I, S>(lines: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     let mut data = None;
     let mut voice = None;
     let mut radio = None;
@@ -870,105 +878,106 @@ pub fn owner_fact_lines(log: &str) -> String {
     let mut gpsnfw = None;
     let mut samode = None;
     let mut sim = None;
-    for line in log.lines() {
+    for line in lines {
+        let line = line.as_ref();
         if line.contains("field=data registration_raw=") {
-            data = Some(line);
+            data = Some(line.to_string());
         } else if line.contains("field=voice registration_raw=") {
-            voice = Some(line);
+            voice = Some(line.to_string());
         } else if line.contains("field=radio ") {
-            radio = Some(line);
+            radio = Some(line.to_string());
         } else if line.contains("field=selection ") {
-            selection = Some(line);
+            selection = Some(line.to_string());
         } else if line.contains("get=stack_status ") {
-            stack = Some(line);
+            stack = Some(line.to_string());
         } else if line.contains("get=device_service ") {
-            device_service = Some(line);
+            device_service = Some(line.to_string());
         } else if line.contains("get=voice_operation ") {
-            voice_operation = Some(line);
+            voice_operation = Some(line.to_string());
         } else if line.contains("set=allow_data ") {
-            allow_data = Some(line);
+            allow_data = Some(line.to_string());
         } else if line.contains("set=initial_attach_apn ") {
-            initial_attach = Some(line);
+            initial_attach = Some(line.to_string());
         } else if line.contains("camp_setup dns6=") {
-            dns6 = Some(line);
+            dns6 = Some(line.to_string());
         } else if line.contains("camp_setup dns=") {
-            dns = Some(line);
+            dns = Some(line.to_string());
         } else if line.contains("cmd=0x093f ") {
-            config = Some(line);
+            config = Some(line.to_string());
         } else if line.contains("cmd=0x0404 ") {
-            sgc = Some(line);
+            sgc = Some(line.to_string());
         } else if line.contains("cmd=0x0800 ") {
-            power = Some(line);
+            power = Some(line.to_string());
         } else if line.contains("set=set_voice_operation ") {
-            voice_set = Some(line);
+            voice_set = Some(line.to_string());
         } else if line.contains("ipv6=yes prefix=64 ") {
-            ipv6 = Some(line);
+            ipv6 = Some(line.to_string());
         } else if line.contains("ipv4=yes prefix=32 ") {
-            ipv4 = Some(line);
+            ipv4 = Some(line.to_string());
         } else if line.contains("camp_setup response=yes ") {
-            setup = Some(line);
+            setup = Some(line.to_string());
         } else if line.contains("camp_dcall response=yes ") {
-            dcall = Some(line);
+            dcall = Some(line.to_string());
         } else if line.contains("camp_ind signal ") {
-            signal = Some(line);
+            signal = Some(line.to_string());
         } else if line.contains("camp_ind linkcap ") {
-            linkcap = Some(line);
+            linkcap = Some(line.to_string());
         } else if line.contains("camp_ind phy ") {
-            phy = Some(line);
+            phy = Some(line.to_string());
         } else if line.contains("camp_ind barring ") {
-            barring = Some(line);
+            barring = Some(line.to_string());
         } else if line.contains("camp_profile response=yes ") {
-            profile = Some(line);
+            profile = Some(line.to_string());
         } else if line.contains("camp_activity response=yes ") {
-            activity = Some(line);
+            activity = Some(line.to_string());
         } else if line.contains("camp_fastdorm response=yes ") {
-            fastdorm = Some(line);
+            fastdorm = Some(line.to_string());
         } else if line.contains("camp_endc response=yes ") {
-            endc = Some(line);
+            endc = Some(line.to_string());
         } else if line.contains("camp_throttle response=yes ") {
-            throttle = Some(line);
+            throttle = Some(line.to_string());
         } else if line.contains("camp_unsolff response=yes ") {
-            unsolff = Some(line);
+            unsolff = Some(line.to_string());
         } else if line.contains("camp_unsol response=yes ") {
-            unsol = Some(line);
+            unsol = Some(line.to_string());
         } else if line.contains("camp_screen response=yes ") {
-            screen = Some(line);
+            screen = Some(line.to_string());
         } else if line.contains("camp_cellinfo response=yes ") {
-            cellinfo = Some(line);
+            cellinfo = Some(line.to_string());
         } else if line.contains("camp_smsc response=yes ") {
-            smsc = Some(line);
+            smsc = Some(line.to_string());
         } else if line.contains("camp_vonrget response=yes ") {
-            vonrget = Some(line);
+            vonrget = Some(line.to_string());
         } else if line.contains("camp_aptime response=yes ") {
-            aptime = Some(line);
+            aptime = Some(line.to_string());
         } else if line.contains("camp_dbgtrace response=yes ") {
-            dbgtrace = Some(line);
+            dbgtrace = Some(line.to_string());
         } else if line.contains("camp_tty response=yes ") {
-            tty = Some(line);
+            tty = Some(line.to_string());
         } else if line.contains("camp_pssvc response=yes ") {
-            pssvc = Some(line);
+            pssvc = Some(line.to_string());
         } else if line.contains("camp_prefmodem response=yes ") {
-            prefmodem = Some(line);
+            prefmodem = Some(line.to_string());
         } else if line.contains("camp_slot response=yes ") {
-            slot = Some(line);
+            slot = Some(line.to_string());
         } else if line.contains("camp_sigcrit response=yes ") {
-            sigcrit = Some(line);
+            sigcrit = Some(line.to_string());
         } else if line.contains("camp_smsact response=yes ") {
-            smsact = Some(line);
+            smsact = Some(line.to_string());
         } else if line.contains("camp_linkcrit response=yes ") {
-            linkcrit = Some(line);
+            linkcrit = Some(line.to_string());
         } else if line.contains("camp_smscb response=yes ") {
-            smscb = Some(line);
+            smscb = Some(line.to_string());
         } else if line.contains("camp_calllist response=yes ") {
-            calllist = Some(line);
+            calllist = Some(line.to_string());
         } else if line.contains("camp_gpslock response=yes ") {
-            gpslock = Some(line);
+            gpslock = Some(line.to_string());
         } else if line.contains("camp_gpsnfw response=yes ") {
-            gpsnfw = Some(line);
+            gpsnfw = Some(line.to_string());
         } else if line.contains("camp_samode response=yes ") {
-            samode = Some(line);
+            samode = Some(line.to_string());
         } else if line.contains("camp_sim=") || line.contains("field=sim ") {
-            sim = Some(line);
+            sim = Some(line.to_string());
         }
     }
     let mut out = String::new();
@@ -1026,7 +1035,7 @@ pub fn owner_fact_lines(log: &str) -> String {
         .into_iter()
         .flatten()
     {
-        out.push_str(line);
+        out.push_str(&line);
         out.push('\n');
     }
     out

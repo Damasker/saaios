@@ -1558,8 +1558,11 @@ fn read_log_tail(path: &str, max: u64) -> Option<String> {
 }
 
 fn read_camp_owner_log() -> Option<String> {
-    let text = std::fs::read_to_string(CAMP_OWNER_LOG).ok()?;
-    Some(saai_observation::owner_fact_lines(&text))
+    let file = std::fs::File::open(CAMP_OWNER_LOG).ok()?;
+    let reader = std::io::BufReader::new(file);
+    Some(saai_observation::owner_fact_lines_from_lines(
+        std::io::BufRead::lines(reader).map_while(Result::ok),
+    ))
 }
 
 fn read_data_registration_raw(log: &str) -> Option<u32> {
@@ -2194,12 +2197,11 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
         facts.cellular_owner.as_deref() == Some("running"),
         facts.cellular_cp.as_deref(),
     );
-    let camp_log = if camp_current {
-        read_camp_owner_log()
+    let log = if camp_current {
+        facts.camp_fact_log.as_deref()
     } else {
         None
     };
-    let log = camp_log.as_deref();
     let suffix = data_session_suffix(
         log.and_then(read_data_call),
         live_traffic_token(),
@@ -9030,6 +9032,7 @@ struct MeFacts {
     cellular_supervisor: Option<String>,
     cellular_action: Option<String>,
     cellular_open: Option<String>,
+    camp_fact_log: Option<String>,
     camera_nodes: Vec<String>,
     pin_set: bool,
     lock_widgets_label: String,
@@ -9264,6 +9267,7 @@ fn apply_me_camp_values(
         .to_string(),
     );
     facts.cellular_endpoint = cellular_endpoint.map(str::to_string);
+    facts.camp_fact_log = log.map(str::to_string);
     facts.cellular_action = Some(
         saai_observation::camp_action(facts.cellular_cp.as_deref(), camp_owner).to_string(),
     );
@@ -9472,6 +9476,7 @@ fn me_facts_without_live_probes(mut facts: MeFacts) -> MeFacts {
     facts.cellular_supervisor = None;
     facts.cellular_action = None;
     facts.cellular_open = None;
+    facts.camp_fact_log = None;
     facts
 }
 
@@ -10195,6 +10200,7 @@ fn me_fixture_facts() -> MeFacts {
         cellular_supervisor: None,
         cellular_action: None,
         cellular_open: None,
+        camp_fact_log: None,
         camera_nodes: Vec::new(),
         pin_set: false,
         lock_widgets_label: lock_widgets::LockWidgetPolicy::default().label().into(),
@@ -15054,6 +15060,7 @@ impl Shell {
             cellular_supervisor: None,
             cellular_action: None,
             cellular_open: None,
+            camp_fact_log: None,
             camera_nodes: Vec::new(),
             pin_set: self.settings.pin_code.is_some(),
             lock_widgets_label: self.settings.lock_widgets.label().to_string(),
@@ -15181,6 +15188,7 @@ impl Shell {
             cellular_supervisor: None,
             cellular_action: None,
             cellular_open: None,
+            camp_fact_log: None,
             camera_nodes: Vec::new(),
             pin_set: self.settings.pin_code.is_some(),
             lock_widgets_label: self.settings.lock_widgets.label().to_string(),
@@ -27840,6 +27848,24 @@ mod tests {
         assert_eq!(src.cellular_endpoint.as_deref(), Some("owner"));
         assert_eq!(src.cellular_registration_raw, Some(1));
         assert!(src.cellular_supervisor.is_none());
+        assert_eq!(
+            src.camp_fact_log.as_deref(),
+            Some("field=data registration_raw=1\n")
+        );
+    }
+
+    #[test]
+    fn camp_session_suffix_uses_held_fact_log() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn cellular_row_with_session")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("camp_fact_log"));
+        assert!(!body.contains(concat!("read_camp_owner_log", "()")));
     }
 
     #[test]

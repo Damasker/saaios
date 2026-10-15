@@ -25,6 +25,7 @@ pub use cellular::{
     last_smscb, last_stack_mode, last_supervisor_token, last_throttle, last_tty, last_unsol,
     last_unsolff, last_voice_operation, last_voice_registration_raw, last_voice_set, last_vonrget,
     latest_numeric_epoch, link_is_modem_endpoint, observations_from_cellular, owner_fact_lines,
+    owner_fact_lines_from_lines,
     traffic_token, CellularReading, DataCallList, IfaceSample, LinkEstimate, PhyChannel,
     KEY_BEARER, KEY_CP_STATE, KEY_REGISTRATION_RAW,
 };
