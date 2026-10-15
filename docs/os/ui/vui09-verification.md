@@ -572,6 +572,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Runtime skip phone gate on `/data` (ADR-765; `0364c405…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Chrome skip phone gate (ADR-766; host). dest-no-lock stays off.
+  Chrome skip phone gate on `/data` (ADR-767; `356e19c9…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

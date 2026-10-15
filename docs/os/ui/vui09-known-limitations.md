@@ -337,6 +337,7 @@ The verification ledger stays in
 | runtime skip phone gate | ADR-764; host; runtime skip `/data/saaios` exists; use model hold; dest-no-lock stays off |
 | runtime skip phone gate flash | ADR-765; `0364c405…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | chrome skip phone gate | ADR-766; host; settings skip `/data/saaios` exists; arch gate only; dest-no-lock stays off |
+| chrome skip phone gate flash | ADR-767; `356e19c9…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
