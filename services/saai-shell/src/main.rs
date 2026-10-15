@@ -8704,6 +8704,16 @@ impl LiveMemoryFact {
     }
 }
 
+#[derive(Clone, Debug)]
+struct MeRuntimeHold {
+    model: String,
+    node_class: String,
+    node_target: String,
+    node_arch: String,
+    observations: Vec<LiveObservationFact>,
+    memory_records: Vec<LiveMemoryFact>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct LiveNodeIdentity {
     class: String,
@@ -9607,7 +9617,37 @@ fn apply_me_runtime_values(
     facts.memory_records = memory_records;
 }
 
+fn me_runtime_values_held(facts: &MeFacts) -> bool {
+    !facts.observations.is_empty() || !facts.memory_records.is_empty()
+}
+
+fn hold_me_runtime(facts: &MeFacts) -> MeRuntimeHold {
+    MeRuntimeHold {
+        model: facts.model.clone(),
+        node_class: facts.node_class.clone(),
+        node_target: facts.node_target.clone(),
+        node_arch: facts.node_arch.clone(),
+        observations: facts.observations.clone(),
+        memory_records: facts.memory_records.clone(),
+    }
+}
+
+fn apply_me_runtime_hold(facts: &mut MeFacts, hold: &MeRuntimeHold) {
+    apply_me_runtime_values(
+        facts,
+        hold.model.clone(),
+        hold.node_class.clone(),
+        hold.node_target.clone(),
+        hold.node_arch.clone(),
+        hold.observations.clone(),
+        hold.memory_records.clone(),
+    );
+}
+
 fn apply_me_runtime_probes(facts: &mut MeFacts) {
+    if me_runtime_values_held(facts) {
+        return;
+    }
     let live = read_runtime_live_facts();
     let (node_class, node_target, node_arch) =
         node_identity_resolved(live.identity.as_ref(), phone_gate_surface());
@@ -10825,6 +10865,7 @@ fn main() {
         me_camp_fact_log: None,
         me_camp_presence: None,
         me_net_hold: None,
+        me_runtime_hold: None,
         entityd: {
             let client = entityd_client::EntitydClient::new(entityd_socket);
             match entityd_tcp_addr() {
@@ -10954,6 +10995,7 @@ fn main() {
             shell.me_obs_ready = true;
             if let Some(mut facts) = shell.me_facts_held.take() {
                 apply_me_runtime_probes(&mut facts);
+                shell.me_runtime_hold = Some(hold_me_runtime(&facts));
                 shell.me_facts_held = Some(facts);
             }
             shell.invalidate_me_rows();
@@ -11294,6 +11336,9 @@ struct Shell {
     /// Wi-Fi / `df` / local sysfs / supervisor from the net turn.
     /// Recapture must not shell out again. Dropped after a connect.
     me_net_hold: Option<MeNetHold>,
+    /// Runtime identity / «Наблюдения» / memory from the runtime turn.
+    /// Recapture must not read `status` JSON again.
+    me_runtime_hold: Option<MeRuntimeHold>,
     entityd: entityd_client::EntitydClient,
     spaces: Vec<Space>,
     selected_space_id: String,
@@ -14482,7 +14527,13 @@ impl Shell {
                         }
                     }
                     if self.me_runtime_ready {
+                        if let Some(hold) = &self.me_runtime_hold {
+                            apply_me_runtime_hold(&mut facts, hold);
+                        }
                         apply_me_runtime_probes(&mut facts);
+                        if self.me_runtime_hold.is_none() {
+                            self.me_runtime_hold = Some(hold_me_runtime(&facts));
+                        }
                     }
                     facts
                 } else {
@@ -28444,6 +28495,37 @@ mod tests {
         assert!(me_system_sections(&filled)
             .iter()
             .any(|section| section.title == "Наблюдения"));
+    }
+
+    #[test]
+    fn apply_me_runtime_probes_skip_when_observations_held() {
+        let cpu = super::LiveObservationFact {
+            key: "cpu.percent".into(),
+            label: "CPU".into(),
+            value: "1".into(),
+            source: "procfs".into(),
+        };
+        let mut src = me_fixture_facts();
+        src.model = "held-model".into();
+        src.cellular_cp = Some("ONLINE".into());
+        src.observations = vec![cpu.clone()];
+        super::apply_me_runtime_probes(&mut src);
+        assert_eq!(src.model, "held-model");
+        assert_eq!(src.observations.len(), 1);
+        assert_eq!(src.observations[0].key, "cpu.percent");
+        assert_eq!(src.cellular_cp.as_deref(), Some("ONLINE"));
+        assert!(super::me_runtime_values_held(&src));
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("me_runtime_values_held"));
+        assert!(body.contains("return"));
+        assert!(body.contains("read_runtime_live_facts"));
     }
 
     #[test]

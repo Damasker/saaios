@@ -484,6 +484,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 net reuse flash | ADR-710 held Wi-Fi/`df` on `/data` **на panther** (ADR-711; `3be0c132…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 Me cellular groups | camp tokens under Связь; `Сотовая сеть` stays the summary **host** (ADR-712; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 Me cellular groups flash | ADR-712 grouped Связь on `/data` **на panther** (ADR-713; `daef927d…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
+| VUI-09 runtime reuse | recapture uses held identity / «Наблюдения»; skip JSON **host** (ADR-714; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -765,6 +766,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 net reuse flash: ADR-710 held Wi-Fi/`df` on `/data` (ADR-711; `3be0c132…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 Me cellular groups: camp tokens under Связь; `Сотовая сеть` stays the summary (ADR-712; host; dest-no-lock stays off)
 - VUI-09 Me cellular groups flash: ADR-712 grouped Связь on `/data` (ADR-713; `daef927d…`; dest-no-lock stays off; `surface=me`)
+- VUI-09 runtime reuse: recapture uses held identity / «Наблюдения»; skip JSON (ADR-714; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
