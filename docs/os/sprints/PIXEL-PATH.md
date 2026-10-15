@@ -514,6 +514,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 trusted next flash | ADR-740 authorized_keys next turn on `/data` **на panther** (ADR-741; `f4ae808e…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 boot next turn | chrome skip bootconfig; fill slot / attempts next loop **host** (ADR-742; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 boot next flash | ADR-742 bootconfig next turn on `/data` **на panther** (ADR-743; `7e2b6bbd…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
+| VUI-09 adapters next turn | chrome skip wlan0 / hci0; fill next loop **host** (ADR-744; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -825,6 +826,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 trusted next flash: ADR-740 authorized_keys next turn on `/data` (ADR-741; `f4ae808e…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 boot next turn: chrome skip bootconfig; fill slot / attempts next loop (ADR-742; host; dest-no-lock stays off)
 - VUI-09 boot next flash: ADR-742 bootconfig next turn on `/data` (ADR-743; `7e2b6bbd…`; dest-no-lock stays off; `surface=me`)
+- VUI-09 adapters next turn: chrome skip wlan0 / hci0; fill next loop (ADR-744; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)

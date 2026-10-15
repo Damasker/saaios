@@ -314,6 +314,7 @@ The verification ledger stays in
 | trusted next flash | ADR-741; `f4ae808e…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | boot next turn | ADR-742; host; chrome skip bootconfig; fill slot / attempts next loop; dest-no-lock stays off |
 | boot next flash | ADR-743; `7e2b6bbd…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| adapters next turn | ADR-744; host; chrome skip wlan0 / hci0; fill next loop; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

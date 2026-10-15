@@ -505,7 +505,8 @@ real phone interface consistently.
   (ADR-740; host). Trusted next turn on `/data`
   (ADR-741; `f4ae808e…`). Boot next turn
   (ADR-742; host). Boot next turn on `/data`
-  (ADR-743; `7e2b6bbd…`).
+  (ADR-743; `7e2b6bbd…`). Adapters next turn
+  (ADR-744; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2287,6 +2288,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Boot next turn on panther (ADR-743; `7e2b6bbd…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Adapters next turn (ADR-744; host). dest-no-lock stays off. Chrome
+  skip wlan0 / hci0. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2630,7 +2633,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-740; host). Trusted next turn on `/data`
 (ADR-741; `f4ae808e…`). Boot next turn
 (ADR-742; host). Boot next turn on `/data`
-(ADR-743; `7e2b6bbd…`).
+(ADR-743; `7e2b6bbd…`). Adapters next turn
+(ADR-744; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
