@@ -15033,6 +15033,30 @@ impl Shell {
         if self.last_context_signal_refresh.elapsed() < CONTEXT_SIGNAL_REFRESH_INTERVAL {
             return;
         }
+        if me_fill_blocks_idle(
+            self.me_facts_pending,
+            self.me_kernel_pending,
+            self.me_model_pending,
+            self.me_uptime_pending,
+            self.me_playback_pending,
+            self.me_adapters_pending,
+            self.me_boot_pending,
+            self.me_full_pending,
+            self.me_cp_pending,
+            self.me_locality_pending,
+            self.me_camp_log_pending,
+            self.me_net_pending,
+            self.me_supervisor_pending,
+            self.me_storage_pending,
+            self.me_local_sysfs_pending,
+            self.me_trusted_pending,
+            self.me_ifaces_pending,
+            self.me_camera_pending,
+            self.me_runtime_pending,
+            self.me_obs_pending,
+        ) {
+            return;
+        }
         self.last_context_signal_refresh = Instant::now();
         let ssid = if let Some(hold) = &self.me_net_hold {
             wifi_ssid_from_me_status(&hold.wifi_status)
@@ -32375,6 +32399,71 @@ mod tests {
         assert!(!hold_arm.contains("wifi_connected_ssid"));
         assert!(body.contains("wifi_connected_ssid"));
         assert!(!body.contains(concat!("wifi_adapter_present", "()")));
+        let turn = src
+            .split("else if shell.me_net_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_supervisor_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_net_probes"));
+        let chrome = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("wifi_connected_ssid", "()")));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+        let runtime = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(runtime.contains("read_runtime_live_facts"));
+        assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
+    }
+
+    #[test]
+    fn fill_skip_wifi_connected_ssid() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn refresh_context_signals_if_due")
+            .nth(1)
+            .unwrap()
+            .split("fn invoke_select_space")
+            .next()
+            .unwrap();
+        let fill_arm = body
+            .split("if me_fill_blocks_idle")
+            .nth(1)
+            .unwrap()
+            .split("self.last_context_signal_refresh = Instant::now()")
+            .next()
+            .unwrap();
+        assert!(fill_arm.contains("self.me_net_pending"));
+        assert!(!fill_arm.contains("wifi_connected_ssid"));
+        let hold_arm = body
+            .split("if let Some(hold) = &self.me_net_hold")
+            .nth(1)
+            .unwrap()
+            .split("} else {")
+            .next()
+            .unwrap();
+        assert!(hold_arm.contains("wifi_ssid_from_me_status"));
+        assert!(!hold_arm.contains("wifi_connected_ssid"));
+        assert!(body.contains("wifi_connected_ssid"));
         let turn = src
             .split("else if shell.me_net_pending")
             .nth(1)

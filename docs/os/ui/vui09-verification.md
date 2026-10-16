@@ -697,6 +697,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Recapture skip wifi_connected_ssid (ADR-848; host). dest-no-lock stays off.
   Recapture skip wifi_connected_ssid on `/data` (ADR-849; `c751962f…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Fill skip wifi_connected_ssid (ADR-850; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails

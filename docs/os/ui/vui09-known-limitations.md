@@ -420,6 +420,7 @@ The verification ledger stays in
 | recapture skip read_camp_owner_log flash | ADR-847; `57b34b83…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | recapture skip wifi_connected_ssid | ADR-848; host; recapture skip `wifi_connected_ssid`; dest-no-lock stays off |
 | recapture skip wifi_connected_ssid flash | ADR-849; `c751962f…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| fill skip wifi_connected_ssid | ADR-850; host; fill skip `wifi_connected_ssid`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
