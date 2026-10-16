@@ -647,6 +647,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Recapture skip trusted_clients on `/data` (ADR-815; `eb02ae3f…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Recapture skip cellular_ifaces (ADR-816; host). dest-no-lock stays off.
+  Recapture skip cellular_ifaces on `/data` (ADR-817; `44fca9d7…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
