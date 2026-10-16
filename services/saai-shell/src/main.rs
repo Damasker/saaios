@@ -14031,7 +14031,11 @@ impl Shell {
             // refresh/back cards -- see `wifi_list_action_at_scrolled`.
             // ADR-146: header is a real `ContextHeader`, not a Surface
             // strip. ADR-226: paint rects from the same tree as hits.
-            let connected = wifi_connected_ssid();
+            let connected = if let Some(hold) = &self.me_net_hold {
+                wifi_ssid_from_me_status(&hold.wifi_status)
+            } else {
+                wifi_connected_ssid()
+            };
             let wifi_rows = wifi_list_rows(networks, connected.as_deref());
             let tree = layout_live_v2_scrolled(
                 &wifi_v2_source(networks.len()),
@@ -32498,6 +32502,70 @@ mod tests {
             .unwrap();
         assert!(runtime.contains("read_runtime_live_facts"));
         assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
+    }
+
+    #[test]
+    fn wifi_list_skip_wifi_connected_ssid() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("else if let Some(networks) = &self.wifi_list")
+            .nth(1)
+            .unwrap()
+            .split("else if self.bluetooth_list_open")
+            .next()
+            .unwrap();
+        let hold_arm = body
+            .split("if let Some(hold) = &self.me_net_hold")
+            .nth(1)
+            .unwrap()
+            .split("} else {")
+            .next()
+            .unwrap();
+        assert!(hold_arm.contains("wifi_ssid_from_me_status"));
+        assert!(!hold_arm.contains("wifi_connected_ssid"));
+        assert!(body.contains("wifi_connected_ssid"));
+        let turn = src
+            .split("else if shell.me_net_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_supervisor_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_net_probes"));
+        let chrome = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("wifi_connected_ssid", "()")));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+        let runtime = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(runtime.contains("read_runtime_live_facts"));
+        assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
+        let fill = src
+            .split("fn refresh_context_signals_if_due")
+            .nth(1)
+            .unwrap()
+            .split("fn invoke_select_space")
+            .next()
+            .unwrap();
+        assert!(fill.contains("me_fill_blocks_idle"));
     }
 
     #[test]
