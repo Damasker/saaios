@@ -588,7 +588,8 @@ real phone interface consistently.
   (ADR-823; `b0b2023d…`). Recapture skip read_supervisor_token
   (ADR-824; host). Recapture skip read_supervisor_token on `/data`
   (ADR-825; `75726149…`). Recapture skip storage_string
-  (ADR-826; host).
+  (ADR-826; host). Recapture skip storage_string on `/data`
+  (ADR-827; `58533602…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2579,6 +2580,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Сейчас. Still Experimental.
 - [x] Recapture skip storage_string (ADR-826; host). dest-no-lock stays off.
   Recapture skip `storage_string`. Leave Сейчас. Still Experimental.
+- [x] Recapture skip storage_string on panther (ADR-827; `58533602…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`. Leave
+  Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -3005,7 +3009,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-823; `b0b2023d…`). Recapture skip read_supervisor_token
 (ADR-824; host). Recapture skip read_supervisor_token on `/data`
 (ADR-825; `75726149…`). Recapture skip storage_string
-(ADR-826; host).
+(ADR-826; host). Recapture skip storage_string on `/data`
+(ADR-827; `58533602…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
