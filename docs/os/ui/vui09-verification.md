@@ -667,6 +667,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Recapture skip kernel_release (ADR-828; host). dest-no-lock stays off.
   Recapture skip kernel_release on `/data` (ADR-829; `ceee30e9…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Recapture skip hardware_model (ADR-830; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
