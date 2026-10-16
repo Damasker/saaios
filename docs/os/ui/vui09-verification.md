@@ -673,6 +673,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Recapture skip uptime_string (ADR-832; host). dest-no-lock stays off.
   Recapture skip uptime_string on `/data` (ADR-833; `c6f2d1b5…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Recapture skip playback_ready (ADR-834; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
