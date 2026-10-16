@@ -679,6 +679,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Recapture skip wifi_adapter_present (ADR-836; host). dest-no-lock stays off.
   Recapture skip wifi_adapter_present on `/data` (ADR-837; `e2f45dce…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Recapture skip boot_slot (ADR-838; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
