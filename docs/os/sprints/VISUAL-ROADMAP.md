@@ -575,7 +575,8 @@ real phone interface consistently.
   (ADR-810; host). Cellular row skip iface_counter on `/data`
   (ADR-811; `a2c39b78…`). Recapture skip bluetooth_paired_count
   (ADR-812; host). Recapture skip bluetooth_paired_count on `/data`
-  (ADR-813; `e39c6efb…`).
+  (ADR-813; `e39c6efb…`). Recapture skip trusted_clients
+  (ADR-814; host).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2534,6 +2535,8 @@ subset, remove superseded legacy paths, and qualify Visual v1.
 - [x] Recapture skip bluetooth_paired_count on panther (ADR-813; `e39c6efb…`). dest-no-lock
   stays off. `switched to Me` + `surface=me` then process `S`. Leave
   Сейчас. Still Experimental.
+- [x] Recapture skip trusted_clients (ADR-814; host). dest-no-lock stays off.
+  Recapture skip `trusted_clients`. Leave Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2947,7 +2950,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-810; host). Cellular row skip iface_counter on `/data`
 (ADR-811; `a2c39b78…`). Recapture skip bluetooth_paired_count
 (ADR-812; host). Recapture skip bluetooth_paired_count on `/data`
-(ADR-813; `e39c6efb…`).
+(ADR-813; `e39c6efb…`). Recapture skip trusted_clients
+(ADR-814; host).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public

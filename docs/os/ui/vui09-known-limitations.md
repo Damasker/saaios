@@ -384,6 +384,7 @@ The verification ledger stays in
 | cellular row skip iface_counter flash | ADR-811; `a2c39b78…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | recapture skip bluetooth_paired_count | ADR-812; host; recapture skip `bluetooth_paired_count`; dest-no-lock stays off |
 | recapture skip bluetooth_paired_count flash | ADR-813; `e39c6efb…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| recapture skip trusted_clients | ADR-814; host; recapture skip `trusted_clients`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
