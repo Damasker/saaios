@@ -410,6 +410,7 @@ The verification ledger stays in
 | recapture skip wifi_adapter_present flash | ADR-837; `e2f45dce…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | recapture skip boot_slot | ADR-838; host; recapture skip `boot_slot`; dest-no-lock stays off |
 | recapture skip boot_slot flash | ADR-839; `c9066c4e…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| recapture skip locality_me_status | ADR-840; host; recapture skip `locality_me_status`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |

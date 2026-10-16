@@ -16616,7 +16616,9 @@ impl Shell {
         } else {
             apply_me_boot_probes(&mut facts);
         }
-        apply_me_locality_probes(&mut facts);
+        if self.me_chrome_hold.is_none() {
+            apply_me_locality_probes(&mut facts);
+        }
         if let Some(hold) = &self.me_camp_presence {
             facts.cellular_owner = hold.owner.clone();
             facts.cellular_endpoint = hold.endpoint.clone();
@@ -32078,6 +32080,66 @@ mod tests {
             .unwrap();
         assert!(connect.contains("me_net_hold = None"));
         assert!(!connect.contains("me_boot_hold = None"));
+        let runtime = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(runtime.contains("read_runtime_live_facts"));
+        assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
+    }
+
+    #[test]
+    fn recapture_skip_locality_me_status() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("if let Some(hold) = &self.me_boot_hold")
+            .nth(1)
+            .unwrap()
+            .split("if let Some(hold) = &self.me_camp_presence")
+            .next()
+            .unwrap();
+        let skip_arm = body
+            .split("if self.me_chrome_hold.is_none()")
+            .next()
+            .unwrap();
+        assert!(!skip_arm.contains("apply_me_locality_probes"));
+        assert!(body.contains("apply_me_locality_probes"));
+        let turn = src
+            .split("else if shell.me_locality_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_camp_log_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_locality_probes"));
+        let probes = src
+            .split("fn apply_me_locality_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("locality_me_status"));
+        let chrome = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("locality_me_status", "()")));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_chrome_hold = None"));
         let runtime = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
