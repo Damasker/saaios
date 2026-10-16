@@ -661,6 +661,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Recapture skip read_supervisor_token (ADR-824; host). dest-no-lock stays off.
   Recapture skip read_supervisor_token on `/data` (ADR-825; `75726149…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Recapture skip storage_string (ADR-826; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
