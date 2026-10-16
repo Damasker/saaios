@@ -596,7 +596,8 @@ real phone interface consistently.
   (ADR-831; `61af5b84…`). Recapture skip uptime_string
   (ADR-832; host). Recapture skip uptime_string on `/data`
   (ADR-833; `c6f2d1b5…`). Recapture skip playback_ready
-  (ADR-834; host).
+  (ADR-834; host). Recapture skip playback_ready on `/data`
+  (ADR-835; `166089ca…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2607,6 +2608,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Сейчас. Still Experimental.
 - [x] Recapture skip playback_ready (ADR-834; host). dest-no-lock stays off.
   Recapture skip `playback_ready`. Leave Сейчас. Still Experimental.
+- [x] Recapture skip playback_ready on panther (ADR-835; `166089ca…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`. Leave
+  Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -3041,7 +3045,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-831; `61af5b84…`). Recapture skip uptime_string
 (ADR-832; host). Recapture skip uptime_string on `/data`
 (ADR-833; `c6f2d1b5…`). Recapture skip playback_ready
-(ADR-834; host).
+(ADR-834; host). Recapture skip playback_ready on `/data`
+(ADR-835; `166089ca…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
