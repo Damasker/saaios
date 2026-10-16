@@ -416,6 +416,7 @@ The verification ledger stays in
 | recapture skip proc_camp_presence flash | ADR-843; `55211355…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | recapture skip read_cp_state | ADR-844; host; recapture skip `read_cp_state`; dest-no-lock stays off |
 | recapture skip read_cp_state flash | ADR-845; `9643d0f3…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| recapture skip read_camp_owner_log | ADR-846; host; recapture skip `read_camp_owner_log`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
