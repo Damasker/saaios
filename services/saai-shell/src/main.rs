@@ -16629,8 +16629,9 @@ impl Shell {
         }
         if let Some(hold) = &self.me_cp_hold {
             apply_me_cp_hold(&mut facts, hold);
+        } else {
+            apply_me_cp_probes(&mut facts);
         }
-        apply_me_cp_probes(&mut facts);
         if self.me_camp_log_ready {
             facts.camp_fact_log = self.me_camp_fact_log.clone();
             apply_me_camp_log_probes(&mut facts);
@@ -32204,6 +32205,69 @@ mod tests {
             .unwrap();
         assert!(connect.contains("me_net_hold = None"));
         assert!(!connect.contains("me_chrome_hold = None"));
+        let runtime = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(runtime.contains("read_runtime_live_facts"));
+        assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
+    }
+
+    #[test]
+    fn recapture_skip_read_cp_state() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("if let Some(hold) = &self.me_cp_hold")
+            .nth(1)
+            .unwrap()
+            .split("if self.me_camp_log_ready")
+            .next()
+            .unwrap();
+        let hold_arm = body
+            .split("{")
+            .nth(1)
+            .unwrap()
+            .split("} else {")
+            .next()
+            .unwrap();
+        assert!(hold_arm.contains("apply_me_cp_hold"));
+        assert!(!hold_arm.contains("apply_me_cp_probes"));
+        let turn = src
+            .split("else if shell.me_cp_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_locality_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_cp_probes"));
+        let probes = src
+            .split("fn apply_me_cp_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains(concat!("read_cp_state", "()")));
+        let chrome = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("read_cp_state", "()")));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_cp_hold = None"));
         let runtime = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
