@@ -382,6 +382,7 @@ The verification ledger stays in
 | cellular row skip cellular_ifaces flash | ADR-809; `657ea3bc…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | cellular row skip iface_counter | ADR-810; host; cellular row skip `iface_counter`; dest-no-lock stays off |
 | cellular row skip iface_counter flash | ADR-811; `a2c39b78…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| recapture skip bluetooth_paired_count | ADR-812; host; recapture skip `bluetooth_paired_count`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
