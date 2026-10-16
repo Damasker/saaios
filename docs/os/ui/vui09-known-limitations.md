@@ -407,6 +407,7 @@ The verification ledger stays in
 | recapture skip playback_ready | ADR-834; host; recapture skip `playback_ready`; dest-no-lock stays off |
 | recapture skip playback_ready flash | ADR-835; `166089ca…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | recapture skip wifi_adapter_present | ADR-836; host; recapture skip `wifi_adapter_present`; dest-no-lock stays off |
+| recapture skip wifi_adapter_present flash | ADR-837; `e2f45dce…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
