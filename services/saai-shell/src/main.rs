@@ -15270,9 +15270,8 @@ impl Shell {
                     if self.me_supervisor_ready {
                         if let Some(hold) = &self.me_supervisor_hold {
                             apply_me_supervisor_hold(&mut facts, hold);
-                        }
-                        apply_me_supervisor_probes(&mut facts);
-                        if self.me_supervisor_hold.is_none() {
+                        } else {
+                            apply_me_supervisor_probes(&mut facts);
                             self.me_supervisor_hold = Some(hold_me_supervisor(&facts));
                         }
                     }
@@ -31600,6 +31599,61 @@ mod tests {
             .unwrap();
         assert!(connect.contains("me_net_hold = None"));
         assert!(!connect.contains("me_runtime_hold = None"));
+    }
+
+    #[test]
+    fn recapture_skip_read_supervisor_token() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("if self.me_supervisor_ready {")
+            .nth(1)
+            .unwrap()
+            .split("if self.me_storage_ready {")
+            .next()
+            .unwrap();
+        let hold_arm = body
+            .split("if let Some(hold) = &self.me_supervisor_hold")
+            .nth(1)
+            .unwrap()
+            .split("} else {")
+            .next()
+            .unwrap();
+        assert!(hold_arm.contains("apply_me_supervisor_hold"));
+        assert!(!hold_arm.contains("apply_me_supervisor_probes"));
+        let turn = src
+            .split("else if shell.me_supervisor_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_storage_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_supervisor_probes"));
+        let probes = src
+            .split("fn apply_me_supervisor_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_supervisor_token"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+        let runtime = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(runtime.contains("read_runtime_live_facts"));
+        assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
     }
 
     #[test]

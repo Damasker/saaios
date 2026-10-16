@@ -658,6 +658,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Recapture skip wifi_status_from_cli (ADR-822; host). dest-no-lock stays off.
   Recapture skip wifi_status_from_cli on `/data` (ADR-823; `b0b2023d…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Recapture skip read_supervisor_token (ADR-824; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
