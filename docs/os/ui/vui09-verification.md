@@ -655,6 +655,7 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Recapture skip read_runtime_live_facts (ADR-820; host). dest-no-lock stays off.
   Recapture skip read_runtime_live_facts on `/data` (ADR-821; `08cef1c9…`). dest-no-lock
   stays off. `surface=me` then process `S`.
+  Recapture skip wifi_status_from_cli (ADR-822; host). dest-no-lock stays off.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
