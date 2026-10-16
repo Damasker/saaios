@@ -16588,8 +16588,9 @@ impl Shell {
         apply_me_chrome_probes(&mut facts);
         if let Some(hold) = &self.me_kernel_hold {
             apply_me_kernel_hold(&mut facts, hold);
+        } else {
+            apply_me_kernel_probes(&mut facts);
         }
-        apply_me_kernel_probes(&mut facts);
         if let Some(hold) = &self.me_model_hold {
             apply_me_model_hold(&mut facts, hold);
         }
@@ -31708,6 +31709,60 @@ mod tests {
             .unwrap();
         assert!(runtime.contains("read_runtime_live_facts"));
         assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
+    }
+
+    #[test]
+    fn recapture_skip_kernel_release() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("if let Some(hold) = &self.me_kernel_hold")
+            .nth(1)
+            .unwrap()
+            .split("if let Some(hold) = &self.me_model_hold")
+            .next()
+            .unwrap();
+        let hold_arm = body
+            .split("{")
+            .nth(1)
+            .unwrap()
+            .split("} else {")
+            .next()
+            .unwrap();
+        assert!(hold_arm.contains("apply_me_kernel_hold"));
+        assert!(!hold_arm.contains("apply_me_kernel_probes"));
+        let turn = src
+            .split("else if shell.me_kernel_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_model_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_kernel_probes"));
+        let probes = src
+            .split("fn apply_me_kernel_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("kernel_release"));
+        let chrome = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("kernel_release", "()")));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
     }
 
     #[test]
