@@ -641,6 +641,8 @@ OrbHost hits are generated `layout_v2` (ADR-223). Diagnostic Назад hits are
   Cellular row skip iface_counter on `/data` (ADR-811; `a2c39b78…`). dest-no-lock
   stays off. `surface=me` then process `S`.
   Recapture skip bluetooth_paired_count (ADR-812; host). dest-no-lock stays off.
+  Recapture skip bluetooth_paired_count on `/data` (ADR-813; `e39c6efb…`). dest-no-lock
+  stays off. `surface=me` then process `S`.
   Gallery page taps stay a
   whole-surface formula.
 - Gallery covers fixtures; copying privileged names into an app fails
