@@ -1927,6 +1927,7 @@ fn data_session_suffix(
     parts.join(" · ")
 }
 
+#[allow(dead_code)]
 fn live_traffic_token(ifaces: &[String]) -> Option<&'static str> {
     let mut rx_any = false;
     let mut tx_any = false;
@@ -2523,7 +2524,7 @@ fn cellular_row_with_session(facts: &MeFacts) -> String {
     };
     let suffix = data_session_suffix(
         log.and_then(read_data_call),
-        live_traffic_token(&facts.cellular_ifaces),
+        None,
         log.and_then(read_signal_token),
         log.and_then(read_link_estimate),
     );
@@ -29534,6 +29535,54 @@ mod tests {
             .next()
             .unwrap();
         assert!(!traffic.contains(concat!("cellular_ifaces", "()")));
+        let ifaces = src
+            .split("fn apply_me_ifaces_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(ifaces.contains("cellular_ifaces"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+    }
+
+    #[test]
+    fn cellular_row_skip_iface_counter() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn cellular_row_with_session")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(body.contains("facts.cellular_ifaces"));
+        assert!(!body.contains(concat!("live_traffic_token", "(")));
+        assert!(!body.contains(concat!("iface_counter", "(")));
+        let bearer = src
+            .split("fn iface_bearer_live")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(bearer.contains("iface_counter"));
         let ifaces = src
             .split("fn apply_me_ifaces_probes")
             .nth(1)
