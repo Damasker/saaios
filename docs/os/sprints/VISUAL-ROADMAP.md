@@ -572,7 +572,8 @@ real phone interface consistently.
   (ADR-807; `2ca6088c…`). Cellular row skip cellular_ifaces
   (ADR-808; host). Cellular row skip cellular_ifaces on `/data`
   (ADR-809; `657ea3bc…`). Cellular row skip iface_counter
-  (ADR-810; host).
+  (ADR-810; host). Cellular row skip iface_counter on `/data`
+  (ADR-811; `a2c39b78…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2523,6 +2524,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Сейчас. Still Experimental.
 - [x] Cellular row skip iface_counter (ADR-810; host). dest-no-lock stays off.
   Cellular row skip `iface_counter`. Leave Сейчас. Still Experimental.
+- [x] Cellular row skip iface_counter on panther (ADR-811; `a2c39b78…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`. Leave
+  Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2933,7 +2937,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-807; `2ca6088c…`). Cellular row skip cellular_ifaces
 (ADR-808; host). Cellular row skip cellular_ifaces on `/data`
 (ADR-809; `657ea3bc…`). Cellular row skip iface_counter
-(ADR-810; host).
+(ADR-810; host). Cellular row skip iface_counter on `/data`
+(ADR-811; `a2c39b78…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
