@@ -586,7 +586,8 @@ real phone interface consistently.
   (ADR-821; `08cef1c9…`). Recapture skip wifi_status_from_cli
   (ADR-822; host). Recapture skip wifi_status_from_cli on `/data`
   (ADR-823; `b0b2023d…`). Recapture skip read_supervisor_token
-  (ADR-824; host).
+  (ADR-824; host). Recapture skip read_supervisor_token on `/data`
+  (ADR-825; `75726149…`).
   Wrap Acceptance stays unchecked: font compare still open.
 - [ ] The sans and mono faces survive the actual Pixel boot-image asset
   path. Blocked in this environment, not merely deferred: verifying this
@@ -2572,6 +2573,9 @@ subset, remove superseded legacy paths, and qualify Visual v1.
   Сейчас. Still Experimental.
 - [x] Recapture skip read_supervisor_token (ADR-824; host). dest-no-lock stays off.
   Recapture skip `read_supervisor_token`. Leave Сейчас. Still Experimental.
+- [x] Recapture skip read_supervisor_token on panther (ADR-825; `75726149…`). dest-no-lock
+  stays off. `switched to Me` + `surface=me` then process `S`. Leave
+  Сейчас. Still Experimental.
 - [x] Record known limitations and the Visual v2 backlog
   (`docs/os/ui/vui09-known-limitations.md`, ADR-193). Not Visual v1
   sign-off.
@@ -2996,7 +3000,8 @@ is a camp binary (ADR-700; host). `comm` filter on `/data`
 (ADR-821; `08cef1c9…`). Recapture skip wifi_status_from_cli
 (ADR-822; host). Recapture skip wifi_status_from_cli on `/data`
 (ADR-823; `b0b2023d…`). Recapture skip read_supervisor_token
-(ADR-824; host).
+(ADR-824; host). Recapture skip read_supervisor_token on `/data`
+(ADR-825; `75726149…`).
 dest-no-lock stays off.
 Keyboard keys, gallery page, and
 lock idle/wake stay formulas until a board names them. Public
