@@ -15313,9 +15313,8 @@ impl Shell {
                     if self.me_camera_ready {
                         if let Some(hold) = &self.me_camera_hold {
                             apply_me_camera_hold(&mut facts, hold);
-                        }
-                        apply_me_camera_probes(&mut facts);
-                        if self.me_camera_hold.is_none() {
+                        } else {
+                            apply_me_camera_probes(&mut facts);
                             self.me_camera_hold = Some(hold_me_camera(&facts));
                         }
                     }
@@ -31430,6 +31429,60 @@ mod tests {
             .next()
             .unwrap();
         assert!(ifaces.contains("cellular_ifaces"));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
+        let probes = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("read_runtime_live_facts"));
+    }
+
+    #[test]
+    fn recapture_skip_capture_nodes() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("if self.me_camera_ready {")
+            .nth(1)
+            .unwrap()
+            .split("if self.me_runtime_ready {")
+            .next()
+            .unwrap();
+        let hold_arm = body
+            .split("if let Some(hold) = &self.me_camera_hold")
+            .nth(1)
+            .unwrap()
+            .split("} else {")
+            .next()
+            .unwrap();
+        assert!(hold_arm.contains("apply_me_camera_hold"));
+        assert!(!hold_arm.contains("apply_me_camera_probes"));
+        let turn = src
+            .split("else if shell.me_camera_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_runtime_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_camera_probes"));
+        let camera = src
+            .split("fn apply_me_camera_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(camera.contains("capture_nodes"));
         let connect = src
             .split("wifi_connect_pending.take()")
             .nth(1)
