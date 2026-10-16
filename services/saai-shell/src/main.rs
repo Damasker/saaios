@@ -2693,6 +2693,13 @@ fn wifi_connected_ssid() -> Option<String> {
     }
 }
 
+fn wifi_ssid_from_me_status(status: &str) -> Option<String> {
+    status
+        .strip_prefix("Подключено: ")
+        .filter(|ssid| !ssid.is_empty())
+        .map(str::to_string)
+}
+
 #[allow(dead_code)]
 fn wifi_status_line() -> String {
     wifi_status_from_cli(wifi_adapter_present()).0
@@ -15027,8 +15034,12 @@ impl Shell {
             return;
         }
         self.last_context_signal_refresh = Instant::now();
-        match wifi_connected_ssid()
-            .and_then(|ssid| space_for_wifi_ssid(&self.system_space_entities, &ssid))
+        let ssid = if let Some(hold) = &self.me_net_hold {
+            wifi_ssid_from_me_status(&hold.wifi_status)
+        } else {
+            wifi_connected_ssid()
+        };
+        match ssid.and_then(|ssid| space_for_wifi_ssid(&self.system_space_entities, &ssid))
         {
             Some(space_id) => upsert_context_entry(
                 &mut self.context_frame,
@@ -32332,6 +32343,63 @@ mod tests {
             .unwrap();
         assert!(connect.contains("me_net_hold = None"));
         assert!(!connect.contains("me_camp_fact_log"));
+        let runtime = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(runtime.contains("read_runtime_live_facts"));
+        assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
+    }
+
+    #[test]
+    fn recapture_skip_wifi_connected_ssid() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("fn refresh_context_signals_if_due")
+            .nth(1)
+            .unwrap()
+            .split("fn invoke_select_space")
+            .next()
+            .unwrap();
+        let hold_arm = body
+            .split("if let Some(hold) = &self.me_net_hold")
+            .nth(1)
+            .unwrap()
+            .split("} else {")
+            .next()
+            .unwrap();
+        assert!(hold_arm.contains("wifi_ssid_from_me_status"));
+        assert!(!hold_arm.contains("wifi_connected_ssid"));
+        assert!(body.contains("wifi_connected_ssid"));
+        assert!(!body.contains(concat!("wifi_adapter_present", "()")));
+        let turn = src
+            .split("else if shell.me_net_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_supervisor_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_net_probes"));
+        let chrome = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("wifi_connected_ssid", "()")));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_runtime_hold = None"));
         let runtime = src
             .split("fn apply_me_runtime_probes")
             .nth(1)
