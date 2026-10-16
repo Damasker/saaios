@@ -402,6 +402,7 @@ The verification ledger stays in
 | recapture skip kernel_release flash | ADR-829; `ceee30e9…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
 | recapture skip hardware_model | ADR-830; host; recapture skip `hardware_model`; dest-no-lock stays off |
 | recapture skip hardware_model flash | ADR-831; `61af5b84…` on `/data`; `surface=me` then process `S`; dest-no-lock stays off |
+| recapture skip uptime_string | ADR-832; host; recapture skip `uptime_string`; dest-no-lock stays off |
 | Field label wrap | ADR-569; host; label and support two lines; editor one line; dest-no-lock stays off |
 | DataRow wrap | ADR-570; host; primary/secondary two lines; value one line; dest-no-lock stays off |
 | Metric wrap | ADR-571; host; label two lines; value one line; dest-no-lock stays off |
