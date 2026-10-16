@@ -16624,8 +16624,9 @@ impl Shell {
             facts.cellular_endpoint = hold.endpoint.clone();
             facts.cellular_action = hold.action.clone();
             facts.cellular_open = hold.open.clone();
+        } else {
+            apply_me_camp_probes(&mut facts);
         }
-        apply_me_camp_probes(&mut facts);
         if let Some(hold) = &self.me_cp_hold {
             apply_me_cp_hold(&mut facts, hold);
         }
@@ -32080,6 +32081,69 @@ mod tests {
             .unwrap();
         assert!(connect.contains("me_net_hold = None"));
         assert!(!connect.contains("me_boot_hold = None"));
+        let runtime = src
+            .split("fn apply_me_runtime_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(runtime.contains("read_runtime_live_facts"));
+        assert_eq!(runtime.matches("read_runtime_live_facts").count(), 1);
+    }
+
+    #[test]
+    fn recapture_skip_proc_camp_presence() {
+        let src = include_str!("main.rs");
+        let body = src
+            .split("if let Some(hold) = &self.me_camp_presence")
+            .nth(1)
+            .unwrap()
+            .split("if let Some(hold) = &self.me_cp_hold")
+            .next()
+            .unwrap();
+        let hold_arm = body
+            .split("{")
+            .nth(1)
+            .unwrap()
+            .split("} else {")
+            .next()
+            .unwrap();
+        assert!(hold_arm.contains("cellular_owner"));
+        assert!(!hold_arm.contains("apply_me_camp_probes"));
+        let turn = src
+            .split("else if shell.me_full_pending")
+            .nth(1)
+            .unwrap()
+            .split("else if shell.me_cp_pending")
+            .next()
+            .unwrap();
+        assert!(turn.contains("apply_me_camp_probes"));
+        let probes = src
+            .split("fn apply_me_camp_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(probes.contains("proc_camp_presence"));
+        let chrome = src
+            .split("fn apply_me_chrome_probes")
+            .nth(1)
+            .unwrap()
+            .split("\nfn ")
+            .next()
+            .unwrap();
+        assert!(!chrome.contains(concat!("proc_camp_presence", "()")));
+        let connect = src
+            .split("wifi_connect_pending.take()")
+            .nth(1)
+            .unwrap()
+            .split("event_loop")
+            .next()
+            .unwrap();
+        assert!(connect.contains("me_net_hold = None"));
+        assert!(!connect.contains("me_camp_presence = None"));
         let runtime = src
             .split("fn apply_me_runtime_probes")
             .nth(1)

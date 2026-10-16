@@ -612,6 +612,7 @@ diagnose (ADR-238, `351b0b6f…`).
 | VUI-09 recapture skip boot_slot flash | ADR-838 recapture skip `boot_slot` on `/data` **на panther** (ADR-839; `c9066c4e…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
 | VUI-09 recapture skip locality_me_status | recapture skip `locality_me_status` **host** (ADR-840; dest-no-lock stays off; leave Сейчас) |
 | VUI-09 recapture skip locality_me_status flash | ADR-840 recapture skip `locality_me_status` on `/data` **на panther** (ADR-841; `b739e416…`; dest-no-lock stays off; `surface=me`; leave Сейчас) |
+| VUI-09 recapture skip proc_camp_presence | recapture skip `proc_camp_presence` **host** (ADR-842; dest-no-lock stays off; leave Сейчас) |
 | Intent plan→progress | Object View related/activity from live Task DAG **на panther** (ADR-239; `826adfec…`; leave Сейчас; do not type Intent) |
 | Primary nav Search | Сейчас · Пространства · Поиск · Система; Inbox via Orb **на panther** (ADR-240; `787f5982…`; leave Сейчас) |
 | NOW workflow order | attention → current work → Далее; Сегодня last **на panther** (ADR-241; `66db9031…`; leave Сейчас) |
@@ -1021,6 +1022,7 @@ diagnose (ADR-238, `351b0b6f…`).
 - VUI-09 recapture skip boot_slot flash: ADR-838 recapture skip `boot_slot` on `/data` (ADR-839; `c9066c4e…`; dest-no-lock stays off; `surface=me`)
 - VUI-09 recapture skip locality_me_status: recapture skip `locality_me_status` (ADR-840; host; dest-no-lock stays off)
 - VUI-09 recapture skip locality_me_status flash: ADR-840 recapture skip `locality_me_status` on `/data` (ADR-841; `b739e416…`; dest-no-lock stays off; `surface=me`)
+- VUI-09 recapture skip proc_camp_presence: recapture skip `proc_camp_presence` (ADR-842; host; dest-no-lock stays off)
 - WORK-06 FailureClass: timeout/unreachable retryable; mismatch/unknown are not (ADR-288; shell copy ADR-296; Result inherits Task class ADR-303; host; no shell/taskd flash)
 - WORK-07 one Planner ReplanRequest after verification mismatch (ADR-289; shell note ADR-297; host; cap 1; no shell/taskd flash)
 - WORLD-05 Verifier reads Fresh `status` observations (ADR-274; host; no taskd flash)
